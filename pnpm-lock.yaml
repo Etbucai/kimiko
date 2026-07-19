@@ -81,6 +81,9 @@ catalogs:
     jest:
       specifier: ^30.0.4
       version: 30.4.2
+    openai:
+      specifier: ^6.45.0
+      version: 6.48.0
     prettier:
       specifier: ^3.6.2
       version: 3.9.5
@@ -207,6 +210,9 @@ importers:
       drizzle-orm:
         specifier: 'catalog:'
         version: 0.45.2(@types/better-sqlite3@7.6.13)(better-sqlite3@12.11.1)
+      openai:
+        specifier: 'catalog:'
+        version: 6.48.0(zod@4.4.3)
       reflect-metadata:
         specifier: 'catalog:'
         version: 0.2.2
@@ -3341,6 +3347,26 @@ packages:
   onetime@5.1.2:
     resolution: {integrity: sha512-kbpaSSGJTWdAY5KPVeMOKXSrPtr8C8C7wodJbcsd51jRnmD+GZu8Y0VoU6Dm5Z4vWr0Ig/1NKuWRKf7j5aaYSg==}
     engines: {node: '>=6'}
+
+  openai@6.48.0:
+    resolution: {integrity: sha512-KhVp+FyV50QrXNextvL9hIU5l6ox5HYuKQjGVk7lIqprgJol90+dQXWONV6S1lRWsKA1bXjrow8RsUT14M1hNA==}
+    peerDependencies:
+      '@aws-sdk/credential-provider-node': '>=3.972.0 <4'
+      '@smithy/hash-node': '>=4.3.0 <5'
+      '@smithy/signature-v4': '>=5.4.0 <6'
+      ws: ^8.18.0
+      zod: ^3.25 || ^4.0
+    peerDependenciesMeta:
+      '@aws-sdk/credential-provider-node':
+        optional: true
+      '@smithy/hash-node':
+        optional: true
+      '@smithy/signature-v4':
+        optional: true
+      ws:
+        optional: true
+      zod:
+        optional: true
 
   optionator@0.9.4:
     resolution: {integrity: sha512-6IpQ7mKUxRcZNLIObR0hz7lxsapSSIYNZJwXPGeF0mTVqGKFIXj1DQcMoT22S3ROcLyY/rz0PWaWZ9ayWmad9g==}
@@ -7223,6 +7249,10 @@ snapshots:
   onetime@5.1.2:
     dependencies:
       mimic-fn: 2.1.0
+
+  openai@6.48.0(zod@4.4.3):
+    optionalDependencies:
+      zod: 4.4.3
 
   optionator@0.9.4:
     dependencies:

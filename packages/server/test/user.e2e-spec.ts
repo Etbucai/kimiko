@@ -15,11 +15,20 @@ import {
 import request from "supertest";
 import type { App } from "supertest/types";
 import { AppModule } from "../src/app.module";
+import { reloadEnvForTesting } from "../src/env";
 
 describe("UserController (e2e)", () => {
+  const originalEnv = { ...process.env };
   let app: INestApplication<App>;
 
   beforeEach(async () => {
+    process.env.DATABASE_URL = ":memory:";
+    delete process.env.LLM_BASE_URL;
+    delete process.env.LLM_API_KEY;
+    delete process.env.LLM_MODEL;
+    delete process.env.LLM_TIMEOUT_MS;
+    reloadEnvForTesting();
+
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
@@ -30,6 +39,8 @@ describe("UserController (e2e)", () => {
 
   afterEach(async () => {
     await app.close();
+    process.env = { ...originalEnv };
+    reloadEnvForTesting();
   });
 
   it("registers, logs in, authenticates, refreshes, and logs out", async () => {

@@ -6,6 +6,14 @@ type EnvShape = Readonly<{
   port: number;
   databaseUrl: string;
   jwtSecret: string;
+  llm: LlmEnvShape | null;
+}>;
+
+type LlmEnvShape = Readonly<{
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  timeoutMs: number;
 }>;
 
 const serverRoot = resolve(__dirname, "..");
@@ -24,6 +32,13 @@ export const Env = {
   },
   get jwtSecret(): string {
     return currentEnv.jwtSecret;
+  },
+  get llm(): LlmEnvShape | null {
+    if (currentEnv.llm === null) {
+      return null;
+    }
+
+    return { ...currentEnv.llm };
   },
 } as const;
 
@@ -54,6 +69,36 @@ function buildEnv(source: NodeJS.ProcessEnv): EnvShape {
     port: parsePort(source.PORT),
     databaseUrl: parseDatabaseUrl(source.DATABASE_URL, source.NODE_ENV),
     jwtSecret: parseJwtSecret(source.JWT_SECRET, source.NODE_ENV),
+    llm: parseLlmEnv(source),
+  };
+}
+
+function parseLlmEnv(source: NodeJS.ProcessEnv): LlmEnvShape | null {
+  const baseUrl = parseOptionalUrl(source.LLM_BASE_URL, "LLM_BASE_URL");
+  const apiKey = parseOptionalNonEmptyString(source.LLM_API_KEY);
+  const model = parseOptionalNonEmptyString(source.LLM_MODEL);
+  const timeoutMs =
+    parseOptionalPositiveInteger(source.LLM_TIMEOUT_MS, "LLM_TIMEOUT_MS") ??
+    30_000;
+
+  const hasAnyLlmProviderConfig =
+    baseUrl !== undefined || apiKey !== undefined || model !== undefined;
+
+  if (!hasAnyLlmProviderConfig) {
+    return null;
+  }
+
+  if (baseUrl === undefined || apiKey === undefined || model === undefined) {
+    throw new Error(
+      "LLM_BASE_URL, LLM_API_KEY, and LLM_MODEL must all be set together",
+    );
+  }
+
+  return {
+    baseUrl,
+    apiKey,
+    model,
+    timeoutMs,
   };
 }
 
@@ -101,6 +146,46 @@ function parsePort(value: string | undefined): number {
   }
 
   return port;
+}
+
+function parseOptionalUrl(
+  value: string | undefined,
+  key: "LLM_BASE_URL",
+): string | undefined {
+  const normalizedValue = parseOptionalNonEmptyString(value);
+  if (normalizedValue === undefined) {
+    return undefined;
+  }
+
+  let url: URL;
+  try {
+    url = new URL(normalizedValue);
+  } catch {
+    throw new Error(`${key} must be a valid URL`);
+  }
+
+  return url.toString().replace(/\/$/, "");
+}
+
+function parseOptionalPositiveInteger(
+  value: string | undefined,
+  key: "LLM_TIMEOUT_MS",
+): number | undefined {
+  const normalizedValue = parseOptionalNonEmptyString(value);
+  if (normalizedValue === undefined) {
+    return undefined;
+  }
+
+  if (!/^\d+$/.test(normalizedValue)) {
+    throw new Error(`${key} must be a positive integer`);
+  }
+
+  const parsedValue = Number(normalizedValue);
+  if (!Number.isInteger(parsedValue) || parsedValue < 1) {
+    throw new Error(`${key} must be a positive integer`);
+  }
+
+  return parsedValue;
 }
 
 function parseOptionalNonEmptyString(

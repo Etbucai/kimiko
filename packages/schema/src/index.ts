@@ -101,3 +101,51 @@ export type LogoutUserRequest = z.infer<typeof LogoutUserRequestSchema>;
 export const LogoutUserResponseSchema = z.object({}).strict();
 
 export type LogoutUserResponse = z.infer<typeof LogoutUserResponseSchema>;
+
+const OptionalPromptSchema = z.preprocess(
+  (value) => {
+    if (typeof value !== "string") {
+      return value;
+    }
+
+    const normalizedValue = value.trim();
+    return normalizedValue.length > 0 ? normalizedValue : undefined;
+  },
+  z.string().trim().min(1).max(8_000).optional(),
+);
+
+export const GenerateLlmTextRequestSchema = z
+  .object({
+    userPrompt: z.string().trim().min(1).max(20_000),
+    systemPrompt: OptionalPromptSchema,
+  })
+  .strict();
+
+export type GenerateLlmTextRequest = z.infer<
+  typeof GenerateLlmTextRequestSchema
+>;
+
+export const GenerateLlmTextUsageSchema = z
+  .object({
+    inputTokens: z.number().int().nonnegative().optional(),
+    outputTokens: z.number().int().nonnegative().optional(),
+    totalTokens: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
+export type GenerateLlmTextUsage = z.infer<
+  typeof GenerateLlmTextUsageSchema
+>;
+
+export const GenerateLlmTextResponseSchema = z
+  .object({
+    text: z.string().min(1),
+    model: z.string().min(1),
+    usage: GenerateLlmTextUsageSchema.optional(),
+    finishReason: z.string().min(1).optional(),
+  })
+  .strict();
+
+export type GenerateLlmTextResponse = z.infer<
+  typeof GenerateLlmTextResponseSchema
+>;

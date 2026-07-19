@@ -32,6 +32,7 @@
     "better-sqlite3": "catalog:",
     "dotenv": "catalog:",
     "drizzle-orm": "catalog:",
+    "openai": "catalog:",
     "reflect-metadata": "catalog:",
     "rxjs": "catalog:"
   },
