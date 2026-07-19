@@ -1,0 +1,2 @@
+- 前端封装 authed api client，构造时需要传入登录态
+- auth api client 通过 React Context 提供给子组件使用

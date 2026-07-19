@@ -1,9 +1,9 @@
 import type { JSX } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router";
 import { RequireAuth } from "./auth/RequireAuth";
-import { HomePage } from "./pages/HomePage";
 import { LoginPage } from "./pages/auth/LoginPage";
 import { RegisterPage } from "./pages/auth/RegisterPage";
+import { StoryPage } from "./pages/story/StoryPage";
 
 function App(): JSX.Element {
   return (
@@ -13,7 +13,7 @@ function App(): JSX.Element {
           path="/"
           element={
             <RequireAuth>
-              <HomePage />
+              <StoryPage />
             </RequireAuth>
           }
         />

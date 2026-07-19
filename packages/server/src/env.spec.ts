@@ -4,11 +4,13 @@ describe("Env", () => {
   const originalEnv = { ...process.env };
 
   beforeEach(() => {
-    process.env = { ...originalEnv };
-    delete process.env.LLM_BASE_URL;
-    delete process.env.LLM_API_KEY;
-    delete process.env.LLM_MODEL;
-    delete process.env.LLM_TIMEOUT_MS;
+    process.env = {
+      ...originalEnv,
+      LLM_BASE_URL: "",
+      LLM_API_KEY: "",
+      LLM_MODEL: "",
+      LLM_TIMEOUT_MS: "",
+    };
     reloadEnvForTesting();
   });
 

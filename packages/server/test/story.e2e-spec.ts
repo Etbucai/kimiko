@@ -2,13 +2,14 @@ import type { INestApplication } from "@nestjs/common";
 import { ServiceUnavailableException } from "@nestjs/common";
 import { Test, type TestingModuleBuilder } from "@nestjs/testing";
 import type {
+  ContinueStoryRequest,
   GenerateLlmTextRequest,
   GenerateLlmTextResponse,
   LoginUserRequest,
   RegisterUserRequest,
 } from "@kimiko/schema";
 import {
-  GenerateLlmTextResponseSchema,
+  ContinueStoryResponseSchema,
   LoginUserResponseSchema,
 } from "@kimiko/schema";
 import request from "supertest";
@@ -17,7 +18,7 @@ import { AppModule } from "../src/app.module";
 import { reloadEnvForTesting } from "../src/env";
 import { LLM_PROVIDER, type LlmProvider } from "../src/llm/llm.provider";
 
-describe("LlmController (e2e)", () => {
+describe("StoryController (e2e)", () => {
   const originalEnv = { ...process.env };
   let app: INestApplication<App> | undefined;
 
@@ -44,27 +45,83 @@ describe("LlmController (e2e)", () => {
     app = await createApp();
 
     await request(app.getHttpServer())
-      .post("/llm/generate")
+      .post("/story/continue")
       .send({
-        userPrompt: "hello",
-      } satisfies GenerateLlmTextRequest)
+        storyText: "story",
+        instruction: "continue",
+      } satisfies ContinueStoryRequest)
       .expect(401);
+  });
+
+  it("rejects invalid request bodies", async () => {
+    app = await createApp(createSuccessfulProvider());
+    const accessToken = await registerAndLogin(app, "invalid_story");
+
+    await request(app.getHttpServer())
+      .post("/story/continue")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({
+        storyText: "   ",
+        instruction: "continue",
+      })
+      .expect(400);
+  });
+
+  it("continues a story through the configured provider", async () => {
+    const llmProvider = createSuccessfulProvider();
+    app = await createApp(llmProvider);
+    const accessToken = await registerAndLogin(app, "configured_story");
+
+    const response = await request(app.getHttpServer())
+      .post("/story/continue")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({
+        storyText: "  雨停以后，林夏站在旧书店门口。  ",
+        instruction: "  林夏前往钟楼调查。  ",
+      } satisfies ContinueStoryRequest)
+      .expect(200);
+    const result = ContinueStoryResponseSchema.parse(
+      response.body as unknown,
+    );
+
+    expect(result).toEqual({
+      continuedStory: "林夏继续走向钟楼。",
+      model: "story-model",
+      elapsedMs: expect.any(Number) as number,
+      usage: {
+        inputTokens: 30,
+        outputTokens: 70,
+        totalTokens: 100,
+      },
+    });
+    expect(result.elapsedMs).toBeGreaterThanOrEqual(0);
+
+    const providerInput = llmProvider.generateText.mock.calls[0]?.[0];
+    expect(providerInput?.systemPrompt).toContain("你是 StoryAgent");
+    expect(providerInput?.systemPrompt).toContain("800-1200 字");
+    expect(providerInput?.userPrompt).toContain(
+      "故事正文：\n雨停以后，林夏站在旧书店门口。",
+    );
+    expect(providerInput?.userPrompt).toContain(
+      "续写指令：\n林夏前往钟楼调查。",
+    );
   });
 
   it("returns 503 when the LLM provider is not configured", async () => {
     app = await createApp();
-    const accessToken = await registerAndLogin(app, "unconfigured");
+    const accessToken = await registerAndLogin(app, "unconfigured_story");
 
     await request(app.getHttpServer())
-      .post("/llm/generate")
+      .post("/story/continue")
       .set("Authorization", `Bearer ${accessToken}`)
       .send({
-        userPrompt: "hello",
-      } satisfies GenerateLlmTextRequest)
+        storyText: "story",
+        instruction: "continue",
+      } satisfies ContinueStoryRequest)
       .expect(503);
   });
 
-  it("generates text through the configured provider", async () => {
+  it("returns 502 when the provider omits token usage", async () => {
     const llmProvider: jest.Mocked<LlmProvider> = {
       generateText: jest.fn<
         Promise<GenerateLlmTextResponse>,
@@ -72,45 +129,21 @@ describe("LlmController (e2e)", () => {
       >(),
     };
     llmProvider.generateText.mockResolvedValue({
-      text: "answer",
-      model: "default-model",
-      finishReason: "stop",
-      usage: {
-        inputTokens: 10,
-        outputTokens: 4,
-        totalTokens: 14,
-      },
+      text: "continued story",
+      model: "story-model",
     });
 
     app = await createApp(llmProvider);
-    const accessToken = await registerAndLogin(app, "configured");
+    const accessToken = await registerAndLogin(app, "missing_usage_story");
 
-    const response = await request(app.getHttpServer())
-      .post("/llm/generate")
+    await request(app.getHttpServer())
+      .post("/story/continue")
       .set("Authorization", `Bearer ${accessToken}`)
       .send({
-        userPrompt: "  hello  ",
-        systemPrompt: "  be concise  ",
-      } satisfies GenerateLlmTextRequest)
-      .expect(200);
-    const result = GenerateLlmTextResponseSchema.parse(
-      response.body as unknown,
-    );
-
-    expect(result).toEqual({
-      text: "answer",
-      model: "default-model",
-      finishReason: "stop",
-      usage: {
-        inputTokens: 10,
-        outputTokens: 4,
-        totalTokens: 14,
-      },
-    });
-    expect(llmProvider.generateText.mock.calls[0]?.[0]).toEqual({
-      userPrompt: "hello",
-      systemPrompt: "be concise",
-    });
+        storyText: "story",
+        instruction: "continue",
+      } satisfies ContinueStoryRequest)
+      .expect(502);
   });
 
   it("keeps provider failures mapped to HTTP errors", async () => {
@@ -121,17 +154,38 @@ describe("LlmController (e2e)", () => {
     };
 
     app = await createApp(llmProvider);
-    const accessToken = await registerAndLogin(app, "provider_failure");
+    const accessToken = await registerAndLogin(app, "provider_failure_story");
 
     await request(app.getHttpServer())
-      .post("/llm/generate")
+      .post("/story/continue")
       .set("Authorization", `Bearer ${accessToken}`)
       .send({
-        userPrompt: "hello",
-      } satisfies GenerateLlmTextRequest)
+        storyText: "story",
+        instruction: "continue",
+      } satisfies ContinueStoryRequest)
       .expect(503);
   });
 });
+
+function createSuccessfulProvider(): jest.Mocked<LlmProvider> {
+  const llmProvider: jest.Mocked<LlmProvider> = {
+    generateText: jest.fn<
+      Promise<GenerateLlmTextResponse>,
+      [GenerateLlmTextRequest]
+    >(),
+  };
+  llmProvider.generateText.mockResolvedValue({
+    text: "  林夏继续走向钟楼。  ",
+    model: "story-model",
+    usage: {
+      inputTokens: 30,
+      outputTokens: 70,
+      totalTokens: 100,
+    },
+  });
+
+  return llmProvider;
+}
 
 async function createApp(
   llmProvider?: LlmProvider,
@@ -163,8 +217,8 @@ async function registerAndLogin(
   uniqueNameSuffix: string,
 ): Promise<string> {
   const registerBody = {
-    uniqueName: `llm_${uniqueNameSuffix}`,
-    displayName: "LLM User",
+    uniqueName: `story_${uniqueNameSuffix}`,
+    displayName: "Story User",
     password: "password123",
   } satisfies RegisterUserRequest;
 

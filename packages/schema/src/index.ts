@@ -149,3 +149,37 @@ export const GenerateLlmTextResponseSchema = z
 export type GenerateLlmTextResponse = z.infer<
   typeof GenerateLlmTextResponseSchema
 >;
+
+export const ContinueStoryRequestSchema = z
+  .object({
+    storyText: z.string().trim().min(1).max(20_000),
+    instruction: z.string().trim().min(1).max(8_000),
+  })
+  .strict();
+
+export type ContinueStoryRequest = z.infer<
+  typeof ContinueStoryRequestSchema
+>;
+
+export const ContinueStoryUsageSchema = z
+  .object({
+    inputTokens: z.number().int().nonnegative(),
+    outputTokens: z.number().int().nonnegative(),
+    totalTokens: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export type ContinueStoryUsage = z.infer<typeof ContinueStoryUsageSchema>;
+
+export const ContinueStoryResponseSchema = z
+  .object({
+    continuedStory: z.string().trim().min(1),
+    model: z.string().trim().min(1),
+    elapsedMs: z.number().int().nonnegative(),
+    usage: ContinueStoryUsageSchema,
+  })
+  .strict();
+
+export type ContinueStoryResponse = z.infer<
+  typeof ContinueStoryResponseSchema
+>;

@@ -29,13 +29,26 @@ export class LlmService {
       GenerateLlmTextRequestSchema.safeParse(body),
     );
 
+    return this.generateTextFromParsedRequest(request);
+  }
+
+  async generateTextFromParsedRequest(
+    request: GenerateLlmTextRequest,
+  ): Promise<GenerateLlmTextResponse> {
+    const systemPrompt = normalizeOptionalPrompt(request.systemPrompt);
+
     return this.llmProvider.generateText({
-      userPrompt: request.userPrompt,
-      ...(request.systemPrompt !== undefined
-        ? { systemPrompt: request.systemPrompt }
-        : {}),
+      userPrompt: request.userPrompt.trim(),
+      ...(systemPrompt !== undefined ? { systemPrompt } : {}),
     });
   }
+}
+
+function normalizeOptionalPrompt(value: string | undefined): string | undefined {
+  const normalizedValue = value?.trim();
+  return normalizedValue !== undefined && normalizedValue.length > 0
+    ? normalizedValue
+    : undefined;
 }
 
 function parseRequest<T>(result: SchemaParseResult<T>): T {
