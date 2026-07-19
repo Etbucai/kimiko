@@ -5,9 +5,11 @@ import { config } from "dotenv";
 type EnvShape = Readonly<{
   port: number;
   databaseUrl: string;
+  jwtSecret: string;
 }>;
 
 const serverRoot = resolve(__dirname, "..");
+const DEFAULT_LOCAL_JWT_SECRET = "kimiko-local-development-jwt-secret";
 
 loadDotenvFiles();
 
@@ -19,6 +21,9 @@ export const Env = {
   },
   get databaseUrl(): string {
     return currentEnv.databaseUrl;
+  },
+  get jwtSecret(): string {
+    return currentEnv.jwtSecret;
   },
 } as const;
 
@@ -48,7 +53,24 @@ function buildEnv(source: NodeJS.ProcessEnv): EnvShape {
   return {
     port: parsePort(source.PORT),
     databaseUrl: parseDatabaseUrl(source.DATABASE_URL, source.NODE_ENV),
+    jwtSecret: parseJwtSecret(source.JWT_SECRET, source.NODE_ENV),
   };
+}
+
+function parseJwtSecret(
+  value: string | undefined,
+  nodeEnv: string | undefined,
+): string {
+  const normalizedValue = parseOptionalNonEmptyString(value);
+  if (normalizedValue !== undefined) {
+    return normalizedValue;
+  }
+
+  if (nodeEnv === "production") {
+    throw new Error("JWT_SECRET is required in production");
+  }
+
+  return DEFAULT_LOCAL_JWT_SECRET;
 }
 
 function parseDatabaseUrl(

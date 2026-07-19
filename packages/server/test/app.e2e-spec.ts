@@ -3,6 +3,7 @@ import { Test, type TestingModule } from "@nestjs/testing";
 import { HealthStatusSchema } from "@kimiko/schema";
 import request from "supertest";
 import type { App } from "supertest/types";
+import { configureApp } from "../src/app.config";
 import { AppModule } from "./../src/app.module";
 
 describe("AppController (e2e)", () => {
@@ -14,6 +15,7 @@ describe("AppController (e2e)", () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
+    configureApp(app);
     await app.init();
   });
 
@@ -37,6 +39,26 @@ describe("AppController (e2e)", () => {
         expect(health.status).toBe("ok");
         expect(new Date(health.timestamp).toString()).not.toBe("Invalid Date");
       });
+  });
+
+  it("allows cross-origin API requests", async () => {
+    const origin = "http://localhost:5173";
+
+    await request(app.getHttpServer())
+      .get("/health")
+      .set("Origin", origin)
+      .expect("access-control-allow-origin", origin)
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .options("/user/login")
+      .set("Origin", origin)
+      .set("Access-Control-Request-Method", "POST")
+      .set("Access-Control-Request-Headers", "content-type,authorization")
+      .expect("access-control-allow-origin", origin)
+      .expect("access-control-allow-methods", /POST/)
+      .expect("access-control-allow-headers", /authorization/)
+      .expect(204);
   });
 
   afterEach(async () => {
