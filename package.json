@@ -1,0 +1,27 @@
+{
+  "name": "kimiko",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@9.14.4",
+  "scripts": {
+    "build": "pnpm -r --sort --if-present build",
+    "dev": "pnpm -r --parallel --if-present dev",
+    "lint": "pnpm -r --sort --if-present lint",
+    "test": "pnpm -r --sort --if-present test",
+    "typecheck": "pnpm -r --sort --if-present typecheck",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@eslint/js": "catalog:",
+    "@types/node": "catalog:",
+    "eslint": "catalog:",
+    "eslint-config-prettier": "catalog:",
+    "eslint-plugin-react-hooks": "catalog:",
+    "eslint-plugin-react-refresh": "catalog:",
+    "globals": "catalog:",
+    "prettier": "catalog:",
+    "typescript": "catalog:",
+    "typescript-eslint": "catalog:"
+  }
+}

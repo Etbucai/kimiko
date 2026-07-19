@@ -1,0 +1,9 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/utils" },
+    { "path": "./packages/schema" },
+    { "path": "./packages/server" },
+    { "path": "./packages/web" }
+  ]
+}
