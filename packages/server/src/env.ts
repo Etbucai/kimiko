@@ -1,0 +1,89 @@
+import { mkdirSync } from "node:fs";
+import { dirname, isAbsolute, resolve } from "node:path";
+import { config } from "dotenv";
+
+type EnvShape = Readonly<{
+  port: number;
+  databaseUrl: string;
+}>;
+
+const serverRoot = resolve(__dirname, "..");
+
+loadDotenvFiles();
+
+let currentEnv = buildEnv(process.env);
+
+export const Env = {
+  get port(): number {
+    return currentEnv.port;
+  },
+  get databaseUrl(): string {
+    return currentEnv.databaseUrl;
+  },
+} as const;
+
+export function reloadEnvForTesting(): void {
+  loadDotenvFiles();
+  currentEnv = buildEnv(process.env);
+}
+
+export function resolveServerPath(path: string): string {
+  return isAbsolute(path) ? path : resolve(serverRoot, path);
+}
+
+export function ensureServerDirectoryForPath(path: string): void {
+  if (path === ":memory:") {
+    return;
+  }
+
+  mkdirSync(dirname(path), { recursive: true });
+}
+
+function loadDotenvFiles(): void {
+  config({ path: resolve(serverRoot, ".env") });
+  config({ path: resolve(serverRoot, ".env.local"), override: true });
+}
+
+function buildEnv(source: NodeJS.ProcessEnv): EnvShape {
+  return {
+    port: parsePort(source.PORT),
+    databaseUrl: parseDatabaseUrl(source.DATABASE_URL, source.NODE_ENV),
+  };
+}
+
+function parseDatabaseUrl(
+  value: string | undefined,
+  nodeEnv: string | undefined,
+): string {
+  const normalizedValue = parseOptionalNonEmptyString(value);
+  if (normalizedValue !== undefined) {
+    return normalizedValue;
+  }
+
+  return nodeEnv === "test" ? ":memory:" : "data/kimiko.sqlite";
+}
+
+function parsePort(value: string | undefined): number {
+  const normalizedValue = parseOptionalNonEmptyString(value);
+  if (normalizedValue === undefined) {
+    return 3000;
+  }
+
+  if (!/^\d+$/.test(normalizedValue)) {
+    throw new Error("PORT must be an integer");
+  }
+
+  const port = Number(normalizedValue);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error("PORT must be between 1 and 65535");
+  }
+
+  return port;
+}
+
+function parseOptionalNonEmptyString(
+  value: string | undefined,
+): string | undefined {
+  const normalizedValue = typeof value === "string" ? value.trim() : "";
+  return normalizedValue.length > 0 ? normalizedValue : undefined;
+}

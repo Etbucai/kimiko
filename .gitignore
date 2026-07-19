@@ -3,6 +3,7 @@ dist/
 coverage/
 .turbo/
 .vite/
+packages/server/data/
 
 .env
 .env.*
