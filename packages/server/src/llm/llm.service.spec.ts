@@ -3,7 +3,7 @@ import type {
   GenerateLlmTextRequest,
   GenerateLlmTextResponse,
 } from "@kimiko/schema";
-import type { LlmProvider } from "./llm.provider";
+import type { LlmProvider, LlmTextStreamEvent } from "./llm.provider";
 import { LlmService } from "./llm.service";
 
 describe("LlmService", () => {
@@ -15,6 +15,10 @@ describe("LlmService", () => {
       generateText: jest.fn<
         Promise<GenerateLlmTextResponse>,
         [GenerateLlmTextRequest]
+      >(),
+      streamText: jest.fn<
+        AsyncIterable<LlmTextStreamEvent>,
+        [GenerateLlmTextRequest, Readonly<{ signal: AbortSignal }>]
       >(),
     };
     llmService = new LlmService(llmProvider);

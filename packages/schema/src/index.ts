@@ -183,3 +183,127 @@ export const ContinueStoryResponseSchema = z
 export type ContinueStoryResponse = z.infer<
   typeof ContinueStoryResponseSchema
 >;
+
+export const StoryRealtimeRequestIdSchema = z.string().trim().min(1);
+
+export const StoryContinueClientMessageSchema = z
+  .object({
+    type: z.literal("story.continue"),
+    requestId: StoryRealtimeRequestIdSchema,
+    payload: ContinueStoryRequestSchema,
+  })
+  .strict();
+
+export type StoryContinueClientMessage = z.infer<
+  typeof StoryContinueClientMessageSchema
+>;
+
+export const StoryCancelClientMessageSchema = z
+  .object({
+    type: z.literal("story.cancel"),
+    requestId: StoryRealtimeRequestIdSchema,
+  })
+  .strict();
+
+export type StoryCancelClientMessage = z.infer<
+  typeof StoryCancelClientMessageSchema
+>;
+
+export const StoryRealtimeClientMessageSchema = z.discriminatedUnion("type", [
+  StoryContinueClientMessageSchema,
+  StoryCancelClientMessageSchema,
+]);
+
+export type StoryRealtimeClientMessage = z.infer<
+  typeof StoryRealtimeClientMessageSchema
+>;
+
+export const StoryStartedServerEventSchema = z
+  .object({
+    type: z.literal("story.started"),
+    requestId: StoryRealtimeRequestIdSchema,
+  })
+  .strict();
+
+export type StoryStartedServerEvent = z.infer<
+  typeof StoryStartedServerEventSchema
+>;
+
+export const StoryChunkServerEventSchema = z
+  .object({
+    type: z.literal("story.chunk"),
+    requestId: StoryRealtimeRequestIdSchema,
+    sequence: z.number().int().positive(),
+    delta: z.string().min(1),
+  })
+  .strict();
+
+export type StoryChunkServerEvent = z.infer<
+  typeof StoryChunkServerEventSchema
+>;
+
+export const StoryCompletedServerEventSchema = z
+  .object({
+    type: z.literal("story.completed"),
+    requestId: StoryRealtimeRequestIdSchema,
+    continuedStory: z.string().trim().min(1),
+    model: z.string().trim().min(1),
+    elapsedMs: z.number().int().nonnegative(),
+    usage: ContinueStoryUsageSchema,
+  })
+  .strict();
+
+export type StoryCompletedServerEvent = z.infer<
+  typeof StoryCompletedServerEventSchema
+>;
+
+export const StoryCancelledServerEventSchema = z
+  .object({
+    type: z.literal("story.cancelled"),
+    requestId: StoryRealtimeRequestIdSchema,
+  })
+  .strict();
+
+export type StoryCancelledServerEvent = z.infer<
+  typeof StoryCancelledServerEventSchema
+>;
+
+export const StoryRealtimeErrorCodeSchema = z.enum([
+  "INVALID_MESSAGE",
+  "INVALID_PAYLOAD",
+  "BUSY",
+  "NO_ACTIVE_TASK",
+  "GENERATION_FAILED",
+  "LLM_EMPTY_RESPONSE",
+  "LLM_USAGE_MISSING",
+]);
+
+export type StoryRealtimeErrorCode = z.infer<
+  typeof StoryRealtimeErrorCodeSchema
+>;
+
+export const StoryErrorServerEventSchema = z
+  .object({
+    type: z.literal("story.error"),
+    requestId: z.string(),
+    code: StoryRealtimeErrorCodeSchema,
+    message: z.string().min(1),
+    retryable: z.boolean(),
+  })
+  .strict();
+
+export type StoryErrorServerEvent = z.infer<
+  typeof StoryErrorServerEventSchema
+>;
+
+export const StoryRealtimeServerEventSchema = z.discriminatedUnion("type", [
+  StoryStartedServerEventSchema,
+  StoryChunkServerEventSchema,
+  StoryCompletedServerEventSchema,
+  StoryCancelledServerEventSchema,
+  StoryErrorServerEventSchema,
+]);
+
+export type StoryRealtimeServerEvent = z.infer<
+  typeof StoryRealtimeServerEventSchema
+>;

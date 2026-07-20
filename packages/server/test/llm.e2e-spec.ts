@@ -13,9 +13,14 @@ import {
 } from "@kimiko/schema";
 import request from "supertest";
 import type { App } from "supertest/types";
+import { configureApp } from "../src/app.config";
 import { AppModule } from "../src/app.module";
 import { reloadEnvForTesting } from "../src/env";
-import { LLM_PROVIDER, type LlmProvider } from "../src/llm/llm.provider";
+import {
+  LLM_PROVIDER,
+  type LlmProvider,
+  type LlmTextStreamEvent,
+} from "../src/llm/llm.provider";
 
 describe("LlmController (e2e)", () => {
   const originalEnv = { ...process.env };
@@ -70,6 +75,10 @@ describe("LlmController (e2e)", () => {
         Promise<GenerateLlmTextResponse>,
         [GenerateLlmTextRequest]
       >(),
+      streamText: jest.fn<
+        AsyncIterable<LlmTextStreamEvent>,
+        [GenerateLlmTextRequest, Readonly<{ signal: AbortSignal }>]
+      >(),
     };
     llmProvider.generateText.mockResolvedValue({
       text: "answer",
@@ -118,6 +127,11 @@ describe("LlmController (e2e)", () => {
       async generateText(): Promise<never> {
         throw new ServiceUnavailableException("LLM provider is unavailable");
       },
+      streamText(): AsyncIterable<never> {
+        return createFailingStream(
+          new ServiceUnavailableException("LLM provider is unavailable"),
+        );
+      },
     };
 
     app = await createApp(llmProvider);
@@ -146,6 +160,7 @@ async function createApp(
 
   const moduleFixture = await moduleBuilder.compile();
   const app = moduleFixture.createNestApplication();
+  configureApp(app);
   await app.init();
 
   return app;
@@ -187,4 +202,16 @@ async function registerAndLogin(
   );
 
   return loginResult.session.accessToken;
+}
+
+function createFailingStream(error: Error): AsyncIterable<never> {
+  return {
+    [Symbol.asyncIterator](): AsyncIterator<never> {
+      return {
+        async next(): Promise<IteratorResult<never>> {
+          throw error;
+        },
+      };
+    },
+  };
 }

@@ -18,6 +18,8 @@ import OpenAI, {
 import type {
   ChatCompletion,
   ChatCompletionCreateParamsNonStreaming,
+  ChatCompletionCreateParamsStreaming,
+  ChatCompletionChunk,
   ChatCompletionMessageParam,
 } from "openai/resources/chat/completions";
 import type {
@@ -25,7 +27,7 @@ import type {
   GenerateLlmTextResponse,
   GenerateLlmTextUsage,
 } from "@kimiko/schema";
-import type { LlmProvider } from "./llm.provider";
+import type { LlmProvider, LlmTextStreamEvent } from "./llm.provider";
 
 export type OpenAiCompatibleProviderConfig = Readonly<{
   apiKey: string;
@@ -37,7 +39,13 @@ export type OpenAiCompatibleProviderConfig = Readonly<{
 export interface OpenAiClientLike {
   chat: {
     completions: {
-      create(body: ChatCompletionCreateParamsNonStreaming): Promise<ChatCompletion>;
+      create(
+        body: ChatCompletionCreateParamsNonStreaming,
+      ): Promise<ChatCompletion>;
+      create(
+        body: ChatCompletionCreateParamsStreaming,
+        options: Readonly<{ signal: AbortSignal }>,
+      ): Promise<AsyncIterable<ChatCompletionChunk>>;
     };
   };
 }
@@ -59,6 +67,50 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     return mapCompletionToGenerateTextResponse(completion);
   }
 
+  async *streamText(
+    input: GenerateLlmTextRequest,
+    options: Readonly<{ signal: AbortSignal }>,
+  ): AsyncIterable<LlmTextStreamEvent> {
+    const stream = await this.createChatCompletionStream(input, options);
+    let model = "";
+    let usage: Required<GenerateLlmTextUsage> | undefined;
+
+    for await (const chunk of stream) {
+      if (chunk.model.length > 0) {
+        model = chunk.model;
+      }
+
+      const delta = chunk.choices[0]?.delta.content;
+      if (typeof delta === "string" && delta.length > 0) {
+        yield {
+          type: "chunk",
+          delta,
+        };
+      }
+
+      const mappedUsage = mapRequiredUsage(chunk.usage);
+      if (mappedUsage !== undefined) {
+        usage = mappedUsage;
+      }
+    }
+
+    if (usage === undefined) {
+      throw new BadGatewayException(
+        "LLM provider returned incomplete token usage",
+      );
+    }
+
+    if (model.length === 0) {
+      throw new BadGatewayException("LLM provider returned an empty model");
+    }
+
+    yield {
+      type: "completed",
+      model,
+      usage,
+    };
+  }
+
   private async createChatCompletion(
     input: GenerateLlmTextRequest,
   ): Promise<ChatCompletion> {
@@ -67,6 +119,29 @@ export class OpenAiCompatibleProvider implements LlmProvider {
         model: this.config.model,
         messages: buildChatCompletionMessages(input),
       });
+    } catch (error: unknown) {
+      throw mapOpenAiError(error);
+    }
+  }
+
+  private async createChatCompletionStream(
+    input: GenerateLlmTextRequest,
+    options: Readonly<{ signal: AbortSignal }>,
+  ): Promise<AsyncIterable<ChatCompletionChunk>> {
+    try {
+      return await this.client.chat.completions.create(
+        {
+          model: this.config.model,
+          messages: buildChatCompletionMessages(input),
+          stream: true,
+          stream_options: {
+            include_usage: true,
+          },
+        },
+        {
+          signal: options.signal,
+        },
+      );
     } catch (error: unknown) {
       throw mapOpenAiError(error);
     }
@@ -134,6 +209,20 @@ function mapUsage(
   usage: ChatCompletion["usage"] | undefined,
 ): GenerateLlmTextUsage | undefined {
   if (usage === undefined) {
+    return undefined;
+  }
+
+  return {
+    inputTokens: usage.prompt_tokens,
+    outputTokens: usage.completion_tokens,
+    totalTokens: usage.total_tokens,
+  };
+}
+
+function mapRequiredUsage(
+  usage: ChatCompletionChunk["usage"] | undefined | null,
+): Required<GenerateLlmTextUsage> | undefined {
+  if (usage === undefined || usage === null) {
     return undefined;
   }
 

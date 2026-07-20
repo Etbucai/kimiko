@@ -13,10 +13,11 @@ export interface StoryFieldErrors {
 }
 
 interface StoryFormProps {
-  disabled: boolean;
   fieldErrors: StoryFieldErrors;
+  isGenerating: boolean;
+  onCancel: () => void;
   onChange: (field: StoryFieldName, value: string) => void;
-  onSubmit: () => Promise<void>;
+  onSubmit: () => void;
   value: StoryFormState;
 }
 
@@ -30,8 +31,9 @@ const errorClassName =
   "rounded-xl bg-[var(--danger-bg)] px-3 py-2 text-sm font-normal text-[var(--danger)]";
 
 export function StoryForm({
-  disabled,
   fieldErrors,
+  isGenerating,
+  onCancel,
   onChange,
   onSubmit,
   value,
@@ -44,7 +46,7 @@ export function StoryForm({
       className="flex flex-col gap-5"
       onSubmit={(event) => {
         event.preventDefault();
-        void onSubmit();
+        onSubmit();
       }}
     >
       <label className={labelClassName}>
@@ -55,7 +57,7 @@ export function StoryForm({
           }
           aria-invalid={fieldErrors.storyText !== undefined}
           className={textareaClassName}
-          disabled={disabled}
+          disabled={isGenerating}
           maxLength={20_000}
           name="storyText"
           onChange={(event) =>
@@ -81,7 +83,7 @@ export function StoryForm({
           }
           aria-invalid={fieldErrors.instruction !== undefined}
           className={textareaClassName}
-          disabled={disabled}
+          disabled={isGenerating}
           maxLength={8_000}
           name="instruction"
           onChange={(event) =>
@@ -99,10 +101,10 @@ export function StoryForm({
 
       <button
         className="min-h-12 rounded-2xl border-0 bg-[var(--accent)] px-5 py-3 font-bold text-white transition-[filter,transform] duration-200 enabled:cursor-pointer enabled:hover:-translate-y-px enabled:hover:brightness-[1.06] disabled:cursor-not-allowed disabled:opacity-70"
-        disabled={disabled}
-        type="submit"
+        onClick={isGenerating ? onCancel : undefined}
+        type={isGenerating ? "button" : "submit"}
       >
-        {disabled ? "生成中..." : "生成续写"}
+        {isGenerating ? "取消生成" : "生成续写"}
       </button>
     </form>
   );

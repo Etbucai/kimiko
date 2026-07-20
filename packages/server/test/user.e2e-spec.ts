@@ -14,6 +14,7 @@ import {
 } from "@kimiko/schema";
 import request from "supertest";
 import type { App } from "supertest/types";
+import { configureApp } from "../src/app.config";
 import { AppModule } from "../src/app.module";
 import { reloadEnvForTesting } from "../src/env";
 
@@ -34,6 +35,7 @@ describe("UserController (e2e)", () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
+    configureApp(app);
     await app.init();
   });
 

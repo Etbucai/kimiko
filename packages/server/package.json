@@ -29,12 +29,15 @@
     "@nestjs/common": "catalog:",
     "@nestjs/core": "catalog:",
     "@nestjs/platform-express": "catalog:",
+    "@nestjs/platform-ws": "catalog:",
+    "@nestjs/websockets": "catalog:",
     "better-sqlite3": "catalog:",
     "dotenv": "catalog:",
     "drizzle-orm": "catalog:",
     "openai": "catalog:",
     "reflect-metadata": "catalog:",
-    "rxjs": "catalog:"
+    "rxjs": "catalog:",
+    "ws": "catalog:"
   },
   "devDependencies": {
     "@nestjs/cli": "catalog:",
@@ -44,6 +47,7 @@
     "@types/jest": "catalog:",
     "@types/node": "catalog:",
     "@types/supertest": "catalog:",
+    "@types/ws": "catalog:",
     "drizzle-kit": "catalog:",
     "eslint": "catalog:",
     "jest": "catalog:",

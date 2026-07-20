@@ -1,7 +1,11 @@
 import { ServiceUnavailableException } from "@nestjs/common";
 import type { Provider } from "@nestjs/common";
 import { Env } from "../env";
-import { LLM_PROVIDER, type LlmProvider } from "./llm.provider";
+import {
+  LLM_PROVIDER,
+  type LlmProvider,
+  type LlmTextStreamEvent,
+} from "./llm.provider";
 import type { GenerateLlmTextRequest } from "@kimiko/schema";
 import { OpenAiCompatibleProvider } from "./openai-compatible.provider";
 
@@ -11,6 +15,27 @@ class UnspecifiedProvider implements LlmProvider {
       "LLM provider is not configured. Set LLM_BASE_URL, LLM_API_KEY, and LLM_MODEL.",
     );
   }
+
+  streamText(
+    _input: GenerateLlmTextRequest,
+    _options: Readonly<{ signal: AbortSignal }>,
+  ): AsyncIterable<LlmTextStreamEvent> {
+    return createUnavailableStream();
+  }
+}
+
+function createUnavailableStream(): AsyncIterable<LlmTextStreamEvent> {
+  return {
+    [Symbol.asyncIterator](): AsyncIterator<LlmTextStreamEvent> {
+      return {
+        async next(): Promise<IteratorResult<LlmTextStreamEvent>> {
+          throw new ServiceUnavailableException(
+            "LLM provider is not configured. Set LLM_BASE_URL, LLM_API_KEY, and LLM_MODEL.",
+          );
+        },
+      };
+    },
+  };
 }
 
 function createLlmProvider(): LlmProvider {

@@ -4,7 +4,11 @@ import type {
   GenerateLlmTextResponse,
 } from "@kimiko/schema";
 import { GenerateLlmTextRequestSchema } from "@kimiko/schema";
-import { LLM_PROVIDER, type LlmProvider } from "./llm.provider";
+import {
+  LLM_PROVIDER,
+  type LlmProvider,
+  type LlmTextStreamEvent,
+} from "./llm.provider";
 
 type SchemaParseResult<T> =
   | Readonly<{ success: true; data: T }>
@@ -41,6 +45,21 @@ export class LlmService {
       userPrompt: request.userPrompt.trim(),
       ...(systemPrompt !== undefined ? { systemPrompt } : {}),
     });
+  }
+
+  streamTextFromParsedRequest(
+    request: GenerateLlmTextRequest,
+    options: Readonly<{ signal: AbortSignal }>,
+  ): AsyncIterable<LlmTextStreamEvent> {
+    const systemPrompt = normalizeOptionalPrompt(request.systemPrompt);
+
+    return this.llmProvider.streamText(
+      {
+        userPrompt: request.userPrompt.trim(),
+        ...(systemPrompt !== undefined ? { systemPrompt } : {}),
+      },
+      options,
+    );
   }
 }
 

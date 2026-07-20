@@ -11,13 +11,21 @@ import {
 } from "openai";
 import type {
   ChatCompletion,
+  ChatCompletionChunk,
   ChatCompletionCreateParamsNonStreaming,
+  ChatCompletionCreateParamsStreaming,
 } from "openai/resources/chat/completions";
-import { OpenAiCompatibleProvider } from "./openai-compatible.provider";
+import {
+  OpenAiCompatibleProvider,
+  type OpenAiClientLike,
+} from "./openai-compatible.provider";
 
 type ChatCompletionCreateMock = jest.Mock<
-  Promise<ChatCompletion>,
-  [ChatCompletionCreateParamsNonStreaming]
+  Promise<ChatCompletion | AsyncIterable<ChatCompletionChunk>>,
+  [
+    ChatCompletionCreateParamsNonStreaming | ChatCompletionCreateParamsStreaming,
+    Readonly<{ signal: AbortSignal }>?,
+  ]
 >;
 
 interface MockOpenAiClient {
@@ -34,8 +42,12 @@ describe("OpenAiCompatibleProvider", () => {
 
   beforeEach(() => {
     const createMock: ChatCompletionCreateMock = jest.fn<
-      Promise<ChatCompletion>,
-      [ChatCompletionCreateParamsNonStreaming]
+      Promise<ChatCompletion | AsyncIterable<ChatCompletionChunk>>,
+      [
+        | ChatCompletionCreateParamsNonStreaming
+        | ChatCompletionCreateParamsStreaming,
+        Readonly<{ signal: AbortSignal }>?,
+      ]
     >();
     client = {
       chat: {
@@ -52,7 +64,7 @@ describe("OpenAiCompatibleProvider", () => {
         model: "default-model",
         timeoutMs: 30_000,
       },
-      client,
+      client as unknown as OpenAiClientLike,
     );
   });
 
@@ -194,4 +206,135 @@ describe("OpenAiCompatibleProvider", () => {
       }),
     ).rejects.toThrow(BadGatewayException);
   });
+
+  it("streams text chunks and maps completed usage", async () => {
+    client.chat.completions.create.mockResolvedValue(
+      createChatCompletionStream([
+        {
+          model: "default-model",
+          choices: [
+            {
+              delta: {
+                content: "hello",
+              },
+              finish_reason: null,
+              index: 0,
+            },
+          ],
+        },
+        {
+          model: "default-model",
+          choices: [
+            {
+              delta: {
+                content: " world",
+              },
+              finish_reason: null,
+              index: 0,
+            },
+          ],
+          usage: {
+            prompt_tokens: 3,
+            completion_tokens: 4,
+            total_tokens: 7,
+          },
+        },
+      ]),
+    );
+    const abortController = new AbortController();
+
+    await expect(
+      collectAsyncIterable(
+        provider.streamText(
+          {
+            userPrompt: "hello",
+          },
+          { signal: abortController.signal },
+        ),
+      ),
+    ).resolves.toEqual([
+      {
+        type: "chunk",
+        delta: "hello",
+      },
+      {
+        type: "chunk",
+        delta: " world",
+      },
+      {
+        type: "completed",
+        model: "default-model",
+        usage: {
+          inputTokens: 3,
+          outputTokens: 4,
+          totalTokens: 7,
+        },
+      },
+    ]);
+    expect(client.chat.completions.create.mock.calls[0]?.[0]).toEqual({
+      model: "default-model",
+      messages: [
+        {
+          role: "user",
+          content: "hello",
+        },
+      ],
+      stream: true,
+      stream_options: {
+        include_usage: true,
+      },
+    });
+    expect(client.chat.completions.create.mock.calls[0]?.[1]).toEqual({
+      signal: abortController.signal,
+    });
+  });
+
+  it("rejects streamed completions without usage", async () => {
+    client.chat.completions.create.mockResolvedValue(
+      createChatCompletionStream([
+        {
+          model: "default-model",
+          choices: [
+            {
+              delta: {
+                content: "hello",
+              },
+              finish_reason: null,
+              index: 0,
+            },
+          ],
+        },
+      ]),
+    );
+
+    await expect(
+      collectAsyncIterable(
+        provider.streamText(
+          {
+            userPrompt: "hello",
+          },
+          { signal: new AbortController().signal },
+        ),
+      ),
+    ).rejects.toThrow(BadGatewayException);
+  });
 });
+
+async function* createChatCompletionStream(
+  chunks: readonly Partial<ChatCompletionChunk>[],
+): AsyncIterable<ChatCompletionChunk> {
+  for (const chunk of chunks) {
+    yield chunk as ChatCompletionChunk;
+  }
+}
+
+async function collectAsyncIterable<T>(
+  iterable: AsyncIterable<T>,
+): Promise<T[]> {
+  const events: T[] = [];
+  for await (const event of iterable) {
+    events.push(event);
+  }
+
+  return events;
+}
