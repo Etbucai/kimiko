@@ -45,6 +45,19 @@ export type StoryStreamEvent =
       usage: ContinueStoryUsage;
     }>;
 
+export interface StoryHistoryRound {
+  readonly roundIndex: number;
+  readonly instruction: string;
+  readonly generatedText: string;
+}
+
+export interface StoryLlmContext {
+  readonly currentInstruction: string;
+  readonly initialStoryText?: string;
+  readonly historyRounds: readonly StoryHistoryRound[];
+  readonly historyWasTrimmed: boolean;
+}
+
 @Injectable()
 export class StoryService {
   constructor(private readonly llmService: LlmService) {}
@@ -57,6 +70,24 @@ export class StoryService {
       ContinueStoryRequestSchema.safeParse(body),
     );
     const llmRequest = buildStoryLlmRequest(request);
+
+    yield* this.streamStoryLlmRequest(llmRequest, options);
+  }
+
+  async *streamContinueStoryFromContext(
+    context: StoryLlmContext,
+    options: Readonly<{ signal: AbortSignal }>,
+  ): AsyncIterable<StoryStreamEvent> {
+    yield* this.streamStoryLlmRequest(
+      buildStoryLlmRequestFromContext(context),
+      options,
+    );
+  }
+
+  private async *streamStoryLlmRequest(
+    llmRequest: GenerateLlmTextRequest,
+    options: Readonly<{ signal: AbortSignal }>,
+  ): AsyncIterable<StoryStreamEvent> {
     const startedAt = Date.now();
     let continuedStory = "";
     let sequence = 0;
@@ -112,6 +143,60 @@ function buildStoryUserPrompt(request: ContinueStoryRequest): string {
     "续写指令：",
     request.instruction,
   ].join("\n");
+}
+
+export function buildStoryLlmRequestFromContext(
+  context: StoryLlmContext,
+): GenerateLlmTextRequest {
+  return {
+    systemPrompt: STORY_SYSTEM_PROMPT,
+    userPrompt: buildStoryUserPromptFromContext(context),
+  };
+}
+
+function buildStoryUserPromptFromContext(context: StoryLlmContext): string {
+  const promptParts: string[] = [];
+  const initialStoryText = context.initialStoryText?.trim();
+
+  if (initialStoryText !== undefined && initialStoryText.length > 0) {
+    promptParts.push("故事正文：", initialStoryText, "");
+  }
+
+  if (context.historyRounds.length > 0) {
+    promptParts.push(
+      context.historyWasTrimmed ? "近期故事正文片段：" : "近期续写轨迹：",
+    );
+
+    for (const round of context.historyRounds) {
+      if (context.historyWasTrimmed) {
+        promptParts.push(
+          `第 ${round.roundIndex} 轮续写：`,
+          round.generatedText,
+          "",
+        );
+      } else {
+        promptParts.push(
+          `第 ${round.roundIndex} 轮指令：`,
+          round.instruction,
+          "",
+          `第 ${round.roundIndex} 轮续写：`,
+          round.generatedText,
+          "",
+        );
+      }
+    }
+
+    if (context.historyWasTrimmed) {
+      promptParts.push("近期续写指令轨迹：");
+      for (const round of context.historyRounds) {
+        promptParts.push(`第 ${round.roundIndex} 轮指令：`, round.instruction, "");
+      }
+    }
+  }
+
+  promptParts.push("当前续写指令：", context.currentInstruction);
+
+  return promptParts.join("\n");
 }
 
 function normalizeGeneratedStory(value: string): string {

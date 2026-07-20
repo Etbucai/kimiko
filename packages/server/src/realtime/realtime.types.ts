@@ -7,7 +7,10 @@ export type RealtimeErrorCode =
   | "NO_ACTIVE_TASK"
   | "GENERATION_FAILED"
   | "LLM_EMPTY_RESPONSE"
-  | "LLM_USAGE_MISSING";
+  | "LLM_USAGE_MISSING"
+  | "STORYLINE_NOT_FOUND"
+  | "STORYLINE_BUSY"
+  | "STORYLINE_SAVE_FAILED";
 
 export interface ActiveRealtimeTask {
   abortController: AbortController;

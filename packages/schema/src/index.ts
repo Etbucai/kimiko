@@ -184,13 +184,130 @@ export type ContinueStoryResponse = z.infer<
   typeof ContinueStoryResponseSchema
 >;
 
+export const StorylineIdSchema = z.string().trim().min(1);
+
+export type StorylineId = z.infer<typeof StorylineIdSchema>;
+
+export const StorylineSegmentIdSchema = z.string().trim().min(1);
+
+export type StorylineSegmentId = z.infer<
+  typeof StorylineSegmentIdSchema
+>;
+
+export const StorylineInitialSegmentSchema = z
+  .object({
+    id: StorylineSegmentIdSchema,
+    type: z.literal("initial"),
+    text: z.string().trim().min(1),
+  })
+  .strict();
+
+export type StorylineInitialSegment = z.infer<
+  typeof StorylineInitialSegmentSchema
+>;
+
+export const StorylineGeneratedSegmentSchema = z
+  .object({
+    id: StorylineSegmentIdSchema,
+    type: z.literal("generated"),
+    text: z.string().trim().min(1),
+  })
+  .strict();
+
+export type StorylineGeneratedSegment = z.infer<
+  typeof StorylineGeneratedSegmentSchema
+>;
+
+export const StorylineSegmentSchema = z.discriminatedUnion("type", [
+  StorylineInitialSegmentSchema,
+  StorylineGeneratedSegmentSchema,
+]);
+
+export type StorylineSegment = z.infer<typeof StorylineSegmentSchema>;
+
+export const StorylineGenerationMetadataSchema = z
+  .object({
+    segmentId: StorylineSegmentIdSchema,
+    model: z.string().trim().min(1),
+    elapsedMs: z.number().int().nonnegative(),
+    usage: ContinueStoryUsageSchema,
+  })
+  .strict();
+
+export type StorylineGenerationMetadata = z.infer<
+  typeof StorylineGenerationMetadataSchema
+>;
+
+export const StorylineSnapshotSchema = z
+  .object({
+    id: StorylineIdSchema,
+    segments: z.array(StorylineSegmentSchema).min(1),
+    latestGeneration: StorylineGenerationMetadataSchema.nullable(),
+    updatedAt: z.string().datetime(),
+  })
+  .strict();
+
+export type StorylineSnapshot = z.infer<typeof StorylineSnapshotSchema>;
+
+export const CompletedStorylineSnapshotSchema =
+  StorylineSnapshotSchema.extend({
+    latestGeneration: StorylineGenerationMetadataSchema,
+  });
+
+export type CompletedStorylineSnapshot = z.infer<
+  typeof CompletedStorylineSnapshotSchema
+>;
+
+export const GetRecentStorylineResponseSchema = z
+  .object({
+    storyline: StorylineSnapshotSchema.nullable(),
+  })
+  .strict();
+
+export type GetRecentStorylineResponse = z.infer<
+  typeof GetRecentStorylineResponseSchema
+>;
+
+export const StoryContinueCreatePayloadSchema = z
+  .object({
+    mode: z.literal("create"),
+    initialStoryText: z.string().trim().min(1).max(20_000),
+    instruction: z.string().trim().min(1).max(8_000),
+  })
+  .strict();
+
+export type StoryContinueCreatePayload = z.infer<
+  typeof StoryContinueCreatePayloadSchema
+>;
+
+export const StoryContinueAppendPayloadSchema = z
+  .object({
+    mode: z.literal("append"),
+    storylineId: StorylineIdSchema,
+    instruction: z.string().trim().min(1).max(8_000),
+  })
+  .strict();
+
+export type StoryContinueAppendPayload = z.infer<
+  typeof StoryContinueAppendPayloadSchema
+>;
+
+export const StoryContinuePayloadSchema = z.discriminatedUnion("mode", [
+  StoryContinueCreatePayloadSchema,
+  StoryContinueAppendPayloadSchema,
+]);
+
+export type StoryContinuePayload = z.infer<
+  typeof StoryContinuePayloadSchema
+>;
+
 export const StoryRealtimeRequestIdSchema = z.string().trim().min(1);
 
 export const StoryContinueClientMessageSchema = z
   .object({
     type: z.literal("story.continue"),
     requestId: StoryRealtimeRequestIdSchema,
-    payload: ContinueStoryRequestSchema,
+    payload: StoryContinuePayloadSchema,
   })
   .strict();
 
@@ -246,10 +363,8 @@ export const StoryCompletedServerEventSchema = z
   .object({
     type: z.literal("story.completed"),
     requestId: StoryRealtimeRequestIdSchema,
-    continuedStory: z.string().trim().min(1),
-    model: z.string().trim().min(1),
-    elapsedMs: z.number().int().nonnegative(),
-    usage: ContinueStoryUsageSchema,
+    storyline: CompletedStorylineSnapshotSchema,
+    generatedSegmentId: StorylineSegmentIdSchema,
   })
   .strict();
 
@@ -276,6 +391,9 @@ export const StoryRealtimeErrorCodeSchema = z.enum([
   "GENERATION_FAILED",
   "LLM_EMPTY_RESPONSE",
   "LLM_USAGE_MISSING",
+  "STORYLINE_NOT_FOUND",
+  "STORYLINE_BUSY",
+  "STORYLINE_SAVE_FAILED",
 ]);
 
 export type StoryRealtimeErrorCode = z.infer<

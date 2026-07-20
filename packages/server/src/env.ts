@@ -7,6 +7,7 @@ type EnvShape = Readonly<{
   databaseUrl: string;
   jwtSecret: string;
   llm: LlmEnvShape | null;
+  story: StoryEnvShape;
 }>;
 
 type LlmEnvShape = Readonly<{
@@ -14,6 +15,10 @@ type LlmEnvShape = Readonly<{
   apiKey: string;
   model: string;
   timeoutMs: number;
+}>;
+
+type StoryEnvShape = Readonly<{
+  historyRoundLimit: number;
 }>;
 
 const serverRoot = resolve(__dirname, "..");
@@ -39,6 +44,9 @@ export const Env = {
     }
 
     return { ...currentEnv.llm };
+  },
+  get story(): StoryEnvShape {
+    return { ...currentEnv.story };
   },
 } as const;
 
@@ -70,6 +78,17 @@ function buildEnv(source: NodeJS.ProcessEnv): EnvShape {
     databaseUrl: parseDatabaseUrl(source.DATABASE_URL, source.NODE_ENV),
     jwtSecret: parseJwtSecret(source.JWT_SECRET, source.NODE_ENV),
     llm: parseLlmEnv(source),
+    story: parseStoryEnv(source),
+  };
+}
+
+function parseStoryEnv(source: NodeJS.ProcessEnv): StoryEnvShape {
+  return {
+    historyRoundLimit:
+      parseOptionalPositiveInteger(
+        source.STORY_HISTORY_ROUND_LIMIT,
+        "STORY_HISTORY_ROUND_LIMIT",
+      ) ?? 20,
   };
 }
 
@@ -169,7 +188,7 @@ function parseOptionalUrl(
 
 function parseOptionalPositiveInteger(
   value: string | undefined,
-  key: "LLM_TIMEOUT_MS",
+  key: "LLM_TIMEOUT_MS" | "STORY_HISTORY_ROUND_LIMIT",
 ): number | undefined {
   const normalizedValue = parseOptionalNonEmptyString(value);
   if (normalizedValue === undefined) {

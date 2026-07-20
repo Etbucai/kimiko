@@ -10,6 +10,7 @@ describe("Env", () => {
       LLM_API_KEY: "",
       LLM_MODEL: "",
       LLM_TIMEOUT_MS: "",
+      STORY_HISTORY_ROUND_LIMIT: "",
     };
     reloadEnvForTesting();
   });
@@ -21,6 +22,9 @@ describe("Env", () => {
 
   it("treats missing LLM provider settings as disabled", () => {
     expect(Env.llm).toBeNull();
+    expect(Env.story).toEqual({
+      historyRoundLimit: 20,
+    });
   });
 
   it("parses complete LLM provider settings", () => {
@@ -45,6 +49,24 @@ describe("Env", () => {
 
     expect(() => reloadEnvForTesting()).toThrow(
       "LLM_BASE_URL, LLM_API_KEY, and LLM_MODEL must all be set together",
+    );
+  });
+
+  it("parses the story history round limit", () => {
+    process.env.STORY_HISTORY_ROUND_LIMIT = "12";
+
+    reloadEnvForTesting();
+
+    expect(Env.story).toEqual({
+      historyRoundLimit: 12,
+    });
+  });
+
+  it("rejects invalid story history round limits", () => {
+    process.env.STORY_HISTORY_ROUND_LIMIT = "0";
+
+    expect(() => reloadEnvForTesting()).toThrow(
+      "STORY_HISTORY_ROUND_LIMIT must be a positive integer",
     );
   });
 });

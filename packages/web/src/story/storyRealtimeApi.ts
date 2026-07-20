@@ -1,8 +1,8 @@
 import type {
-  ContinueStoryRequest,
   StoryCancelClientMessage,
   StoryCompletedServerEvent,
   StoryContinueClientMessage,
+  StoryContinuePayload,
   StoryRealtimeServerEvent,
 } from "@kimiko/schema";
 import { StoryRealtimeServerEventSchema } from "@kimiko/schema";
@@ -27,7 +27,7 @@ export interface StoryRealtimeGenerationHandle {
 }
 
 export function startStoryRealtimeGeneration(
-  request: ContinueStoryRequest,
+  payload: StoryContinuePayload,
   callbacks: StoryRealtimeGenerationCallbacks,
 ): StoryRealtimeGenerationHandle {
   const authSession = getStoredAuthSession();
@@ -49,7 +49,7 @@ export function startStoryRealtimeGeneration(
       JSON.stringify({
         type: "story.continue",
         requestId,
-        payload: request,
+        payload,
       } satisfies StoryContinueClientMessage),
     );
   });

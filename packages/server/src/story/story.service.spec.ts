@@ -9,7 +9,11 @@ import type {
 } from "@kimiko/schema";
 import type { LlmProvider, LlmTextStreamEvent } from "../llm/llm.provider";
 import { LlmService } from "../llm/llm.service";
-import { STORY_SYSTEM_PROMPT, StoryService } from "./story.service";
+import {
+  buildStoryLlmRequestFromContext,
+  STORY_SYSTEM_PROMPT,
+  StoryService,
+} from "./story.service";
 
 describe("StoryService", () => {
   let llmProvider: jest.Mocked<LlmProvider>;
@@ -215,6 +219,34 @@ describe("StoryService", () => {
         ),
       ),
     ).rejects.toThrow(BadGatewayException);
+  });
+
+  it("builds trimmed storyline prompts without initial story text", () => {
+    const request = buildStoryLlmRequestFromContext({
+      currentInstruction: "继续追查钟楼。",
+      historyRounds: [
+        {
+          roundIndex: 4,
+          instruction: "调查旧书店。",
+          generatedText: "林夏回到旧书店。",
+        },
+        {
+          roundIndex: 5,
+          instruction: "前往钟楼。",
+          generatedText: "林夏走向钟楼。",
+        },
+      ],
+      historyWasTrimmed: true,
+    });
+
+    expect(request.systemPrompt).toBe(STORY_SYSTEM_PROMPT);
+    expect(request.userPrompt).toContain("近期故事正文片段：");
+    expect(request.userPrompt).toContain("第 4 轮续写：");
+    expect(request.userPrompt).toContain("林夏回到旧书店。");
+    expect(request.userPrompt).toContain("近期续写指令轨迹：");
+    expect(request.userPrompt).toContain("第 5 轮指令：");
+    expect(request.userPrompt).toContain("当前续写指令：");
+    expect(request.userPrompt).not.toContain("故事正文：\n");
   });
 });
 

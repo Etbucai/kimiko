@@ -5,6 +5,7 @@ import { AuthModule } from "./auth/auth.module";
 import { DatabaseModule } from "./database/database.module";
 import { LlmModule } from "./llm/llm.module";
 import { RealtimeModule } from "./realtime/realtime.module";
+import { StorylineModule } from "./storyline/storyline.module";
 import { UserModule } from "./user/user.module";
 
 @Module({
@@ -13,6 +14,7 @@ import { UserModule } from "./user/user.module";
     AuthModule,
     LlmModule,
     RealtimeModule,
+    StorylineModule,
     UserModule,
   ],
   controllers: [AppController],

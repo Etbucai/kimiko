@@ -8,7 +8,11 @@ import type {
   RegisterUserRequest,
   StoryRealtimeServerEvent,
 } from "@kimiko/schema";
-import { LoginUserResponseSchema, StoryRealtimeServerEventSchema } from "@kimiko/schema";
+import {
+  GetRecentStorylineResponseSchema,
+  LoginUserResponseSchema,
+  StoryRealtimeServerEventSchema,
+} from "@kimiko/schema";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { App } from "supertest/types";
@@ -70,7 +74,8 @@ describe("RealtimeGateway (e2e)", () => {
         type: "story.continue",
         requestId: "request-1",
         payload: {
-          storyText: "雨停以后。",
+          mode: "create",
+          initialStoryText: "雨停以后。",
           instruction: "继续调查。",
         },
       }),
@@ -78,7 +83,7 @@ describe("RealtimeGateway (e2e)", () => {
 
     const events = await eventsPromise;
 
-    expect(events).toEqual([
+    expect(events.slice(0, 3)).toEqual([
       {
         type: "story.started",
         requestId: "request-1",
@@ -95,22 +100,66 @@ describe("RealtimeGateway (e2e)", () => {
         sequence: 2,
         delta: "走向钟楼。",
       },
-      {
-        type: "story.completed",
-        requestId: "request-1",
-        continuedStory: "林夏走向钟楼。",
-        model: "story-model",
-        elapsedMs: expect.any(Number) as number,
-        usage: {
-          inputTokens: 10,
-          outputTokens: 20,
-          totalTokens: 30,
-        },
-      },
     ]);
+    expect(events[3]).toMatchObject({
+      type: "story.completed",
+      requestId: "request-1",
+      generatedSegmentId: expect.stringMatching(/^[1-9]\d*$/) as string,
+      storyline: {
+        id: expect.stringMatching(/^[1-9]\d*$/) as string,
+        segments: [
+          {
+            id: expect.stringMatching(/^[1-9]\d*$/) as string,
+            type: "initial",
+            text: "雨停以后。",
+          },
+          {
+            id: expect.stringMatching(/^[1-9]\d*$/) as string,
+            type: "generated",
+            text: "林夏走向钟楼。",
+          },
+        ],
+        latestGeneration: {
+          segmentId: expect.stringMatching(/^[1-9]\d*$/) as string,
+          model: "story-model",
+          elapsedMs: expect.any(Number) as number,
+          usage: {
+            inputTokens: 10,
+            outputTokens: 20,
+            totalTokens: 30,
+          },
+        },
+        updatedAt: expect.any(String) as string,
+      },
+    });
     expect(llmProvider.streamText.mock.calls[0]?.[0].systemPrompt).toContain(
       "你是 StoryAgent",
     );
+    expect(llmProvider.streamText.mock.calls[0]?.[0].userPrompt).toContain(
+      "雨停以后。",
+    );
+
+    const recentResponse = await request(app.getHttpServer())
+      .get("/storylines/recent")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect(200);
+    const recentStoryline = GetRecentStorylineResponseSchema.parse(
+      recentResponse.body as unknown,
+    );
+
+    expect(recentStoryline.storyline).toMatchObject({
+      id: expect.stringMatching(/^[1-9]\d*$/) as string,
+      segments: [
+        {
+          type: "initial",
+          text: "雨停以后。",
+        },
+        {
+          type: "generated",
+          text: "林夏走向钟楼。",
+        },
+      ],
+    });
 
     socket.close();
   });
@@ -131,7 +180,8 @@ describe("RealtimeGateway (e2e)", () => {
         type: "story.continue",
         requestId: "request-1",
         payload: {
-          storyText: "story",
+          mode: "create",
+          initialStoryText: "story",
           instruction: "continue",
         },
       }),
@@ -144,7 +194,8 @@ describe("RealtimeGateway (e2e)", () => {
         type: "story.continue",
         requestId: "request-2",
         payload: {
-          storyText: "story",
+          mode: "create",
+          initialStoryText: "story",
           instruction: "continue",
         },
       }),

@@ -15,6 +15,13 @@
       "when": 1784453379789,
       "tag": "0001_red_supreme_intelligence",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1784550132258,
+      "tag": "0002_tricky_princess_powerful",
+      "breakpoints": true
     }
   ]
 }

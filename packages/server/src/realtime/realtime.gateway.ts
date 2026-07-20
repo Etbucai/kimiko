@@ -14,8 +14,13 @@ import { StoryRealtimeClientMessageSchema } from "@kimiko/schema";
 import type { IncomingMessage } from "node:http";
 import WebSocket, { WebSocketServer } from "ws";
 import { verifyAccessToken } from "../auth/jwt-auth.utils";
-import type { StoryStreamEvent } from "../story/story.service";
-import { StoryService } from "../story/story.service";
+import {
+  StorylineBusyError,
+  StorylineNotFoundError,
+  StorylineSaveFailedError,
+} from "../storyline/storyline.errors";
+import { StorylineGenerationService } from "../storyline/storyline-generation.service";
+import type { StorylineStreamEvent } from "../storyline/storyline.types";
 import type {
   ActiveRealtimeTask,
   RealtimeClientState,
@@ -33,6 +38,9 @@ const errorMessages: Record<RealtimeErrorCode, string> = {
   GENERATION_FAILED: "生成失败，请稍后重试",
   LLM_EMPTY_RESPONSE: "生成结果为空，请稍后重试",
   LLM_USAGE_MISSING: "生成元数据缺失，请稍后重试",
+  STORYLINE_NOT_FOUND: "故事线不存在",
+  STORYLINE_BUSY: "当前故事线正在生成，请稍后重试",
+  STORYLINE_SAVE_FAILED: "保存失败，请稍后重试",
 };
 
 @Injectable()
@@ -42,7 +50,9 @@ export class RealtimeGateway
 {
   private readonly clientStates = new WeakMap<WebSocket, RealtimeClientState>();
 
-  constructor(private readonly storyService: StoryService) {}
+  constructor(
+    private readonly storylineGenerationService: StorylineGenerationService,
+  ) {}
 
   afterInit(server: WebSocketServer): void {
     server.on("connection", (client, request) => {
@@ -113,6 +123,11 @@ export class RealtimeGateway
       return;
     }
 
+    if (clientState.user === null) {
+      sendError(client, message.requestId, "GENERATION_FAILED", true);
+      return;
+    }
+
     if (clientState.activeTask !== null) {
       sendError(client, message.requestId, "BUSY", true);
       return;
@@ -130,8 +145,11 @@ export class RealtimeGateway
     });
 
     try {
-      for await (const event of this.storyService.streamContinueStory(
-        message.payload,
+      for await (const event of this.storylineGenerationService.streamContinueStoryline(
+        {
+          userId: clientState.user.sub,
+          payload: message.payload,
+        },
         { signal: abortController.signal },
       )) {
         if (abortController.signal.aborted) {
@@ -181,7 +199,7 @@ export class RealtimeGateway
   private sendStoryStreamEvent(
     client: WebSocket,
     requestId: string,
-    event: StoryStreamEvent,
+    event: StorylineStreamEvent,
   ): void {
     if (event.type === "chunk") {
       sendEvent(client, {
@@ -196,10 +214,8 @@ export class RealtimeGateway
     sendEvent(client, {
       type: "story.completed",
       requestId,
-      continuedStory: event.continuedStory,
-      model: event.model,
-      elapsedMs: event.elapsedMs,
-      usage: event.usage,
+      storyline: event.storyline,
+      generatedSegmentId: event.generatedSegmentId,
     });
   }
 }
@@ -322,6 +338,18 @@ function sendError(
 }
 
 function mapStreamErrorCode(error: unknown): RealtimeErrorCode {
+  if (error instanceof StorylineNotFoundError) {
+    return "STORYLINE_NOT_FOUND";
+  }
+
+  if (error instanceof StorylineBusyError) {
+    return "STORYLINE_BUSY";
+  }
+
+  if (error instanceof StorylineSaveFailedError) {
+    return "STORYLINE_SAVE_FAILED";
+  }
+
   if (error instanceof BadGatewayException) {
     const response = error.getResponse();
     const message =
