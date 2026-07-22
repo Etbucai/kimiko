@@ -3,6 +3,7 @@ import type {
   ContinueStoryUsage,
   StoryContinuePayload,
 } from "@kimiko/schema";
+import type { StoryCharacterSummarySnapshot } from "./storyline-summary.types";
 
 export interface StorylineRecord {
   readonly id: number;
@@ -20,6 +21,11 @@ export interface SaveCreatedStorylineInput {
   readonly usage: ContinueStoryUsage;
 }
 
+export interface SaveCreatedStorylineWithSummaryInput
+  extends SaveCreatedStorylineInput {
+  readonly characterSummary: StoryCharacterSummarySnapshot;
+}
+
 export interface SaveAppendedSegmentInput {
   readonly userId: string;
   readonly storylineId: string;
@@ -30,8 +36,14 @@ export interface SaveAppendedSegmentInput {
   readonly usage: ContinueStoryUsage;
 }
 
+export interface SaveAppendedSegmentWithSummaryInput
+  extends SaveAppendedSegmentInput {
+  readonly characterSummary: StoryCharacterSummarySnapshot;
+}
+
 export type StorylineStreamEvent =
   | Readonly<{ type: "chunk"; delta: string; sequence: number }>
+  | Readonly<{ type: "summaryStarted" }>
   | Readonly<{
       type: "completed";
       storyline: CompletedStorylineSnapshot;

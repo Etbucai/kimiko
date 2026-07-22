@@ -15,6 +15,7 @@ const authPolicyViolationCode = 1008;
 export interface StoryRealtimeGenerationCallbacks {
   onStarted: () => void;
   onChunk: (delta: string, sequence: number) => void;
+  onSummaryStarted: () => void;
   onCompleted: (event: StoryCompletedServerEvent) => void;
   onCancelled: () => void;
   onError: (message: string) => void;
@@ -75,6 +76,9 @@ export function startStoryRealtimeGeneration(
         return;
       case "story.chunk":
         callbacks.onChunk(serverEvent.delta, serverEvent.sequence);
+        return;
+      case "story.summary.started":
+        callbacks.onSummaryStarted();
         return;
       case "story.completed":
         isSettled = true;

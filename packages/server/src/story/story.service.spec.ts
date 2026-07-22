@@ -23,7 +23,7 @@ describe("StoryService", () => {
     llmProvider = {
       generateText: jest.fn<
         Promise<GenerateLlmTextResponse>,
-        [GenerateLlmTextRequest]
+        [GenerateLlmTextRequest, Readonly<{ signal: AbortSignal }>?]
       >(),
       streamText: jest.fn<
         AsyncIterable<LlmTextStreamEvent>,
@@ -247,6 +247,43 @@ describe("StoryService", () => {
     expect(request.userPrompt).toContain("第 5 轮指令：");
     expect(request.userPrompt).toContain("当前续写指令：");
     expect(request.userPrompt).not.toContain("故事正文：\n");
+  });
+
+  it("injects character summaries before recent history", () => {
+    const request = buildStoryLlmRequestFromContext({
+      currentInstruction: "让林夏继续调查。",
+      characterSummary: {
+        characters: [
+          {
+            name: "林夏",
+            aliases: [],
+            identity: "调查旧钟楼的记者",
+            relationships: ["与周岚是旧识"],
+            motivation: "查清钟楼失踪案",
+            currentStatus: "正在前往钟楼",
+          },
+        ],
+      },
+      initialStoryText: "雨停以后。",
+      historyRounds: [
+        {
+          roundIndex: 1,
+          instruction: "前往钟楼。",
+          generatedText: "林夏走向钟楼。",
+        },
+      ],
+      historyWasTrimmed: false,
+    });
+
+    const summaryIndex = request.userPrompt.indexOf("角色摘要：");
+    const storyIndex = request.userPrompt.indexOf("故事正文：");
+    const historyIndex = request.userPrompt.indexOf("近期续写轨迹：");
+
+    expect(summaryIndex).toBeGreaterThanOrEqual(0);
+    expect(storyIndex).toBeGreaterThan(summaryIndex);
+    expect(historyIndex).toBeGreaterThan(storyIndex);
+    expect(request.userPrompt).toContain('"name": "林夏"');
+    expect(request.userPrompt).toContain("调查旧钟楼的记者");
   });
 });
 

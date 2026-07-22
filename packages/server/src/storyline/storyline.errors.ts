@@ -18,3 +18,10 @@ export class StorylineSaveFailedError extends Error {
     this.name = "StorylineSaveFailedError";
   }
 }
+
+export class StorySummaryFailedError extends Error {
+  constructor(message = "Failed to generate story summary") {
+    super(message);
+    this.name = "StorySummaryFailedError";
+  }
+}

@@ -22,6 +22,13 @@
       "when": 1784550132258,
       "tag": "0002_tricky_princess_powerful",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1784713974451,
+      "tag": "0003_old_synch",
+      "breakpoints": true
     }
   ]
 }

@@ -14,7 +14,7 @@ describe("LlmService", () => {
     llmProvider = {
       generateText: jest.fn<
         Promise<GenerateLlmTextResponse>,
-        [GenerateLlmTextRequest]
+        [GenerateLlmTextRequest, Readonly<{ signal: AbortSignal }>?]
       >(),
       streamText: jest.fn<
         AsyncIterable<LlmTextStreamEvent>,
@@ -71,6 +71,28 @@ describe("LlmService", () => {
 
     expect(llmProvider.generateText.mock.calls[0]?.[0]).toEqual({
       userPrompt: "hello",
+    });
+  });
+
+  it("forwards abort signals for internal parsed requests", async () => {
+    const abortController = new AbortController();
+    llmProvider.generateText.mockResolvedValue({
+      text: "answer",
+      model: "default-model",
+    });
+
+    await llmService.generateTextFromParsedRequest(
+      {
+        userPrompt: " hello ",
+      },
+      { signal: abortController.signal },
+    );
+
+    expect(llmProvider.generateText.mock.calls[0]?.[0]).toEqual({
+      userPrompt: "hello",
+    });
+    expect(llmProvider.generateText.mock.calls[0]?.[1]).toEqual({
+      signal: abortController.signal,
     });
   });
 

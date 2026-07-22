@@ -1,9 +1,17 @@
-import type { StorylineSnapshot } from "@kimiko/schema";
-import { GetRecentStorylineResponseSchema } from "@kimiko/schema";
+import type {
+  StoryCharacterSummarySnapshot,
+  StorylineId,
+  StorylineSnapshot,
+} from "@kimiko/schema";
+import {
+  GetRecentStorylineResponseSchema,
+  GetStorylineSummaryResponseSchema,
+} from "@kimiko/schema";
 import { clearAuthSession, getStoredAuthSession } from "../auth/authApi";
 
 const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
 const defaultRestoreErrorMessage = "恢复故事线失败，请稍后重试";
+const defaultSummaryErrorMessage = "获取角色摘要失败，请稍后重试";
 
 export type GetRecentStorylineResult =
   | Readonly<{ status: "success"; storyline: StorylineSnapshot | null }>
@@ -53,6 +61,66 @@ export async function getRecentStoryline(): Promise<GetRecentStorylineResult> {
     return {
       status: "failed",
       message: defaultRestoreErrorMessage,
+    };
+  }
+}
+
+export type GetStorylineSummaryResult =
+  | Readonly<{
+      status: "success";
+      summary: StoryCharacterSummarySnapshot | null;
+    }>
+  | Readonly<{ status: "authRequired" }>
+  | Readonly<{ status: "failed"; message: string }>;
+
+export async function getStorylineSummary(
+  storylineId: StorylineId,
+): Promise<GetStorylineSummaryResult> {
+  const authSession = getStoredAuthSession();
+  if (authSession === null) {
+    return { status: "authRequired" };
+  }
+
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/storylines/${encodeURIComponent(storylineId)}/summary`,
+      {
+        headers: {
+          Authorization: `Bearer ${authSession.session.accessToken}`,
+        },
+        method: "GET",
+      },
+    );
+
+    if (response.status === 401) {
+      clearAuthSession();
+      return { status: "authRequired" };
+    }
+
+    const responseBody = await readJsonResponse(response);
+    if (!response.ok) {
+      return {
+        status: "failed",
+        message: defaultSummaryErrorMessage,
+      };
+    }
+
+    const result = GetStorylineSummaryResponseSchema.safeParse(responseBody);
+    if (!result.success) {
+      return {
+        status: "failed",
+        message: defaultSummaryErrorMessage,
+      };
+    }
+
+    return {
+      status: "success",
+      summary: result.data.summary,
+    };
+  } catch {
+    return {
+      status: "failed",
+      message: defaultSummaryErrorMessage,
     };
   }
 }

@@ -10,7 +10,10 @@ import type { GenerateLlmTextRequest } from "@kimiko/schema";
 import { OpenAiCompatibleProvider } from "./openai-compatible.provider";
 
 class UnspecifiedProvider implements LlmProvider {
-  async generateText(_input: GenerateLlmTextRequest): Promise<never> {
+  async generateText(
+    _input: GenerateLlmTextRequest,
+    _options?: Readonly<{ signal: AbortSignal }>,
+  ): Promise<never> {
     throw new ServiceUnavailableException(
       "LLM provider is not configured. Set LLM_BASE_URL, LLM_API_KEY, and LLM_MODEL.",
     );

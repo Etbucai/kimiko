@@ -17,6 +17,7 @@ export type LlmTextStreamEvent =
 export interface LlmProvider {
   generateText(
     input: GenerateLlmTextRequest,
+    options?: Readonly<{ signal: AbortSignal }>,
   ): Promise<GenerateLlmTextResponse>;
 
   streamText(

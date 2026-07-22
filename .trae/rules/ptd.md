@@ -2,6 +2,10 @@
 alwaysApply: false
 globs: docs/**/*.md
 ---
+# 需求方案
+- 需求方案中不应考虑技术实现。
+- 注重从用户产品角度考虑需求。
+
 # 前端技术方案
 - 前端技术方案要包含 idl schema 部分
 - 如果用户指定了 prd markdown 文件，前端技术方案要输出在该文件旁边，文件名与 prd 文件相同，附加 -fe.md 后缀

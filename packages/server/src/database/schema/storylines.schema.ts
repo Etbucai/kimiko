@@ -59,9 +59,35 @@ export const storylineSegments = sqliteTable(
   ],
 );
 
+export const storylineSummaries = sqliteTable(
+  "storyline_summary",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    storylineId: integer("storyline_id")
+      .notNull()
+      .references(() => storylines.id, { onDelete: "cascade" }),
+    charactersJson: text("characters_json").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .$defaultFn(() => new Date())
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .$defaultFn(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("storyline_summary_storyline_id_unique").on(
+      table.storylineId,
+    ),
+  ],
+);
+
 export type Storyline = InferSelectModel<typeof storylines>;
 export type NewStoryline = InferInsertModel<typeof storylines>;
 export type StorylineSegment = InferSelectModel<typeof storylineSegments>;
 export type NewStorylineSegment = InferInsertModel<
   typeof storylineSegments
+>;
+export type StorylineSummary = InferSelectModel<typeof storylineSummaries>;
+export type NewStorylineSummary = InferInsertModel<
+  typeof storylineSummaries
 >;

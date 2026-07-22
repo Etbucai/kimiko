@@ -41,6 +41,7 @@ export interface OpenAiClientLike {
     completions: {
       create(
         body: ChatCompletionCreateParamsNonStreaming,
+        options?: Readonly<{ signal: AbortSignal }>,
       ): Promise<ChatCompletion>;
       create(
         body: ChatCompletionCreateParamsStreaming,
@@ -62,8 +63,9 @@ export class OpenAiCompatibleProvider implements LlmProvider {
 
   async generateText(
     input: GenerateLlmTextRequest,
+    options?: Readonly<{ signal: AbortSignal }>,
   ): Promise<GenerateLlmTextResponse> {
-    const completion = await this.createChatCompletion(input);
+    const completion = await this.createChatCompletion(input, options);
     return mapCompletionToGenerateTextResponse(completion);
   }
 
@@ -113,12 +115,17 @@ export class OpenAiCompatibleProvider implements LlmProvider {
 
   private async createChatCompletion(
     input: GenerateLlmTextRequest,
+    options?: Readonly<{ signal: AbortSignal }>,
   ): Promise<ChatCompletion> {
     try {
-      return await this.client.chat.completions.create({
+      const request = {
         model: this.config.model,
         messages: buildChatCompletionMessages(input),
-      });
+      } satisfies ChatCompletionCreateParamsNonStreaming;
+
+      return options === undefined
+        ? await this.client.chat.completions.create(request)
+        : await this.client.chat.completions.create(request, options);
     } catch (error: unknown) {
       throw mapOpenAiError(error);
     }

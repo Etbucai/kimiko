@@ -73,7 +73,7 @@ describe("LlmController (e2e)", () => {
     const llmProvider: jest.Mocked<LlmProvider> = {
       generateText: jest.fn<
         Promise<GenerateLlmTextResponse>,
-        [GenerateLlmTextRequest]
+        [GenerateLlmTextRequest, Readonly<{ signal: AbortSignal }>?]
       >(),
       streamText: jest.fn<
         AsyncIterable<LlmTextStreamEvent>,

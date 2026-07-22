@@ -12,16 +12,27 @@ import type {
 } from "@kimiko/schema";
 import { and, desc, eq } from "drizzle-orm";
 import { DatabaseService } from "../database/database.service";
-import { storylineSegments, storylines } from "../database/schema";
+import {
+  storylineSegments,
+  storylineSummaries,
+  storylines,
+} from "../database/schema";
 import type { StoryLlmContext, StoryHistoryRound } from "../story/story.service";
 import { StorylineNotFoundError, StorylineSaveFailedError } from "./storyline.errors";
+import {
+  StoryCharacterSummarySnapshotSchema,
+  type StoryCharacterSummarySnapshot,
+} from "./storyline-summary.types";
 import type {
   SaveAppendedSegmentInput,
+  SaveAppendedSegmentWithSummaryInput,
   SaveCreatedStorylineInput,
+  SaveCreatedStorylineWithSummaryInput,
   StorylineRecord,
 } from "./storyline.types";
 
 type StorylineSegmentRow = typeof storylineSegments.$inferSelect;
+type StorylineSummaryRow = typeof storylineSummaries.$inferSelect;
 
 @Injectable()
 export class StorylineService {
@@ -109,13 +120,29 @@ export class StorylineService {
     const historyRounds = historyWasTrimmed
       ? generatedRounds.slice(-input.historyRoundLimit)
       : generatedRounds;
+    const characterSummary = await this.getCharacterSummaryByInternalStorylineId(
+      storyline.id,
+    );
 
     return {
       currentInstruction: input.currentInstruction,
       ...(historyWasTrimmed ? {} : { initialStoryText: initialSegment.text }),
+      ...(characterSummary !== null ? { characterSummary } : {}),
       historyRounds,
       historyWasTrimmed,
     };
+  }
+
+  async getCharacterSummaryForUser(
+    userId: string,
+    storylineId: string,
+  ): Promise<StoryCharacterSummarySnapshot | null> {
+    const storyline = await this.getStorylineForUser(userId, storylineId);
+    if (storyline === null) {
+      throw new StorylineNotFoundError();
+    }
+
+    return this.getCharacterSummaryByInternalStorylineId(storyline.id);
   }
 
   async saveCreatedStoryline(
@@ -170,6 +197,85 @@ export class StorylineService {
         if (generatedSegment === undefined) {
           throw new Error("Failed to insert generated segment");
         }
+
+        return {
+          storylineId: createdStoryline.id,
+          generatedSegmentId: generatedSegment.id,
+        };
+      });
+    } catch (error: unknown) {
+      throw new StorylineSaveFailedError(toErrorMessage(error));
+    }
+
+    return this.getCompletedSnapshot(savedIds);
+  }
+
+  async saveCreatedStorylineWithSummary(
+    input: SaveCreatedStorylineWithSummaryInput,
+  ): Promise<CompletedStorylineSnapshot> {
+    const internalUserId = parseAuthenticatedUserId(input.userId);
+    const charactersJson = serializeCharacterSummary(input.characterSummary);
+    let savedIds: Readonly<{ storylineId: number; generatedSegmentId: number }>;
+
+    try {
+      savedIds = this.databaseService.db.transaction((transaction) => {
+        const now = new Date();
+        const createdStoryline = transaction
+          .insert(storylines)
+          .values({
+            userId: internalUserId,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .returning({ id: storylines.id })
+          .get();
+
+        if (createdStoryline === undefined) {
+          throw new Error("Failed to insert storyline");
+        }
+
+        transaction
+          .insert(storylineSegments)
+          .values({
+            storylineId: createdStoryline.id,
+            orderIndex: 0,
+            type: "initial",
+            text: input.initialStoryText.trim(),
+            createdAt: now,
+          })
+          .run();
+
+        const generatedSegment = transaction
+          .insert(storylineSegments)
+          .values({
+            storylineId: createdStoryline.id,
+            orderIndex: 1,
+            type: "generated",
+            text: input.generatedText.trim(),
+            instruction: input.instruction.trim(),
+            model: input.model,
+            elapsedMs: input.elapsedMs,
+            inputTokens: input.usage.inputTokens,
+            outputTokens: input.usage.outputTokens,
+            totalTokens: input.usage.totalTokens,
+            createdAt: now,
+          })
+          .returning({ id: storylineSegments.id })
+          .get();
+
+        if (generatedSegment === undefined) {
+          throw new Error("Failed to insert generated segment");
+        }
+
+        transaction
+          .insert(storylineSummaries)
+          .values({
+            storylineId: createdStoryline.id,
+            charactersJson,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .run();
 
         return {
           storylineId: createdStoryline.id,
@@ -269,6 +375,110 @@ export class StorylineService {
     return this.getCompletedSnapshot(savedIds);
   }
 
+  async saveAppendedSegmentWithSummary(
+    input: SaveAppendedSegmentWithSummaryInput,
+  ): Promise<CompletedStorylineSnapshot> {
+    const internalUserId = parseAuthenticatedUserId(input.userId);
+    const internalStorylineId = parseExternalId(input.storylineId);
+    if (internalStorylineId === null) {
+      throw new StorylineNotFoundError();
+    }
+
+    const charactersJson = serializeCharacterSummary(input.characterSummary);
+    let savedIds: Readonly<{ storylineId: number; generatedSegmentId: number }>;
+
+    try {
+      savedIds = this.databaseService.db.transaction((transaction) => {
+        const storyline = transaction
+          .select()
+          .from(storylines)
+          .where(
+            and(
+              eq(storylines.id, internalStorylineId),
+              eq(storylines.userId, internalUserId),
+            ),
+          )
+          .limit(1)
+          .get();
+
+        if (storyline === undefined) {
+          throw new StorylineNotFoundError();
+        }
+
+        const latestSegment = transaction
+          .select({ orderIndex: storylineSegments.orderIndex })
+          .from(storylineSegments)
+          .where(eq(storylineSegments.storylineId, internalStorylineId))
+          .orderBy(desc(storylineSegments.orderIndex))
+          .limit(1)
+          .get();
+
+        if (latestSegment === undefined) {
+          throw new Error("Storyline has no segments");
+        }
+
+        const now = new Date();
+        const generatedSegment = transaction
+          .insert(storylineSegments)
+          .values({
+            storylineId: internalStorylineId,
+            orderIndex: latestSegment.orderIndex + 1,
+            type: "generated",
+            text: input.generatedText.trim(),
+            instruction: input.instruction.trim(),
+            model: input.model,
+            elapsedMs: input.elapsedMs,
+            inputTokens: input.usage.inputTokens,
+            outputTokens: input.usage.outputTokens,
+            totalTokens: input.usage.totalTokens,
+            createdAt: now,
+          })
+          .returning({ id: storylineSegments.id })
+          .get();
+
+        if (generatedSegment === undefined) {
+          throw new Error("Failed to insert generated segment");
+        }
+
+        transaction
+          .insert(storylineSummaries)
+          .values({
+            storylineId: internalStorylineId,
+            charactersJson,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .onConflictDoUpdate({
+            target: storylineSummaries.storylineId,
+            set: {
+              charactersJson,
+              updatedAt: now,
+            },
+          })
+          .run();
+
+        transaction
+          .update(storylines)
+          .set({ updatedAt: now })
+          .where(eq(storylines.id, internalStorylineId))
+          .run();
+
+        return {
+          storylineId: internalStorylineId,
+          generatedSegmentId: generatedSegment.id,
+        };
+      });
+    } catch (error: unknown) {
+      if (error instanceof StorylineNotFoundError) {
+        throw error;
+      }
+
+      throw new StorylineSaveFailedError(toErrorMessage(error));
+    }
+
+    return this.getCompletedSnapshot(savedIds);
+  }
+
   private async getCompletedSnapshot(
     savedIds: Readonly<{ storylineId: number; generatedSegmentId: number }>,
   ): Promise<CompletedStorylineSnapshot> {
@@ -328,6 +538,18 @@ export class StorylineService {
       .from(storylineSegments)
       .where(eq(storylineSegments.storylineId, storylineId))
       .orderBy(storylineSegments.orderIndex);
+  }
+
+  private async getCharacterSummaryByInternalStorylineId(
+    storylineId: number,
+  ): Promise<StoryCharacterSummarySnapshot | null> {
+    const [summary] = await this.databaseService.db
+      .select()
+      .from(storylineSummaries)
+      .where(eq(storylineSummaries.storylineId, storylineId))
+      .limit(1);
+
+    return summary === undefined ? null : parseCharacterSummary(summary);
   }
 }
 
@@ -420,6 +642,35 @@ function parseExternalId(value: string): number | null {
 
 function dateToIsoString(value: Date): string {
   return value.toISOString();
+}
+
+function parseCharacterSummary(
+  summary: StorylineSummaryRow,
+): StoryCharacterSummarySnapshot {
+  let parsedValue: unknown;
+  try {
+    parsedValue = JSON.parse(summary.charactersJson) as unknown;
+  } catch {
+    throw new InternalServerErrorException("Storyline summary is invalid");
+  }
+
+  const result = StoryCharacterSummarySnapshotSchema.safeParse(parsedValue);
+  if (!result.success) {
+    throw new InternalServerErrorException("Storyline summary is invalid");
+  }
+
+  return result.data;
+}
+
+function serializeCharacterSummary(
+  summary: StoryCharacterSummarySnapshot,
+): string {
+  const result = StoryCharacterSummarySnapshotSchema.safeParse(summary);
+  if (!result.success) {
+    throw new StorylineSaveFailedError("Storyline summary is invalid");
+  }
+
+  return JSON.stringify(result.data);
 }
 
 function toErrorMessage(error: unknown): string {

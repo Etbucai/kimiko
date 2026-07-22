@@ -1,5 +1,7 @@
 import { Controller, Get, UseGuards } from "@nestjs/common";
+import { Param } from "@nestjs/common";
 import type { GetRecentStorylineResponse } from "@kimiko/schema";
+import type { GetStorylineSummaryResponse } from "@kimiko/schema";
 import type { AuthenticatedUser } from "../auth/auth.types";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
@@ -15,5 +17,19 @@ export class StorylineController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<GetRecentStorylineResponse> {
     return this.storylineService.getRecentStoryline(user.userId);
+  }
+
+  @Get(":storylineId/summary")
+  @UseGuards(JwtAuthGuard)
+  async getSummary(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("storylineId") storylineId: string,
+  ): Promise<GetStorylineSummaryResponse> {
+    const summary = await this.storylineService.getCharacterSummaryForUser(
+      user.userId,
+      storylineId,
+    );
+
+    return { summary };
   }
 }

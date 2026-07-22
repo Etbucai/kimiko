@@ -145,6 +145,32 @@ describe("OpenAiCompatibleProvider", () => {
     });
   });
 
+  it("passes abort signals to non-streaming completions", async () => {
+    client.chat.completions.create.mockResolvedValue({
+      model: "default-model",
+      choices: [
+        {
+          finish_reason: "stop",
+          message: {
+            content: "answer",
+          },
+        },
+      ],
+    } as ChatCompletion);
+    const abortController = new AbortController();
+
+    await provider.generateText(
+      {
+        userPrompt: "hello",
+      },
+      { signal: abortController.signal },
+    );
+
+    expect(client.chat.completions.create.mock.calls[0]?.[1]).toEqual({
+      signal: abortController.signal,
+    });
+  });
+
   it("maps timeout and connection failures to Nest exceptions", async () => {
     client.chat.completions.create.mockRejectedValue(
       new APIConnectionTimeoutError(),

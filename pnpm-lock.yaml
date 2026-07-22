@@ -240,6 +240,9 @@ importers:
       ws:
         specifier: 'catalog:'
         version: 8.21.1
+      zod:
+        specifier: 'catalog:'
+        version: 4.4.3
     devDependencies:
       '@nestjs/cli':
         specifier: 'catalog:'

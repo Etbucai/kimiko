@@ -268,6 +268,41 @@ export type GetRecentStorylineResponse = z.infer<
   typeof GetRecentStorylineResponseSchema
 >;
 
+export const StoryCharacterSummarySchema = z
+  .object({
+    name: z.string().trim().min(1).max(80),
+    aliases: z.array(z.string().trim().min(1).max(80)).max(5),
+    identity: z.string().trim().min(1).max(240),
+    relationships: z.array(z.string().trim().min(1).max(240)).max(12),
+    motivation: z.string().trim().max(240),
+    currentStatus: z.string().trim().max(240),
+  })
+  .strict();
+
+export type StoryCharacterSummary = z.infer<
+  typeof StoryCharacterSummarySchema
+>;
+
+export const StoryCharacterSummarySnapshotSchema = z
+  .object({
+    characters: z.array(StoryCharacterSummarySchema).max(12),
+  })
+  .strict();
+
+export type StoryCharacterSummarySnapshot = z.infer<
+  typeof StoryCharacterSummarySnapshotSchema
+>;
+
+export const GetStorylineSummaryResponseSchema = z
+  .object({
+    summary: StoryCharacterSummarySnapshotSchema.nullable(),
+  })
+  .strict();
+
+export type GetStorylineSummaryResponse = z.infer<
+  typeof GetStorylineSummaryResponseSchema
+>;
+
 export const StoryContinueCreatePayloadSchema = z
   .object({
     mode: z.literal("create"),
@@ -359,6 +394,17 @@ export type StoryChunkServerEvent = z.infer<
   typeof StoryChunkServerEventSchema
 >;
 
+export const StorySummaryStartedServerEventSchema = z
+  .object({
+    type: z.literal("story.summary.started"),
+    requestId: StoryRealtimeRequestIdSchema,
+  })
+  .strict();
+
+export type StorySummaryStartedServerEvent = z.infer<
+  typeof StorySummaryStartedServerEventSchema
+>;
+
 export const StoryCompletedServerEventSchema = z
   .object({
     type: z.literal("story.completed"),
@@ -394,6 +440,7 @@ export const StoryRealtimeErrorCodeSchema = z.enum([
   "STORYLINE_NOT_FOUND",
   "STORYLINE_BUSY",
   "STORYLINE_SAVE_FAILED",
+  "STORY_SUMMARY_FAILED",
 ]);
 
 export type StoryRealtimeErrorCode = z.infer<
@@ -417,6 +464,7 @@ export type StoryErrorServerEvent = z.infer<
 export const StoryRealtimeServerEventSchema = z.discriminatedUnion("type", [
   StoryStartedServerEventSchema,
   StoryChunkServerEventSchema,
+  StorySummaryStartedServerEventSchema,
   StoryCompletedServerEventSchema,
   StoryCancelledServerEventSchema,
   StoryErrorServerEventSchema,

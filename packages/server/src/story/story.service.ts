@@ -11,6 +11,7 @@ import type {
 } from "@kimiko/schema";
 import { ContinueStoryRequestSchema } from "@kimiko/schema";
 import { LlmService } from "../llm/llm.service";
+import type { StoryCharacterSummarySnapshot } from "../storyline/storyline-summary.types";
 
 type SchemaParseResult<T> =
   | Readonly<{ success: true; data: T }>
@@ -54,6 +55,7 @@ export interface StoryHistoryRound {
 export interface StoryLlmContext {
   readonly currentInstruction: string;
   readonly initialStoryText?: string;
+  readonly characterSummary?: StoryCharacterSummarySnapshot;
   readonly historyRounds: readonly StoryHistoryRound[];
   readonly historyWasTrimmed: boolean;
 }
@@ -156,7 +158,14 @@ export function buildStoryLlmRequestFromContext(
 
 function buildStoryUserPromptFromContext(context: StoryLlmContext): string {
   const promptParts: string[] = [];
+  const characterSummaryText = formatCharacterSummary(
+    context.characterSummary,
+  );
   const initialStoryText = context.initialStoryText?.trim();
+
+  if (characterSummaryText !== undefined) {
+    promptParts.push("角色摘要：", characterSummaryText, "");
+  }
 
   if (initialStoryText !== undefined && initialStoryText.length > 0) {
     promptParts.push("故事正文：", initialStoryText, "");
@@ -197,6 +206,19 @@ function buildStoryUserPromptFromContext(context: StoryLlmContext): string {
   promptParts.push("当前续写指令：", context.currentInstruction);
 
   return promptParts.join("\n");
+}
+
+function formatCharacterSummary(
+  characterSummary: StoryCharacterSummarySnapshot | undefined,
+): string | undefined {
+  if (
+    characterSummary === undefined ||
+    characterSummary.characters.length === 0
+  ) {
+    return undefined;
+  }
+
+  return JSON.stringify(characterSummary, null, 2);
 }
 
 function normalizeGeneratedStory(value: string): string {

@@ -18,6 +18,7 @@ import {
   StorylineBusyError,
   StorylineNotFoundError,
   StorylineSaveFailedError,
+  StorySummaryFailedError,
 } from "../storyline/storyline.errors";
 import { StorylineGenerationService } from "../storyline/storyline-generation.service";
 import type { StorylineStreamEvent } from "../storyline/storyline.types";
@@ -41,6 +42,7 @@ const errorMessages: Record<RealtimeErrorCode, string> = {
   STORYLINE_NOT_FOUND: "故事线不存在",
   STORYLINE_BUSY: "当前故事线正在生成，请稍后重试",
   STORYLINE_SAVE_FAILED: "保存失败，请稍后重试",
+  STORY_SUMMARY_FAILED: "生成失败，请稍后重试",
 };
 
 @Injectable()
@@ -211,6 +213,14 @@ export class RealtimeGateway
       return;
     }
 
+    if (event.type === "summaryStarted") {
+      sendEvent(client, {
+        type: "story.summary.started",
+        requestId,
+      });
+      return;
+    }
+
     sendEvent(client, {
       type: "story.completed",
       requestId,
@@ -348,6 +358,10 @@ function mapStreamErrorCode(error: unknown): RealtimeErrorCode {
 
   if (error instanceof StorylineSaveFailedError) {
     return "STORYLINE_SAVE_FAILED";
+  }
+
+  if (error instanceof StorySummaryFailedError) {
+    return "STORY_SUMMARY_FAILED";
   }
 
   if (error instanceof BadGatewayException) {

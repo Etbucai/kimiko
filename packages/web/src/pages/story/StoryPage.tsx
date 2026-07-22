@@ -2,17 +2,22 @@ import type { JSX } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import type {
+  StoryCharacterSummarySnapshot,
   StoryContinuePayload,
   StorylineGenerationMetadata,
   StorylineSnapshot,
 } from "@kimiko/schema";
 import type { StoryRealtimeGenerationHandle } from "../../story/storyRealtimeApi";
 import { startStoryRealtimeGeneration } from "../../story/storyRealtimeApi";
-import { getRecentStoryline } from "../../story/storylineApi";
+import {
+  getRecentStoryline,
+  getStorylineSummary,
+} from "../../story/storylineApi";
 import { StoryInitialInput } from "./StoryInitialInput";
 import { StorylineComposer } from "./StorylineComposer";
 import { StorylineReader } from "./StorylineReader";
 import { StorylineRestoreError } from "./StorylineRestoreError";
+import { StorySummaryDrawer } from "./StorySummaryDrawer";
 
 type StorylinePageStatus =
   | "loading"
@@ -20,6 +25,7 @@ type StorylinePageStatus =
   | "ready"
   | "connecting"
   | "streaming"
+  | "summarizing"
   | "completed"
   | "cancelled"
   | "failed"
@@ -34,9 +40,13 @@ type PayloadValidationResult =
   | Readonly<{ success: true; payload: StoryContinuePayload }>
   | Readonly<{ success: false; fieldErrors: StorylineFieldErrors }>;
 
+type TemporaryTextStatus = "streaming" | "summarizing" | null;
+type SummaryDrawerStatus = "idle" | "loading" | "success" | "failed";
+
 const generationFailureMessage = "生成失败，请稍后重试";
 const generationCancelledMessage = "已取消生成";
 const restoreFailureMessage = "恢复故事线失败，请稍后重试";
+const summaryFailureMessage = "获取角色摘要失败，请稍后重试";
 const bottomScrollThresholdPx = 140;
 
 export function StoryPage(): JSX.Element {
@@ -56,9 +66,21 @@ export function StoryPage(): JSX.Element {
     restoreFailureMessage,
   );
   const [generationStatusMessage, setGenerationStatusMessage] = useState("");
+  const [isSummaryDrawerOpen, setIsSummaryDrawerOpen] = useState(false);
+  const [summaryDrawerStatus, setSummaryDrawerStatus] =
+    useState<SummaryDrawerStatus>("idle");
+  const [characterSummary, setCharacterSummary] =
+    useState<StoryCharacterSummarySnapshot | null>(null);
+  const [summaryErrorMessage, setSummaryErrorMessage] = useState(
+    summaryFailureMessage,
+  );
 
-  const isGenerating = status === "connecting" || status === "streaming";
+  const isGenerating =
+    status === "connecting" ||
+    status === "streaming" ||
+    status === "summarizing";
   const isComposerVisible = status !== "loading" && status !== "restoreFailed";
+  const temporaryTextStatus = getTemporaryTextStatus(status);
 
   const restoreStoryline = useCallback(async (): Promise<void> => {
     const requestId = restoreRequestIdRef.current + 1;
@@ -70,6 +92,10 @@ export function StoryPage(): JSX.Element {
     setTemporaryGeneratedText("");
     setFieldErrors({});
     setGenerationStatusMessage("");
+    setIsSummaryDrawerOpen(false);
+    setSummaryDrawerStatus("idle");
+    setCharacterSummary(null);
+    setSummaryErrorMessage(summaryFailureMessage);
 
     const result = await getRecentStoryline();
     if (!isMountedRef.current || restoreRequestIdRef.current !== requestId) {
@@ -121,7 +147,7 @@ export function StoryPage(): JSX.Element {
     });
 
     return () => cancelAnimationFrame(frameId);
-  }, [storyline, temporaryGeneratedText]);
+  }, [status, storyline, temporaryGeneratedText]);
 
   function handleInitialStoryTextChange(value: string): void {
     setInitialStoryText(value);
@@ -172,6 +198,10 @@ export function StoryPage(): JSX.Element {
           setStatus("streaming");
           setTemporaryGeneratedText((previousText) => `${previousText}${delta}`);
         },
+        onSummaryStarted() {
+          shouldFollowScrollRef.current = isNearBottom();
+          setStatus("summarizing");
+        },
         onCompleted(event) {
           generationHandleRef.current = null;
           shouldFollowScrollRef.current = isNearBottom();
@@ -208,6 +238,47 @@ export function StoryPage(): JSX.Element {
     generationHandleRef.current?.cancel();
   }
 
+  function handleOpenSummary(): void {
+    if (storyline === null) {
+      return;
+    }
+
+    setIsSummaryDrawerOpen(true);
+    void loadSummary(storyline.id);
+  }
+
+  function handleRetrySummary(): void {
+    if (storyline === null) {
+      return;
+    }
+
+    void loadSummary(storyline.id);
+  }
+
+  async function loadSummary(storylineId: string): Promise<void> {
+    setSummaryDrawerStatus("loading");
+    setSummaryErrorMessage(summaryFailureMessage);
+
+    const result = await getStorylineSummary(storylineId);
+    if (!isMountedRef.current) {
+      return;
+    }
+
+    if (result.status === "authRequired") {
+      void navigate("/login", { replace: true });
+      return;
+    }
+
+    if (result.status === "failed") {
+      setSummaryErrorMessage(result.message);
+      setSummaryDrawerStatus("failed");
+      return;
+    }
+
+    setCharacterSummary(result.summary);
+    setSummaryDrawerStatus("success");
+  }
+
   const latestGeneration = storyline?.latestGeneration ?? null;
 
   return (
@@ -231,9 +302,9 @@ export function StoryPage(): JSX.Element {
           <>
             {storyline !== null ? (
               <StorylineReader
-                isStreaming={status === "streaming"}
                 storyline={storyline}
                 temporaryGeneratedText={temporaryGeneratedText}
+                temporaryTextStatus={temporaryTextStatus}
               />
             ) : (
               <>
@@ -245,7 +316,7 @@ export function StoryPage(): JSX.Element {
                 />
                 {temporaryGeneratedText.length > 0 ? (
                   <TemporaryGeneratedText
-                    isStreaming={status === "streaming"}
+                    status={temporaryTextStatus}
                     text={temporaryGeneratedText}
                   />
                 ) : null}
@@ -253,7 +324,10 @@ export function StoryPage(): JSX.Element {
             )}
 
             {latestGeneration !== null ? (
-              <LatestGenerationMetadata metadata={latestGeneration} />
+              <LatestGenerationMetadata
+                metadata={latestGeneration}
+                onOpenSummary={handleOpenSummary}
+              />
             ) : null}
 
             {generationStatusMessage.length > 0 ? (
@@ -277,6 +351,15 @@ export function StoryPage(): JSX.Element {
           value={instruction}
         />
       ) : null}
+
+      <StorySummaryDrawer
+        errorMessage={summaryErrorMessage}
+        isOpen={isSummaryDrawerOpen}
+        onClose={() => setIsSummaryDrawerOpen(false)}
+        onRetry={handleRetrySummary}
+        status={summaryDrawerStatus}
+        summary={characterSummary}
+      />
     </main>
   );
 }
@@ -335,6 +418,19 @@ function isNearBottom(): boolean {
   return scrollBottom <= bottomScrollThresholdPx;
 }
 
+function getTemporaryTextStatus(
+  status: StorylinePageStatus,
+): TemporaryTextStatus {
+  switch (status) {
+    case "streaming":
+      return "streaming";
+    case "summarizing":
+      return "summarizing";
+    default:
+      return null;
+  }
+}
+
 function removeFieldError(
   fieldErrors: StorylineFieldErrors,
   field: keyof StorylineFieldErrors,
@@ -360,12 +456,12 @@ function StorylineLoading(): JSX.Element {
 }
 
 interface TemporaryGeneratedTextProps {
-  isStreaming: boolean;
+  status: TemporaryTextStatus;
   text: string;
 }
 
 function TemporaryGeneratedText({
-  isStreaming,
+  status,
   text,
 }: TemporaryGeneratedTextProps): JSX.Element {
   return (
@@ -376,9 +472,9 @@ function TemporaryGeneratedText({
       <p className="m-0 whitespace-pre-wrap text-base leading-8 text-[var(--text-h)]">
         {text}
       </p>
-      {isStreaming ? (
+      {status !== null ? (
         <p className="mt-4 mb-0 text-xs text-[var(--text)]" role="status">
-          正在生成...
+          {status === "streaming" ? "正在生成..." : "正在记录角色摘要..."}
         </p>
       ) : null}
     </article>
@@ -387,16 +483,27 @@ function TemporaryGeneratedText({
 
 interface LatestGenerationMetadataProps {
   metadata: StorylineGenerationMetadata;
+  onOpenSummary: () => void;
 }
 
 function LatestGenerationMetadata({
   metadata,
+  onOpenSummary,
 }: LatestGenerationMetadataProps): JSX.Element {
   return (
-    <p className="m-0 rounded-2xl border border-[var(--border)] bg-[var(--panel-bg)] px-4 py-3 text-xs leading-5 text-[var(--text)]">
-      模型：{metadata.model} / 耗时：{metadata.elapsedMs}ms / Token：
-      {metadata.usage.totalTokens}
-    </p>
+    <div className="flex flex-col gap-2 rounded-2xl border border-[var(--border)] bg-[var(--panel-bg)] px-4 py-3 text-xs leading-5 text-[var(--text)] md:flex-row md:items-center md:justify-between">
+      <p className="m-0">
+        模型：{metadata.model} / 耗时：{metadata.elapsedMs}ms / Token：
+        {metadata.usage.totalTokens}
+      </p>
+      <button
+        className="self-start rounded-full border border-[var(--border)] bg-transparent px-3 py-1 font-semibold text-[var(--text-h)] md:self-auto"
+        onClick={onOpenSummary}
+        type="button"
+      >
+        查看角色摘要
+      </button>
+    </div>
   );
 }
 

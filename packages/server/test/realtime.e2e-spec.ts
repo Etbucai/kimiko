@@ -11,6 +11,7 @@ import type {
 import {
   GetRecentStorylineResponseSchema,
   LoginUserResponseSchema,
+  GetStorylineSummaryResponseSchema,
   StoryRealtimeServerEventSchema,
 } from "@kimiko/schema";
 import type { Server } from "node:http";
@@ -67,7 +68,7 @@ describe("RealtimeGateway (e2e)", () => {
     );
     await waitOneTick();
 
-    const eventsPromise = readEvents(socket, 4);
+    const eventsPromise = readEvents(socket, 5);
 
     socket.send(
       JSON.stringify({
@@ -83,7 +84,7 @@ describe("RealtimeGateway (e2e)", () => {
 
     const events = await eventsPromise;
 
-    expect(events.slice(0, 3)).toEqual([
+    expect(events.slice(0, 4)).toEqual([
       {
         type: "story.started",
         requestId: "request-1",
@@ -100,8 +101,12 @@ describe("RealtimeGateway (e2e)", () => {
         sequence: 2,
         delta: "走向钟楼。",
       },
+      {
+        type: "story.summary.started",
+        requestId: "request-1",
+      },
     ]);
-    expect(events[3]).toMatchObject({
+    expect(events[4]).toMatchObject({
       type: "story.completed",
       requestId: "request-1",
       generatedSegmentId: expect.stringMatching(/^[1-9]\d*$/) as string,
@@ -138,6 +143,12 @@ describe("RealtimeGateway (e2e)", () => {
     expect(llmProvider.streamText.mock.calls[0]?.[0].userPrompt).toContain(
       "雨停以后。",
     );
+    expect(llmProvider.generateText.mock.calls[0]?.[0].systemPrompt).toContain(
+      "角色摘要维护器",
+    );
+    expect(llmProvider.generateText.mock.calls[0]?.[0].userPrompt).toContain(
+      "林夏走向钟楼。",
+    );
 
     const recentResponse = await request(app.getHttpServer())
       .get("/storylines/recent")
@@ -160,6 +171,82 @@ describe("RealtimeGateway (e2e)", () => {
         },
       ],
     });
+    expect(recentStoryline.storyline).not.toHaveProperty("summary");
+
+    const createdStorylineId = recentStoryline.storyline?.id;
+    expect(createdStorylineId).toEqual(expect.stringMatching(/^[1-9]\d*$/));
+    const summaryResponse = await request(app.getHttpServer())
+      .get(`/storylines/${createdStorylineId}/summary`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect(200);
+    const summaryResult = GetStorylineSummaryResponseSchema.parse(
+      summaryResponse.body as unknown,
+    );
+
+    expect(summaryResult.summary).toEqual({
+      characters: [
+        {
+          name: "林夏",
+          aliases: [],
+          identity: "调查旧钟楼的记者",
+          relationships: [],
+          motivation: "查清钟楼失踪案",
+          currentStatus: "正在前往钟楼",
+        },
+      ],
+    });
+
+    socket.close();
+  });
+
+  it("returns STORY_SUMMARY_FAILED and does not save the generated story when summary generation fails", async () => {
+    const llmProvider = createStreamingProvider({
+      summaryText: "not json",
+    });
+    app = await createApp(llmProvider);
+    const accessToken = await registerAndLogin(app, "summary_failure");
+    const socket = await connectWebSocket(
+      `${getRealtimeUrl(app)}?accessToken=${accessToken}`,
+    );
+    await waitOneTick();
+
+    const eventsPromise = readEvents(socket, 5);
+
+    socket.send(
+      JSON.stringify({
+        type: "story.continue",
+        requestId: "request-1",
+        payload: {
+          mode: "create",
+          initialStoryText: "雨停以后。",
+          instruction: "继续调查。",
+        },
+      }),
+    );
+
+    const events = await eventsPromise;
+
+    expect(events[3]).toEqual({
+      type: "story.summary.started",
+      requestId: "request-1",
+    });
+    expect(events[4]).toEqual({
+      type: "story.error",
+      requestId: "request-1",
+      code: "STORY_SUMMARY_FAILED",
+      message: "生成失败，请稍后重试",
+      retryable: true,
+    });
+
+    const recentResponse = await request(app.getHttpServer())
+      .get("/storylines/recent")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect(200);
+    const recentStoryline = GetRecentStorylineResponseSchema.parse(
+      recentResponse.body as unknown,
+    );
+
+    expect(recentStoryline.storyline).toBeNull();
 
     socket.close();
   });
@@ -232,7 +319,9 @@ async function waitOneTick(): Promise<void> {
   });
 }
 
-function createStreamingProvider(): jest.Mocked<LlmProvider> {
+function createStreamingProvider(
+  options: Readonly<{ summaryText?: string }> = {},
+): jest.Mocked<LlmProvider> {
   const llmProvider = createBaseProvider();
   llmProvider.streamText.mockReturnValue(
     createStream([
@@ -255,6 +344,23 @@ function createStreamingProvider(): jest.Mocked<LlmProvider> {
       },
     ]),
   );
+  llmProvider.generateText.mockResolvedValue({
+    text:
+      options.summaryText ??
+      JSON.stringify({
+        characters: [
+          {
+            name: "林夏",
+            aliases: [],
+            identity: "调查旧钟楼的记者",
+            relationships: [],
+            motivation: "查清钟楼失踪案",
+            currentStatus: "正在前往钟楼",
+          },
+        ],
+      }),
+    model: "summary-model",
+  });
 
   return llmProvider;
 }
@@ -272,7 +378,7 @@ function createBaseProvider(): jest.Mocked<LlmProvider> {
   return {
     generateText: jest.fn<
       Promise<GenerateLlmTextResponse>,
-      [GenerateLlmTextRequest]
+      [GenerateLlmTextRequest, Readonly<{ signal: AbortSignal }>?]
     >(),
     streamText: jest.fn<
       AsyncIterable<LlmTextStreamEvent>,

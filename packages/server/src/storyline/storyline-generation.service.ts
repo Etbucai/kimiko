@@ -1,13 +1,14 @@
 import { Injectable } from "@nestjs/common";
 import { Env } from "../env";
 import { StoryService } from "../story/story.service";
+import { StorylineNotFoundError } from "./storyline.errors";
 import { StorylineLockService } from "./storyline-lock.service";
 import { StorylineService } from "./storyline.service";
+import { StorylineSummaryService } from "./storyline-summary.service";
 import type {
   ContinueStorylineInput,
   StorylineStreamEvent,
 } from "./storyline.types";
-import { StorylineNotFoundError } from "./storyline.errors";
 
 @Injectable()
 export class StorylineGenerationService {
@@ -15,6 +16,7 @@ export class StorylineGenerationService {
     private readonly storylineService: StorylineService,
     private readonly storyService: StoryService,
     private readonly storylineLockService: StorylineLockService,
+    private readonly storylineSummaryService: StorylineSummaryService,
   ) {}
 
   async *streamContinueStoryline(
@@ -60,15 +62,37 @@ export class StorylineGenerationService {
           continue;
         }
 
-        const storyline = await this.storylineService.saveCreatedStoryline({
-          userId: input.userId,
-          initialStoryText: input.payload.initialStoryText,
-          instruction: input.payload.instruction,
-          generatedText: event.continuedStory,
-          model: event.model,
-          elapsedMs: event.elapsedMs,
-          usage: event.usage,
-        });
+        yield { type: "summaryStarted" };
+        if (options.signal.aborted) {
+          return;
+        }
+
+        const characterSummary =
+          await this.storylineSummaryService.generateCharacterSummary(
+            {
+              previousSummary: null,
+              initialStoryText: input.payload.initialStoryText,
+              recentHistoryRounds: [],
+              currentInstruction: input.payload.instruction,
+              generatedText: event.continuedStory,
+            },
+            options,
+          );
+        if (options.signal.aborted) {
+          return;
+        }
+
+        const storyline =
+          await this.storylineService.saveCreatedStorylineWithSummary({
+            userId: input.userId,
+            initialStoryText: input.payload.initialStoryText,
+            instruction: input.payload.instruction,
+            generatedText: event.continuedStory,
+            model: event.model,
+            elapsedMs: event.elapsedMs,
+            usage: event.usage,
+            characterSummary,
+          });
 
         yield {
           type: "completed",
@@ -122,15 +146,39 @@ export class StorylineGenerationService {
           continue;
         }
 
-        const savedStoryline = await this.storylineService.saveAppendedSegment({
-          userId: input.userId,
-          storylineId: storyline.externalId,
-          instruction: input.payload.instruction,
-          generatedText: event.continuedStory,
-          model: event.model,
-          elapsedMs: event.elapsedMs,
-          usage: event.usage,
-        });
+        yield { type: "summaryStarted" };
+        if (options.signal.aborted) {
+          return;
+        }
+
+        const characterSummary =
+          await this.storylineSummaryService.generateCharacterSummary(
+            {
+              previousSummary: context.characterSummary ?? null,
+              ...(context.initialStoryText !== undefined
+                ? { initialStoryText: context.initialStoryText }
+                : {}),
+              recentHistoryRounds: context.historyRounds,
+              currentInstruction: input.payload.instruction,
+              generatedText: event.continuedStory,
+            },
+            options,
+          );
+        if (options.signal.aborted) {
+          return;
+        }
+
+        const savedStoryline =
+          await this.storylineService.saveAppendedSegmentWithSummary({
+            userId: input.userId,
+            storylineId: storyline.externalId,
+            instruction: input.payload.instruction,
+            generatedText: event.continuedStory,
+            model: event.model,
+            elapsedMs: event.elapsedMs,
+            usage: event.usage,
+            characterSummary,
+          });
 
         yield {
           type: "completed",

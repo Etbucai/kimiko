@@ -2,15 +2,15 @@ import type { JSX } from "react";
 import type { StorylineSegment, StorylineSnapshot } from "@kimiko/schema";
 
 interface StorylineReaderProps {
-  isStreaming: boolean;
   storyline: StorylineSnapshot;
   temporaryGeneratedText: string;
+  temporaryTextStatus: "streaming" | "summarizing" | null;
 }
 
 export function StorylineReader({
-  isStreaming,
   storyline,
   temporaryGeneratedText,
+  temporaryTextStatus,
 }: StorylineReaderProps): JSX.Element {
   const hasGeneratedSegment = storyline.segments.some(
     (segment) => segment.type === "generated",
@@ -39,9 +39,11 @@ export function StorylineReader({
             <p className="m-0 whitespace-pre-wrap text-base leading-8 text-[var(--text-h)]">
               {temporaryGeneratedText}
             </p>
-            {isStreaming ? (
+            {temporaryTextStatus !== null ? (
               <p className="m-0 text-xs text-[var(--text)]" role="status">
-                正在生成...
+                {temporaryTextStatus === "streaming"
+                  ? "正在生成..."
+                  : "正在记录角色摘要..."}
               </p>
             ) : null}
           </section>

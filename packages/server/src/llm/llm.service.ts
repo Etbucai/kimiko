@@ -38,13 +38,17 @@ export class LlmService {
 
   async generateTextFromParsedRequest(
     request: GenerateLlmTextRequest,
+    options?: Readonly<{ signal: AbortSignal }>,
   ): Promise<GenerateLlmTextResponse> {
     const systemPrompt = normalizeOptionalPrompt(request.systemPrompt);
 
-    return this.llmProvider.generateText({
-      userPrompt: request.userPrompt.trim(),
-      ...(systemPrompt !== undefined ? { systemPrompt } : {}),
-    });
+    return this.llmProvider.generateText(
+      {
+        userPrompt: request.userPrompt.trim(),
+        ...(systemPrompt !== undefined ? { systemPrompt } : {}),
+      },
+      options,
+    );
   }
 
   streamTextFromParsedRequest(
