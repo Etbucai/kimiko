@@ -1,0 +1,14 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "7d722c88fef2a939027681f1a3aa41c088fde3e9",
+  "prompts": {},
+  "humans": {
+    "h_b19924eca82f50": {
+      "author": "lidafan.me <lidafan.me@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
