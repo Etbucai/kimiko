@@ -5,12 +5,14 @@ import type {
   StoryCharacterSummarySnapshot,
   StoryContinuePayload,
   StorylineGenerationMetadata,
+  StorylineId,
   StorylineSnapshot,
 } from "@kimiko/schema";
 import type { StoryRealtimeGenerationHandle } from "../../story/storyRealtimeApi";
 import { startStoryRealtimeGeneration } from "../../story/storyRealtimeApi";
 import {
   getRecentStoryline,
+  getStoryline,
   getStorylineSummary,
 } from "../../story/storylineApi";
 import { StoryInitialInput } from "./StoryInitialInput";
@@ -43,13 +45,24 @@ type PayloadValidationResult =
 type TemporaryTextStatus = "streaming" | "summarizing" | null;
 type SummaryDrawerStatus = "idle" | "loading" | "success" | "failed";
 
+type StoryPageMode = "recent" | "detail" | "new";
+
+interface StoryPageProps {
+  mode: StoryPageMode;
+  storylineId?: StorylineId | undefined;
+}
+
 const generationFailureMessage = "生成失败，请稍后重试";
 const generationCancelledMessage = "已取消生成";
 const restoreFailureMessage = "恢复故事线失败，请稍后重试";
+const notFoundFailureTitle = "故事线不可用";
 const summaryFailureMessage = "获取角色摘要失败，请稍后重试";
 const bottomScrollThresholdPx = 140;
 
-export function StoryPage(): JSX.Element {
+export function StoryPage({
+  mode,
+  storylineId,
+}: StoryPageProps): JSX.Element {
   const navigate = useNavigate();
   const generationHandleRef = useRef<StoryRealtimeGenerationHandle | null>(null);
   const isMountedRef = useRef(false);
@@ -62,6 +75,8 @@ export function StoryPage(): JSX.Element {
   const [instruction, setInstruction] = useState("");
   const [temporaryGeneratedText, setTemporaryGeneratedText] = useState("");
   const [fieldErrors, setFieldErrors] = useState<StorylineFieldErrors>({});
+  const [restoreErrorTitle, setRestoreErrorTitle] =
+    useState("故事线恢复失败");
   const [restoreErrorMessage, setRestoreErrorMessage] = useState(
     restoreFailureMessage,
   );
@@ -91,19 +106,48 @@ export function StoryPage(): JSX.Element {
     setStatus("loading");
     setTemporaryGeneratedText("");
     setFieldErrors({});
+    setRestoreErrorTitle("故事线恢复失败");
+    setRestoreErrorMessage(restoreFailureMessage);
     setGenerationStatusMessage("");
     setIsSummaryDrawerOpen(false);
     setSummaryDrawerStatus("idle");
     setCharacterSummary(null);
     setSummaryErrorMessage(summaryFailureMessage);
 
-    const result = await getRecentStoryline();
+    if (mode === "new") {
+      setStoryline(null);
+      setInitialStoryText("");
+      setInstruction("");
+      setStatus("empty");
+      return;
+    }
+
+    if (mode === "detail" && storylineId === undefined) {
+      setStoryline(null);
+      setRestoreErrorTitle(notFoundFailureTitle);
+      setRestoreErrorMessage("故事线不存在或已不可用");
+      setStatus("restoreFailed");
+      return;
+    }
+
+    const result =
+      mode === "detail" && storylineId !== undefined
+        ? await getStoryline(storylineId)
+        : await getRecentStoryline();
     if (!isMountedRef.current || restoreRequestIdRef.current !== requestId) {
       return;
     }
 
     if (result.status === "authRequired") {
       void navigate("/login", { replace: true });
+      return;
+    }
+
+    if (result.status === "notFound") {
+      setStoryline(null);
+      setRestoreErrorTitle(notFoundFailureTitle);
+      setRestoreErrorMessage(result.message);
+      setStatus("restoreFailed");
       return;
     }
 
@@ -118,7 +162,7 @@ export function StoryPage(): JSX.Element {
     setInitialStoryText("");
     setInstruction("");
     setStatus(result.storyline === null ? "empty" : "ready");
-  }, [navigate]);
+  }, [mode, navigate, storylineId]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -211,6 +255,11 @@ export function StoryPage(): JSX.Element {
           setInstruction("");
           setGenerationStatusMessage("");
           setStatus("completed");
+          if (mode === "new") {
+            void navigate(`/storylines/${event.storyline.id}`, {
+              replace: true,
+            });
+          }
         },
         onCancelled() {
           generationHandleRef.current = null;
@@ -236,6 +285,32 @@ export function StoryPage(): JSX.Element {
 
   function handleCancel(): void {
     generationHandleRef.current?.cancel();
+  }
+
+  function handleGoToStorylineList(): void {
+    if (isGenerating) {
+      const shouldLeave = window.confirm(
+        "当前生成未完成，离开会取消本轮生成。确定返回故事列表吗？",
+      );
+      if (!shouldLeave) {
+        return;
+      }
+
+      generationHandleRef.current?.cancel();
+      void navigate("/storylines");
+      return;
+    }
+
+    if (hasUnsavedDraft(initialStoryText, instruction)) {
+      const shouldLeave = window.confirm(
+        "当前输入尚未提交，离开会丢失。确定返回故事列表吗？",
+      );
+      if (!shouldLeave) {
+        return;
+      }
+    }
+
+    void navigate("/storylines");
   }
 
   function handleOpenSummary(): void {
@@ -287,10 +362,13 @@ export function StoryPage(): JSX.Element {
       className="min-h-svh px-4 pt-6 pb-64 [background:radial-gradient(circle_at_top_left,var(--accent-bg),transparent_28rem),var(--bg)] md:px-6 md:pt-10"
     >
       <section className="mx-auto flex w-full max-w-3xl flex-col gap-5">
+        <StoryPageHeader onBackToList={handleGoToStorylineList} />
+
         {status === "loading" ? <StorylineLoading /> : null}
 
         {status === "restoreFailed" ? (
           <StorylineRestoreError
+            title={restoreErrorTitle}
             message={restoreErrorMessage}
             onRetry={() => {
               void restoreStoryline();
@@ -442,6 +520,38 @@ function removeFieldError(
   const nextFieldErrors = { ...fieldErrors };
   delete nextFieldErrors[field];
   return nextFieldErrors;
+}
+
+function hasUnsavedDraft(initialStoryText: string, instruction: string): boolean {
+  return initialStoryText.trim().length > 0 || instruction.trim().length > 0;
+}
+
+interface StoryPageHeaderProps {
+  onBackToList: () => void;
+}
+
+function StoryPageHeader({
+  onBackToList,
+}: StoryPageHeaderProps): JSX.Element {
+  return (
+    <header className="flex flex-col gap-3 rounded-3xl border border-[var(--border)] bg-[var(--panel-bg)] p-5 shadow-[var(--shadow)] md:flex-row md:items-center md:justify-between md:p-6">
+      <div>
+        <p className="m-0 text-sm font-semibold text-[var(--accent)]">
+          StoryAgent
+        </p>
+        <h1 className="mt-1 mb-0 text-2xl font-bold text-[var(--text-h)]">
+          故事工作台
+        </h1>
+      </div>
+      <button
+        className="min-h-11 rounded-2xl border border-[var(--border)] bg-transparent px-5 py-3 font-bold text-[var(--text-h)] transition-[border-color,transform] duration-200 hover:-translate-y-px hover:border-[var(--accent-border)]"
+        onClick={onBackToList}
+        type="button"
+      >
+        返回故事列表
+      </button>
+    </header>
+  );
 }
 
 function StorylineLoading(): JSX.Element {

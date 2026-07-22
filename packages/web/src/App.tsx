@@ -1,8 +1,15 @@
 import type { JSX } from "react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router";
+import {
+  BrowserRouter,
+  Navigate,
+  Route,
+  Routes,
+  useParams,
+} from "react-router";
 import { RequireAuth } from "./auth/RequireAuth";
 import { LoginPage } from "./pages/auth/LoginPage";
 import { RegisterPage } from "./pages/auth/RegisterPage";
+import { StorylineListPage } from "./pages/story/StorylineListPage";
 import { StoryPage } from "./pages/story/StoryPage";
 
 function App(): JSX.Element {
@@ -13,7 +20,31 @@ function App(): JSX.Element {
           path="/"
           element={
             <RequireAuth>
-              <StoryPage />
+              <StoryPage mode="recent" />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/storylines"
+          element={
+            <RequireAuth>
+              <StorylineListPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/storylines/new"
+          element={
+            <RequireAuth>
+              <StoryPage mode="new" />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/storylines/:storylineId"
+          element={
+            <RequireAuth>
+              <StorylineDetailRoute />
             </RequireAuth>
           }
         />
@@ -23,6 +54,15 @@ function App(): JSX.Element {
       </Routes>
     </BrowserRouter>
   );
+}
+
+function StorylineDetailRoute(): JSX.Element {
+  const { storylineId } = useParams<"storylineId">();
+  if (storylineId === undefined || storylineId.length === 0) {
+    return <Navigate to="/storylines" replace />;
+  }
+
+  return <StoryPage mode="detail" storylineId={storylineId} />;
 }
 
 export default App;

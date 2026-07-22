@@ -6,7 +6,9 @@ import {
 import type {
   CompletedStorylineSnapshot,
   GetRecentStorylineResponse,
+  ListStorylinesResponse,
   StorylineGenerationMetadata,
+  StorylineListItem,
   StorylineSegment as StorylineSegmentDto,
   StorylineSnapshot,
 } from "@kimiko/schema";
@@ -31,12 +33,39 @@ import type {
   StorylineRecord,
 } from "./storyline.types";
 
+type StorylineRow = typeof storylines.$inferSelect;
 type StorylineSegmentRow = typeof storylineSegments.$inferSelect;
 type StorylineSummaryRow = typeof storylineSummaries.$inferSelect;
+
+const storylineListLimit = 50;
+const storylineListTitleMaxLength = 80;
+const storylineListPreviewMaxLength = 240;
 
 @Injectable()
 export class StorylineService {
   constructor(private readonly databaseService: DatabaseService) {}
+
+  async listStorylines(userId: string): Promise<ListStorylinesResponse> {
+    const internalUserId = parseAuthenticatedUserId(userId);
+    const storylineRows = await this.databaseService.db
+      .select()
+      .from(storylines)
+      .where(eq(storylines.userId, internalUserId))
+      .orderBy(desc(storylines.updatedAt), desc(storylines.id))
+      .limit(storylineListLimit);
+
+    const items = await Promise.all(
+      storylineRows.map(async (storyline) => {
+        const segments = await this.getSegmentsByInternalStorylineId(
+          storyline.id,
+        );
+
+        return mapListItemDto(storyline, segments);
+      }),
+    );
+
+    return { storylines: items };
+  }
 
   async getRecentStoryline(
     userId: string,
@@ -59,6 +88,23 @@ export class StorylineService {
     }
 
     return { storyline: snapshot };
+  }
+
+  async getStorylineSnapshotForUser(
+    userId: string,
+    storylineId: string,
+  ): Promise<StorylineSnapshot | null> {
+    const storyline = await this.getStorylineForUser(userId, storylineId);
+    if (storyline === null) {
+      return null;
+    }
+
+    const snapshot = await this.getSnapshotByInternalId(storyline.id);
+    if (snapshot === null) {
+      throw new InternalServerErrorException("Storyline snapshot is missing");
+    }
+
+    return snapshot;
   }
 
   async getStorylineForUser(
@@ -561,6 +607,41 @@ function mapSegmentDto(segment: StorylineSegmentRow): StorylineSegmentDto {
   };
 }
 
+function mapListItemDto(
+  storyline: StorylineRow,
+  segments: readonly StorylineSegmentRow[],
+): StorylineListItem {
+  if (segments.length === 0) {
+    throw new InternalServerErrorException("Storyline has no segments");
+  }
+
+  const initialSegment = segments.find((segment) => segment.type === "initial");
+  if (initialSegment === undefined) {
+    throw new InternalServerErrorException(
+      "Storyline initial segment is missing",
+    );
+  }
+
+  const latestSegment = segments[segments.length - 1];
+  if (latestSegment === undefined) {
+    throw new InternalServerErrorException("Storyline has no latest segment");
+  }
+
+  return {
+    id: String(storyline.id),
+    title: truncateSnippet(
+      getFirstNonEmptyLine(initialSegment.text),
+      storylineListTitleMaxLength,
+    ),
+    preview: truncateSnippet(
+      normalizeSnippet(latestSegment.text),
+      storylineListPreviewMaxLength,
+    ),
+    updatedAt: dateToIsoString(storyline.updatedAt),
+    segmentCount: segments.length,
+  };
+}
+
 function getLatestGenerationMetadata(
   segments: readonly StorylineSegmentRow[],
 ): StorylineGenerationMetadata | null {
@@ -642,6 +723,27 @@ function parseExternalId(value: string): number | null {
 
 function dateToIsoString(value: Date): string {
   return value.toISOString();
+}
+
+function getFirstNonEmptyLine(value: string): string {
+  const firstLine = value
+    .split(/\r?\n/)
+    .map(normalizeSnippet)
+    .find((line) => line.length > 0);
+
+  return firstLine ?? normalizeSnippet(value);
+}
+
+function normalizeSnippet(value: string): string {
+  return value.trim().replace(/\s+/g, " ");
+}
+
+function truncateSnippet(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, maxLength - 3).trimEnd()}...`;
 }
 
 function parseCharacterSummary(

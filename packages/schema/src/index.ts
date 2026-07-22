@@ -258,6 +258,36 @@ export type CompletedStorylineSnapshot = z.infer<
   typeof CompletedStorylineSnapshotSchema
 >;
 
+export const StorylineListItemSchema = z
+  .object({
+    id: StorylineIdSchema,
+    title: z.string().trim().min(1).max(80),
+    preview: z.string().trim().min(1).max(240),
+    updatedAt: z.string().datetime(),
+    segmentCount: z.number().int().positive(),
+  })
+  .strict();
+
+export type StorylineListItem = z.infer<typeof StorylineListItemSchema>;
+
+export const ListStorylinesResponseSchema = z
+  .object({
+    storylines: z.array(StorylineListItemSchema).max(50),
+  })
+  .strict();
+
+export type ListStorylinesResponse = z.infer<
+  typeof ListStorylinesResponseSchema
+>;
+
+export const GetStorylineResponseSchema = z
+  .object({
+    storyline: StorylineSnapshotSchema,
+  })
+  .strict();
+
+export type GetStorylineResponse = z.infer<typeof GetStorylineResponseSchema>;
+
 export const GetRecentStorylineResponseSchema = z
   .object({
     storyline: StorylineSnapshotSchema.nullable(),

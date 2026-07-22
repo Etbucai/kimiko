@@ -6,12 +6,15 @@ import type {
   LoginUserRequest,
   LoginUserResponse,
   RegisterUserRequest,
+  StoryCompletedServerEvent,
   StoryRealtimeServerEvent,
 } from "@kimiko/schema";
 import {
   GetRecentStorylineResponseSchema,
+  GetStorylineResponseSchema,
   LoginUserResponseSchema,
   GetStorylineSummaryResponseSchema,
+  ListStorylinesResponseSchema,
   StoryRealtimeServerEventSchema,
 } from "@kimiko/schema";
 import type { Server } from "node:http";
@@ -199,6 +202,90 @@ describe("RealtimeGateway (e2e)", () => {
     socket.close();
   });
 
+  it("lists storylines as lightweight cards and opens a selected storyline", async () => {
+    const llmProvider = createStreamingProvider();
+    app = await createApp(llmProvider);
+    const accessToken = await registerAndLogin(app, "storyline_list");
+    const socket = await connectWebSocket(
+      `${getRealtimeUrl(app)}?accessToken=${accessToken}`,
+    );
+    await waitOneTick();
+
+    const firstStoryline = await createStorylineOverSocket(socket, {
+      requestId: "request-1",
+      initialStoryText: "第一条故事的开场。\n这是第二行。",
+      instruction: "继续第一条。",
+    });
+    const secondStoryline = await createStorylineOverSocket(socket, {
+      requestId: "request-2",
+      initialStoryText: "第二条故事的开场。",
+      instruction: "继续第二条。",
+    });
+
+    const listResponse = await request(app.getHttpServer())
+      .get("/storylines")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect(200);
+    const listResult = ListStorylinesResponseSchema.parse(
+      listResponse.body as unknown,
+    );
+
+    expect(listResult.storylines).toEqual([
+      {
+        id: secondStoryline.storyline.id,
+        title: "第二条故事的开场。",
+        preview: "林夏走向钟楼。",
+        updatedAt: secondStoryline.storyline.updatedAt,
+        segmentCount: 2,
+      },
+      {
+        id: firstStoryline.storyline.id,
+        title: "第一条故事的开场。",
+        preview: "林夏走向钟楼。",
+        updatedAt: firstStoryline.storyline.updatedAt,
+        segmentCount: 2,
+      },
+    ]);
+    expect(listResult.storylines[0]).not.toHaveProperty("segments");
+
+    const detailResponse = await request(app.getHttpServer())
+      .get(`/storylines/${secondStoryline.storyline.id}`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect(200);
+    const detailResult = GetStorylineResponseSchema.parse(
+      detailResponse.body as unknown,
+    );
+
+    expect(detailResult.storyline).toEqual(secondStoryline.storyline);
+
+    socket.close();
+  });
+
+  it("returns empty lists and 404 for missing storyline HTTP endpoints", async () => {
+    app = await createApp(createStreamingProvider());
+    const accessToken = await registerAndLogin(app, "storyline_not_found");
+
+    const listResponse = await request(app.getHttpServer())
+      .get("/storylines")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect(200);
+    const listResult = ListStorylinesResponseSchema.parse(
+      listResponse.body as unknown,
+    );
+
+    expect(listResult.storylines).toEqual([]);
+
+    await request(app.getHttpServer())
+      .get("/storylines/not-a-storyline")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect(404);
+
+    await request(app.getHttpServer())
+      .get("/storylines/999999/summary")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect(404);
+  });
+
   it("returns STORY_SUMMARY_FAILED and does not save the generated story when summary generation fails", async () => {
     const llmProvider = createStreamingProvider({
       summaryText: "not json",
@@ -319,11 +406,50 @@ async function waitOneTick(): Promise<void> {
   });
 }
 
+async function createStorylineOverSocket(
+  socket: WebSocket,
+  input: Readonly<{
+    requestId: string;
+    initialStoryText: string;
+    instruction: string;
+  }>,
+): Promise<StoryCompletedServerEvent> {
+  const eventsPromise = readEvents(socket, 5);
+
+  socket.send(
+    JSON.stringify({
+      type: "story.continue",
+      requestId: input.requestId,
+      payload: {
+        mode: "create",
+        initialStoryText: input.initialStoryText,
+        instruction: input.instruction,
+      },
+    }),
+  );
+
+  return getCompletedEvent(await eventsPromise);
+}
+
+function getCompletedEvent(
+  events: readonly StoryRealtimeServerEvent[],
+): StoryCompletedServerEvent {
+  const completedEvent = events.find(
+    (event): event is StoryCompletedServerEvent =>
+      event.type === "story.completed",
+  );
+  if (completedEvent === undefined) {
+    throw new Error("Storyline creation did not complete");
+  }
+
+  return completedEvent;
+}
+
 function createStreamingProvider(
   options: Readonly<{ summaryText?: string }> = {},
 ): jest.Mocked<LlmProvider> {
   const llmProvider = createBaseProvider();
-  llmProvider.streamText.mockReturnValue(
+  llmProvider.streamText.mockImplementation(() =>
     createStream([
       {
         type: "chunk",
