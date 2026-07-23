@@ -49,6 +49,7 @@ describe("StorylineSummaryService", () => {
       recentHistoryRounds: [
         {
           roundIndex: 1,
+          generationMode: "append",
           instruction: "调查旧书店。",
           generatedText: "林夏回到旧书店。",
         },
@@ -77,6 +78,28 @@ describe("StorylineSummaryService", () => {
 
     expect(request.userPrompt).toContain("本轮重写指令：");
     expect(request.userPrompt).not.toContain("本轮续写指令：");
+  });
+
+  it("labels dialogue inputs and text distinctly in the extractor prompt", () => {
+    const request = buildCharacterSummaryLlmRequest({
+      operation: "dialogue",
+      previousSummary: null,
+      recentHistoryRounds: [
+        {
+          roundIndex: 1,
+          generationMode: "dialogue",
+          instruction: "大凡让馥冰拿奶茶。",
+          generatedText: "馥冰白了他一眼。",
+        },
+      ],
+      currentInstruction: "大凡让馥冰拿奶茶。",
+      generatedText: '馥冰没好气地说，"你自己没长手啊。"',
+    });
+
+    expect(request.userPrompt).toContain("第 1 轮互动输入：");
+    expect(request.userPrompt).toContain("第 1 轮互动正文：");
+    expect(request.userPrompt).toContain("本轮互动输入：");
+    expect(request.userPrompt).toContain("本轮互动正文：");
   });
 
   it("parses valid character summary JSON and allows an empty list", () => {

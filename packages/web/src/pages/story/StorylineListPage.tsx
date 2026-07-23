@@ -192,7 +192,7 @@ function StorylineListCard({ storyline }: StorylineListCardProps): JSX.Element {
           {storyline.preview}
         </p>
         <p className="m-0 text-xs font-semibold text-[var(--accent)]">
-          共 {storyline.segmentCount} 段
+          共 {storyline.chapterCount} 章
         </p>
       </article>
     </Link>

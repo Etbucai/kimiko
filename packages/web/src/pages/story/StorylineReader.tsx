@@ -18,42 +18,77 @@ export interface RewriteDraftState {
   readonly text: string;
 }
 
+export interface StorylineReaderViewportState {
+  readonly currentPageIndex: number;
+  readonly isViewingLatestPage: boolean;
+  readonly pageCount: number;
+}
+
+interface StorylineDialogueSegmentView {
+  readonly id: StorylineSegmentId;
+  readonly text: string;
+}
+
 type StorylineReaderPage =
   | Readonly<{
+      dialogueSegments: readonly StorylineDialogueSegmentView[];
       id: StorylineSegmentId;
       kind: "initial";
       text: string;
     }>
   | Readonly<{
-      canRewrite: boolean;
+      dialogueSegments: readonly StorylineDialogueSegmentView[];
       id: StorylineSegmentId;
-      kind: "generated";
+      kind: "append";
       text: string;
     }>
   | Readonly<{
+      dialogueSegments: readonly StorylineDialogueSegmentView[];
       id: "temporary-append";
       kind: "temporaryAppend";
       text: string;
     }>;
 
+type StorylineReaderPageBuilder =
+  | {
+      dialogueSegments: StorylineDialogueSegmentView[];
+      id: StorylineSegmentId;
+      kind: "initial";
+      text: string;
+    }
+  | {
+      dialogueSegments: StorylineDialogueSegmentView[];
+      id: StorylineSegmentId;
+      kind: "append";
+      text: string;
+    }
+  | {
+      dialogueSegments: StorylineDialogueSegmentView[];
+      id: "temporary-append";
+      kind: "temporaryAppend";
+      text: string;
+    };
+
 interface StorylineReaderProps {
+  onViewportChange: (state: StorylineReaderViewportState) => void;
   storyline: StorylineSnapshot;
   temporaryAppendText: string;
   temporaryAppendVisible: boolean;
+  temporaryDialogueText: string;
+  temporaryDialogueVisible: boolean;
   temporaryRewrite: RewriteDraftState | null;
   temporaryTextStatus: "streaming" | "summarizing" | null;
-  canRewrite: boolean;
-  onStartRewrite: (segmentId: StorylineSegmentId) => void;
 }
 
 export function StorylineReader({
+  onViewportChange,
   storyline,
   temporaryAppendText,
   temporaryAppendVisible,
+  temporaryDialogueText,
+  temporaryDialogueVisible,
   temporaryRewrite,
   temporaryTextStatus,
-  canRewrite,
-  onStartRewrite,
 }: StorylineReaderProps): JSX.Element {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const pagePanelRefs = useRef<(HTMLDivElement | null)[]>([]);
@@ -61,20 +96,22 @@ export function StorylineReader({
   const pages = useMemo(
     () =>
       buildReaderPages({
-        canRewrite,
         segments: storyline.segments,
         temporaryAppendText,
         temporaryAppendVisible,
       }),
-    [
-      canRewrite,
-      storyline.segments,
-      temporaryAppendText,
-      temporaryAppendVisible,
-    ],
+    [storyline.segments, temporaryAppendText, temporaryAppendVisible],
   );
   const pageIdentity = useMemo(
-    () => pages.map((page) => String(page.id)).join("|"),
+    () =>
+      pages
+        .map((page) =>
+          [
+            page.id,
+            ...page.dialogueSegments.map((dialogue) => dialogue.id),
+          ].join(":"),
+        )
+        .join("|"),
     [pages],
   );
   const [currentPageIndex, setCurrentPageIndex] = useState(() =>
@@ -109,6 +146,15 @@ export function StorylineReader({
   useEffect(() => {
     pagePanelRefs.current.length = pages.length;
   }, [pages.length]);
+
+  useEffect(() => {
+    onViewportChange({
+      currentPageIndex: safeCurrentPageIndex,
+      isViewingLatestPage:
+        pages.length > 0 && safeCurrentPageIndex === pages.length - 1,
+      pageCount: pages.length,
+    });
+  }, [onViewportChange, pages.length, safeCurrentPageIndex]);
 
   useLayoutEffect(() => {
     updateScrollerHeight(safeCurrentPageIndex);
@@ -173,9 +219,7 @@ export function StorylineReader({
       return;
     }
 
-    const targetIndex = pages.findIndex(
-      (page) => page.kind === "generated" && page.id === rewriteTargetSegmentId,
-    );
+    const targetIndex = findPageIndexBySegmentId(pages, rewriteTargetSegmentId);
     if (targetIndex < 0) {
       return;
     }
@@ -222,11 +266,11 @@ export function StorylineReader({
   return (
     <article
       aria-label="故事正文"
-      className="rounded-3xl border border-[var(--border)] bg-[var(--panel-bg)] p-4 shadow-[var(--shadow)] outline-none focus:border-[var(--accent-border)] md:p-5"
+      className="rounded-3xl border border-(--border) bg-(--panel-bg) p-4 shadow-(--shadow) outline-none focus:border-(--accent-border) md:p-5"
       onKeyDown={handleKeyDown}
       tabIndex={0}
     >
-      <div className="mb-3 flex items-center justify-between gap-3 text-xs text-[var(--text)]">
+      <div className="mb-3 flex items-center justify-between gap-3 text-xs text-(--text)">
         <span>
           {formatPageLabel(currentPage, safeCurrentPageIndex, pages.length)}
         </span>
@@ -244,12 +288,15 @@ export function StorylineReader({
             page={page}
             pageIndex={index}
             pageTotal={pages.length}
-            temporaryRewrite={temporaryRewrite}
-            temporaryTextStatus={temporaryTextStatus}
             panelRef={(element) => {
               pagePanelRefs.current[index] = element;
             }}
-            onStartRewrite={onStartRewrite}
+            temporaryDialogueText={temporaryDialogueText}
+            temporaryDialogueVisible={
+              temporaryDialogueVisible && index === pages.length - 1
+            }
+            temporaryRewrite={temporaryRewrite}
+            temporaryTextStatus={temporaryTextStatus}
           />
         ))}
       </div>
@@ -258,75 +305,85 @@ export function StorylineReader({
 }
 
 interface BuildReaderPagesInput {
-  canRewrite: boolean;
   segments: readonly StorylineSegment[];
   temporaryAppendText: string;
   temporaryAppendVisible: boolean;
 }
 
 function buildReaderPages({
-  canRewrite,
   segments,
   temporaryAppendText,
   temporaryAppendVisible,
 }: BuildReaderPagesInput): StorylineReaderPage[] {
-  const latestGeneratedSegmentId = getLatestGeneratedSegmentId(segments);
-  const pages: StorylineReaderPage[] = segments.map((segment) => {
+  const pageBuilders: StorylineReaderPageBuilder[] = [];
+
+  for (const segment of segments) {
     if (segment.type === "initial") {
-      return {
+      pageBuilders.push({
+        dialogueSegments: [],
         id: segment.id,
         kind: "initial",
         text: segment.text,
-      };
+      });
+      continue;
     }
 
-    return {
-      canRewrite: canRewrite && segment.id === latestGeneratedSegmentId,
+    if (segment.generationMode === "dialogue") {
+      const latestPage = pageBuilders.at(-1);
+      if (latestPage === undefined) {
+        continue;
+      }
+
+      latestPage.dialogueSegments.push({
+        id: segment.id,
+        text: segment.text,
+      });
+      continue;
+    }
+
+    pageBuilders.push({
+      dialogueSegments: [],
       id: segment.id,
-      kind: "generated",
+      kind: "append",
       text: segment.text,
-    };
-  });
+    });
+  }
 
   if (temporaryAppendVisible) {
-    pages.push({
+    pageBuilders.push({
+      dialogueSegments: [],
       id: "temporary-append",
       kind: "temporaryAppend",
       text: temporaryAppendText,
     });
   }
 
-  return pages;
-}
-
-function getLatestGeneratedSegmentId(
-  segments: readonly StorylineSegment[],
-): StorylineSegmentId | null {
-  const latestGeneratedSegment = [...segments]
-    .reverse()
-    .find((segment) => segment.type === "generated");
-
-  return latestGeneratedSegment?.id ?? null;
+  return pageBuilders.map((page) => ({
+    ...page,
+    dialogueSegments: [...page.dialogueSegments],
+  }));
 }
 
 interface StorylinePagePanelProps {
   page: StorylineReaderPage;
   pageIndex: number;
   pageTotal: number;
+  panelRef: (element: HTMLDivElement | null) => void;
+  temporaryDialogueText: string;
+  temporaryDialogueVisible: boolean;
   temporaryRewrite: RewriteDraftState | null;
   temporaryTextStatus: "streaming" | "summarizing" | null;
-  panelRef: (element: HTMLDivElement | null) => void;
-  onStartRewrite: (segmentId: StorylineSegmentId) => void;
 }
 
 function StorylinePagePanel({
   page,
   pageIndex,
   pageTotal,
+  panelRef,
+  temporaryDialogueText,
+  temporaryDialogueVisible,
   temporaryRewrite,
   temporaryTextStatus,
-  panelRef,
-  onStartRewrite,
 }: StorylinePagePanelProps): JSX.Element {
   return (
     <section
@@ -335,41 +392,36 @@ function StorylinePagePanel({
     >
       <div
         ref={panelRef}
-        className="box-border flex w-full min-w-0 flex-col gap-4 rounded-3xl border border-[var(--border)] bg-[var(--panel-bg)] p-5 md:p-7"
+        className="box-border flex w-full min-w-0 flex-col gap-4 rounded-3xl border border-(--border) bg-(--panel-bg) p-5 md:p-7"
       >
         <SegmentDivider label={getPageKindLabel(page)} />
-        {page.text.length > 0 ? (
-          <p className="m-0 whitespace-pre-wrap text-base leading-8 text-[var(--text-h)]">
-            {page.text}
-          </p>
-        ) : (
-          <p className="m-0 text-base leading-8 text-[var(--text)]">
-            正在连接生成...
-          </p>
-        )}
-        {page.kind === "generated" && page.canRewrite ? (
-          <div className="flex justify-end">
-            <button
-              className="rounded-full border border-[var(--border)] bg-transparent px-3 py-1 text-xs font-semibold text-[var(--text-h)] transition-[border-color,transform] duration-200 hover:-translate-y-px hover:border-[var(--accent-border)]"
-              onClick={() => onStartRewrite(page.id)}
-              type="button"
-            >
-              重写
-            </button>
-          </div>
-        ) : null}
+        <StoryText text={page.text} />
         {temporaryRewrite?.targetSegmentId === page.id ? (
-          <section aria-label="正在重写的正文" className="flex flex-col gap-4">
-            <SegmentDivider label="重写中" />
-            {temporaryRewrite.text.length > 0 ? (
-              <p className="m-0 whitespace-pre-wrap text-base leading-8 text-[var(--text-h)]">
-                {temporaryRewrite.text}
-              </p>
-            ) : (
-              <p className="m-0 text-base leading-8 text-[var(--text)]">
-                正在连接生成...
-              </p>
-            )}
+          <TemporaryRewriteBlock
+            status={temporaryTextStatus}
+            text={temporaryRewrite.text}
+          />
+        ) : null}
+        {page.dialogueSegments.map((dialogue) => (
+          <section
+            aria-label="互动正文"
+            className="flex flex-col gap-4"
+            key={dialogue.id}
+          >
+            <SegmentDivider label="互动" />
+            <StoryText text={dialogue.text} />
+            {temporaryRewrite?.targetSegmentId === dialogue.id ? (
+              <TemporaryRewriteBlock
+                status={temporaryTextStatus}
+                text={temporaryRewrite.text}
+              />
+            ) : null}
+          </section>
+        ))}
+        {temporaryDialogueVisible ? (
+          <section aria-label="正在生成的互动" className="flex flex-col gap-4">
+            <SegmentDivider label="互动中" />
+            <StoryText text={temporaryDialogueText} />
             <TemporaryStatus status={temporaryTextStatus} />
           </section>
         ) : null}
@@ -378,6 +430,36 @@ function StorylinePagePanel({
         ) : null}
       </div>
     </section>
+  );
+}
+
+function TemporaryRewriteBlock({
+  status,
+  text,
+}: {
+  status: "streaming" | "summarizing" | null;
+  text: string;
+}): JSX.Element {
+  return (
+    <section aria-label="正在重写的正文" className="flex flex-col gap-4">
+      <SegmentDivider label="重写中" />
+      <StoryText text={text} />
+      <TemporaryStatus status={status} />
+    </section>
+  );
+}
+
+function StoryText({ text }: { text: string }): JSX.Element {
+  if (text.length === 0) {
+    return (
+      <p className="m-0 text-base leading-8 text-(--text)">正在连接生成...</p>
+    );
+  }
+
+  return (
+    <p className="m-0 whitespace-pre-wrap text-base leading-8 text-(--text-h)">
+      {text}
+    </p>
   );
 }
 
@@ -391,7 +473,7 @@ function TemporaryStatus({
   }
 
   return (
-    <p className="m-0 text-xs text-[var(--text)]" role="status">
+    <p className="m-0 text-xs text-(--text)" role="status">
       {status === "streaming" ? "正在生成..." : "正在记录角色摘要..."}
     </p>
   );
@@ -401,7 +483,7 @@ function getPageKindLabel(page: StorylineReaderPage): string {
   switch (page.kind) {
     case "initial":
       return "初始正文";
-    case "generated":
+    case "append":
       return "续写";
     case "temporaryAppend":
       return "生成中";
@@ -417,6 +499,17 @@ function formatPageLabel(
   const safePageIndex = clampPageIndex(pageIndex, safeTotal);
   const kindLabel = page === undefined ? "故事正文" : getPageKindLabel(page);
   return `第 ${safePageIndex + 1} / ${safeTotal} 页 · ${kindLabel}`;
+}
+
+function findPageIndexBySegmentId(
+  pages: readonly StorylineReaderPage[],
+  segmentId: StorylineSegmentId,
+): number {
+  return pages.findIndex(
+    (page) =>
+      page.id === segmentId ||
+      page.dialogueSegments.some((dialogue) => dialogue.id === segmentId),
+  );
 }
 
 function clampPageIndex(index: number, pageTotal: number): number {
@@ -457,10 +550,10 @@ interface SegmentDividerProps {
 
 function SegmentDivider({ label }: SegmentDividerProps): JSX.Element {
   return (
-    <div className="flex items-center gap-3 text-xs text-[var(--text)]">
-      <span className="h-px flex-1 bg-[var(--border)]" />
+    <div className="flex items-center gap-3 text-xs text-(--text)">
+      <span className="h-px flex-1 bg-(--border)" />
       <span>{label}</span>
-      <span className="h-px flex-1 bg-[var(--border)]" />
+      <span className="h-px flex-1 bg-(--border)" />
     </div>
   );
 }

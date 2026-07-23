@@ -13,9 +13,11 @@
   "dependencies": {
     "@kimiko/schema": "workspace:*",
     "@kimiko/utils": "workspace:*",
+    "lucide-react": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
-    "react-router": "catalog:"
+    "react-router": "catalog:",
+    "sonner": "catalog:"
   },
   "devDependencies": {
     "@tailwindcss/vite": "catalog:",

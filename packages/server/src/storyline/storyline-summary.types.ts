@@ -8,7 +8,7 @@ import type { StoryHistoryRound } from "../story/story.service";
 export { StoryCharacterSummarySchema, StoryCharacterSummarySnapshotSchema };
 export type { StoryCharacterSummarySnapshot };
 
-export type StorySummaryOperation = "append" | "rewrite";
+export type StorySummaryOperation = "append" | "rewrite" | "dialogue";
 
 export interface GenerateCharacterSummaryInput {
   readonly operation: StorySummaryOperation;

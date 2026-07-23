@@ -237,6 +237,7 @@ describe("RealtimeGateway (e2e)", () => {
         preview: "林夏走向钟楼。",
         updatedAt: secondStoryline.storyline.updatedAt,
         segmentCount: 2,
+        chapterCount: 2,
       },
       {
         id: firstStoryline.storyline.id,
@@ -244,6 +245,7 @@ describe("RealtimeGateway (e2e)", () => {
         preview: "林夏走向钟楼。",
         updatedAt: firstStoryline.storyline.updatedAt,
         segmentCount: 2,
+        chapterCount: 2,
       },
     ]);
     expect(listResult.storylines[0]).not.toHaveProperty("segments");

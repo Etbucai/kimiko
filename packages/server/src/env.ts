@@ -18,7 +18,9 @@ type LlmEnvShape = Readonly<{
 }>;
 
 type StoryEnvShape = Readonly<{
-  historyRoundLimit: number;
+  historyAppendScore: number;
+  historyDialogueScore: number;
+  historyScoreLimit: number;
 }>;
 
 const serverRoot = resolve(__dirname, "..");
@@ -84,11 +86,21 @@ function buildEnv(source: NodeJS.ProcessEnv): EnvShape {
 
 function parseStoryEnv(source: NodeJS.ProcessEnv): StoryEnvShape {
   return {
-    historyRoundLimit:
+    historyAppendScore:
       parseOptionalPositiveInteger(
-        source.STORY_HISTORY_ROUND_LIMIT,
-        "STORY_HISTORY_ROUND_LIMIT",
-      ) ?? 20,
+        source.STORY_HISTORY_APPEND_SCORE,
+        "STORY_HISTORY_APPEND_SCORE",
+      ) ?? 5,
+    historyDialogueScore:
+      parseOptionalPositiveInteger(
+        source.STORY_HISTORY_DIALOGUE_SCORE,
+        "STORY_HISTORY_DIALOGUE_SCORE",
+      ) ?? 1,
+    historyScoreLimit:
+      parseOptionalPositiveInteger(
+        source.STORY_HISTORY_SCORE_LIMIT,
+        "STORY_HISTORY_SCORE_LIMIT",
+      ) ?? 100,
   };
 }
 
@@ -188,7 +200,11 @@ function parseOptionalUrl(
 
 function parseOptionalPositiveInteger(
   value: string | undefined,
-  key: "LLM_TIMEOUT_MS" | "STORY_HISTORY_ROUND_LIMIT",
+  key:
+    | "LLM_TIMEOUT_MS"
+    | "STORY_HISTORY_APPEND_SCORE"
+    | "STORY_HISTORY_DIALOGUE_SCORE"
+    | "STORY_HISTORY_SCORE_LIMIT",
 ): number | undefined {
   const normalizedValue = parseOptionalNonEmptyString(value);
   if (normalizedValue === undefined) {

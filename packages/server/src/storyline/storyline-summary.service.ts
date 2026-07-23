@@ -125,10 +125,10 @@ function buildCharacterSummaryUserPrompt(
     promptParts.push("近期故事上下文：");
     for (const round of input.recentHistoryRounds) {
       promptParts.push(
-        `第 ${round.roundIndex} 轮指令：`,
+        formatRoundInstructionLabel(round),
         round.instruction,
         "",
-        `第 ${round.roundIndex} 轮续写：`,
+        formatRoundTextLabel(round),
         round.generatedText,
         "",
       );
@@ -139,7 +139,7 @@ function buildCharacterSummaryUserPrompt(
     getInstructionLabel(input.operation),
     input.currentInstruction,
     "",
-    "本轮生成正文：",
+    getGeneratedTextLabel(input.operation),
     input.generatedText,
     "",
     "请输出新的完整角色摘要快照。只输出 JSON。",
@@ -151,7 +151,36 @@ function buildCharacterSummaryUserPrompt(
 function getInstructionLabel(
   operation: GenerateCharacterSummaryInput["operation"],
 ): string {
-  return operation === "rewrite" ? "本轮重写指令：" : "本轮续写指令：";
+  switch (operation) {
+    case "append":
+      return "本轮续写指令：";
+    case "rewrite":
+      return "本轮重写指令：";
+    case "dialogue":
+      return "本轮互动输入：";
+  }
+}
+
+function getGeneratedTextLabel(
+  operation: GenerateCharacterSummaryInput["operation"],
+): string {
+  return operation === "dialogue" ? "本轮互动正文：" : "本轮生成正文：";
+}
+
+function formatRoundInstructionLabel(
+  round: GenerateCharacterSummaryInput["recentHistoryRounds"][number],
+): string {
+  return round.generationMode === "dialogue"
+    ? `第 ${round.roundIndex} 轮互动输入：`
+    : `第 ${round.roundIndex} 轮续写指令：`;
+}
+
+function formatRoundTextLabel(
+  round: GenerateCharacterSummaryInput["recentHistoryRounds"][number],
+): string {
+  return round.generationMode === "dialogue"
+    ? `第 ${round.roundIndex} 轮互动正文：`
+    : `第 ${round.roundIndex} 轮续写正文：`;
 }
 
 function stringifyPromptJson(value: unknown): string {

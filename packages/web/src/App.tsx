@@ -6,6 +6,7 @@ import {
   Routes,
   useParams,
 } from "react-router";
+import { Toaster } from "sonner";
 import { RequireAuth } from "./auth/RequireAuth";
 import { LoginPage } from "./pages/auth/LoginPage";
 import { RegisterPage } from "./pages/auth/RegisterPage";
@@ -52,6 +53,7 @@ function App(): JSX.Element {
         <Route path="/register" element={<RegisterPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      <Toaster duration={3000} position="top-center" />
     </BrowserRouter>
   );
 }

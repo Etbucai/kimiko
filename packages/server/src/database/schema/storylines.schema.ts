@@ -36,6 +36,11 @@ export const storylineSegments = sqliteTable(
       .references(() => storylines.id, { onDelete: "cascade" }),
     orderIndex: integer("order_index").notNull(),
     type: text("type", { enum: ["initial", "generated"] }).notNull(),
+    generationMode: text("generation_mode", {
+      enum: ["append", "dialogue"],
+    })
+      .notNull()
+      .default("append"),
     text: text("text").notNull(),
     instruction: text("instruction"),
     model: text("model"),

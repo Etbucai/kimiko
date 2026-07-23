@@ -12,6 +12,7 @@ import { clearAuthSession, getStoredAuthSession } from "../auth/authApi";
 const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
 const defaultGenerationErrorMessage = "生成失败，请稍后重试";
 const authPolicyViolationCode = 1008;
+let requestSequence = 0;
 
 export interface StoryRealtimeGenerationError {
   readonly code: StoryRealtimeErrorCode | "UNKNOWN";
@@ -44,7 +45,7 @@ export function startStoryRealtimeGeneration(
     return createNoopGenerationHandle();
   }
 
-  const requestId = crypto.randomUUID();
+  const requestId = createRealtimeRequestId();
   const socket = new WebSocket(
     buildRealtimeUrl(authSession.session.accessToken),
   );
@@ -213,6 +214,18 @@ function normalizeApiBaseUrl(value: unknown): string {
   }
 
   return value.trim().replace(/\/$/, "");
+}
+
+function createRealtimeRequestId(): string {
+  requestSequence =
+    requestSequence >= Number.MAX_SAFE_INTEGER ? 1 : requestSequence + 1;
+
+  return [
+    "story",
+    Date.now().toString(36),
+    requestSequence.toString(36),
+    Math.random().toString(36).slice(2, 10),
+  ].join("-");
 }
 
 function createNoopGenerationHandle(): StoryRealtimeGenerationHandle {

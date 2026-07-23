@@ -11,8 +11,11 @@ import { StorylineSummaryService } from "./storyline-summary.service";
 import { emptyCharacterSummarySnapshot } from "./storyline-summary.types";
 import type {
   ContinueStorylineInput,
+  HistoryScoreConfig,
   StorylineStreamEvent,
 } from "./storyline.types";
+
+const noOpDialogueText = "无事发生";
 
 @Injectable()
 export class StorylineGenerationService {
@@ -34,6 +37,11 @@ export class StorylineGenerationService {
 
     if (input.payload.mode === "rewrite") {
       yield* this.streamRewriteStoryline(input, options);
+      return;
+    }
+
+    if (input.payload.mode === "dialogue") {
+      yield* this.streamDialogueStoryline(input, options);
       return;
     }
 
@@ -140,7 +148,7 @@ export class StorylineGenerationService {
         userId: input.userId,
         storylineId: storyline.externalId,
         currentInstruction: input.payload.instruction,
-        historyRoundLimit: Env.story.historyRoundLimit,
+        historyScoreConfig: getHistoryScoreConfig(),
       });
       const previousSummary =
         context.characterSummary ?? emptyCharacterSummarySnapshot;
@@ -231,13 +239,21 @@ export class StorylineGenerationService {
         storylineId: storyline.externalId,
         segmentId: input.payload.segmentId,
         rewriteInstruction: input.payload.instruction,
-        historyRoundLimit: Env.story.historyRoundLimit,
+        historyScoreConfig: getHistoryScoreConfig(),
       });
 
-      for await (const event of this.storyService.streamRewriteStoryFromContext(
-        context.writerContext,
-        options,
-      )) {
+      const rewriteStream =
+        context.targetGenerationMode === "dialogue"
+          ? this.storyService.streamRewriteDialogueFromContext(
+              context.writerContext,
+              options,
+            )
+          : this.storyService.streamRewriteStoryFromContext(
+              context.writerContext,
+              options,
+            );
+
+      for await (const event of rewriteStream) {
         if (options.signal.aborted) {
           return;
         }
@@ -293,4 +309,130 @@ export class StorylineGenerationService {
       releaseLock();
     }
   }
+
+  private async *streamDialogueStoryline(
+    input: ContinueStorylineInput,
+    options: Readonly<{ signal: AbortSignal }>,
+  ): AsyncIterable<StorylineStreamEvent> {
+    if (input.payload.mode !== "dialogue") {
+      throw new StorylineNotFoundError("Expected dialogue payload");
+    }
+
+    const storyline = await this.storylineService.getStorylineForUser(
+      input.userId,
+      input.payload.storylineId,
+    );
+    if (storyline === null) {
+      throw new StorylineNotFoundError();
+    }
+
+    const releaseLock = this.storylineLockService.acquireStorylineLock(
+      storyline.externalId,
+    );
+
+    try {
+      const context = await this.storylineService.buildDialogueLlmContext({
+        userId: input.userId,
+        storylineId: storyline.externalId,
+        input: input.payload.input,
+        historyScoreConfig: getHistoryScoreConfig(),
+      });
+
+      for await (const event of this.storyService.streamDialogueStoryFromContext(
+        context.writerContext,
+        options,
+      )) {
+        if (options.signal.aborted) {
+          return;
+        }
+
+        if (event.type === "chunk") {
+          yield event;
+          continue;
+        }
+
+        if (isNoOpDialogueText(event.continuedStory)) {
+          const savedStoryline =
+            await this.storylineService.saveDialogueSegmentWithoutSummaryUpdate(
+              {
+                userId: input.userId,
+                storylineId: storyline.externalId,
+                input: input.payload.input,
+                generatedText: event.continuedStory,
+                model: event.model,
+                elapsedMs: event.elapsedMs,
+                usage: event.usage,
+                previousSummary: context.previousSummary,
+              },
+            );
+          if (options.signal.aborted) {
+            return;
+          }
+
+          yield {
+            type: "completed",
+            storyline: savedStoryline,
+            generatedSegmentId: savedStoryline.latestGeneration.segmentId,
+          };
+          continue;
+        }
+
+        yield { type: "summaryStarted" };
+        if (options.signal.aborted) {
+          return;
+        }
+
+        const characterSummary =
+          await this.storylineSummaryService.generateCharacterSummary(
+            {
+              operation: "dialogue",
+              previousSummary: context.previousSummary,
+              ...(context.initialStoryText !== undefined
+                ? { initialStoryText: context.initialStoryText }
+                : {}),
+              recentHistoryRounds: context.summaryHistoryRounds,
+              currentInstruction: input.payload.input,
+              generatedText: event.continuedStory,
+            },
+            options,
+          );
+        if (options.signal.aborted) {
+          return;
+        }
+
+        const savedStoryline =
+          await this.storylineService.saveDialogueSegmentWithSummary({
+            userId: input.userId,
+            storylineId: storyline.externalId,
+            input: input.payload.input,
+            generatedText: event.continuedStory,
+            model: event.model,
+            elapsedMs: event.elapsedMs,
+            usage: event.usage,
+            previousSummary: context.previousSummary,
+            characterSummary,
+          });
+
+        yield {
+          type: "completed",
+          storyline: savedStoryline,
+          generatedSegmentId: savedStoryline.latestGeneration.segmentId,
+        };
+      }
+    } finally {
+      releaseLock();
+    }
+  }
+}
+
+function getHistoryScoreConfig(): HistoryScoreConfig {
+  return {
+    appendScore: Env.story.historyAppendScore,
+    dialogueScore: Env.story.historyDialogueScore,
+    scoreLimit: Env.story.historyScoreLimit,
+  };
+}
+
+function isNoOpDialogueText(value: string): boolean {
+  return value.trim() === noOpDialogueText;
 }

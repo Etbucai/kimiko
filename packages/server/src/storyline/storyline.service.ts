@@ -8,6 +8,7 @@ import type {
   GetRecentStorylineResponse,
   ListStorylinesResponse,
   StorylineGenerationMetadata,
+  StorylineGenerationMode,
   StorylineListItem,
   StorylineSegment as StorylineSegmentDto,
   StorylineSnapshot,
@@ -20,6 +21,8 @@ import {
   storylines,
 } from "../database/schema";
 import type {
+  StoryDialogueLlmContext,
+  StoryDialogueRewriteLlmContext,
   StoryHistoryRound,
   StoryLlmContext,
   StoryRewriteLlmContext,
@@ -39,7 +42,11 @@ import type {
   SaveAppendedSegmentWithSummaryInput,
   SaveCreatedStorylineInput,
   SaveCreatedStorylineWithSummaryInput,
+  SaveDialogueSegmentInput,
+  SaveDialogueSegmentWithSummaryInput,
   SaveRewrittenSegmentWithSummaryInput,
+  HistoryScoreConfig,
+  StorylineDialogueContext,
   StorylineRewriteContext,
   StorylineRecord,
 } from "./storyline.types";
@@ -154,7 +161,7 @@ export class StorylineService {
     readonly userId: string;
     readonly storylineId: string;
     readonly currentInstruction: string;
-    readonly historyRoundLimit: number;
+    readonly historyScoreConfig: HistoryScoreConfig;
   }): Promise<StoryLlmContext> {
     const storyline = await this.getStorylineForUser(
       input.userId,
@@ -175,19 +182,21 @@ export class StorylineService {
     }
 
     const generatedRounds = mapGeneratedRounds(segments);
-    const historyWasTrimmed = generatedRounds.length > input.historyRoundLimit;
-    const historyRounds = historyWasTrimmed
-      ? generatedRounds.slice(-input.historyRoundLimit)
-      : generatedRounds;
+    const selectedHistory = selectRecentHistoryRounds(
+      generatedRounds,
+      input.historyScoreConfig,
+    );
     const characterSummary =
       await this.getCharacterSummaryByInternalStorylineId(storyline.id);
 
     return {
       currentInstruction: input.currentInstruction,
-      ...(historyWasTrimmed ? {} : { initialStoryText: initialSegment.text }),
+      ...(selectedHistory.wasTrimmed
+        ? {}
+        : { initialStoryText: initialSegment.text }),
       ...(characterSummary !== null ? { characterSummary } : {}),
-      historyRounds,
-      historyWasTrimmed,
+      historyRounds: selectedHistory.rounds,
+      historyWasTrimmed: selectedHistory.wasTrimmed,
     };
   }
 
@@ -196,7 +205,7 @@ export class StorylineService {
     readonly storylineId: string;
     readonly segmentId: string;
     readonly rewriteInstruction: string;
-    readonly historyRoundLimit: number;
+    readonly historyScoreConfig: HistoryScoreConfig;
   }): Promise<StorylineRewriteContext> {
     const storyline = await this.getStorylineForUser(
       input.userId,
@@ -231,11 +240,48 @@ export class StorylineService {
     const generatedRoundsBeforeTarget = mapGeneratedRounds(
       generatedSegmentsBeforeTarget,
     );
-    const historyWasTrimmed =
-      generatedRoundsBeforeTarget.length > input.historyRoundLimit;
-    const historyRoundsBeforeTarget = historyWasTrimmed
-      ? generatedRoundsBeforeTarget.slice(-input.historyRoundLimit)
-      : generatedRoundsBeforeTarget;
+    const selectedHistory = selectRecentHistoryRounds(
+      generatedRoundsBeforeTarget,
+      input.historyScoreConfig,
+    );
+    const targetGenerationMode = getRequiredGenerationMode(
+      targetSegment.generationMode,
+    );
+    const sharedContext = {
+      storyline,
+      targetSegmentId: String(targetSegment.id),
+      targetGenerationMode,
+      previousSummary,
+      summaryHistoryRounds: selectedHistory.rounds,
+      ...(selectedHistory.wasTrimmed
+        ? {}
+        : { initialStoryText: initialSegment.text }),
+    };
+
+    if (targetGenerationMode === "dialogue") {
+      const writerContext: StoryDialogueRewriteLlmContext = {
+        rewriteInstruction: input.rewriteInstruction,
+        originalInput: getRequiredString(targetSegment.instruction, "input"),
+        originalGeneratedText: targetSegment.text,
+        currentSceneText: buildCurrentSceneText(
+          segments.filter(
+            (segment) => segment.orderIndex < targetSegment.orderIndex,
+          ),
+        ),
+        ...(previousSummary.characters.length > 0
+          ? { characterSummary: previousSummary }
+          : {}),
+        recentHistoryRoundsBeforeTarget: selectedHistory.rounds,
+        historyWasTrimmed: selectedHistory.wasTrimmed,
+      };
+
+      return {
+        ...sharedContext,
+        targetGenerationMode,
+        writerContext,
+      };
+    }
+
     const writerContext: StoryRewriteLlmContext = {
       rewriteInstruction: input.rewriteInstruction,
       originalInstruction: getRequiredString(
@@ -243,21 +289,73 @@ export class StorylineService {
         "instruction",
       ),
       originalGeneratedText: targetSegment.text,
-      ...(historyWasTrimmed ? {} : { initialStoryText: initialSegment.text }),
+      ...(selectedHistory.wasTrimmed
+        ? {}
+        : { initialStoryText: initialSegment.text }),
       ...(previousSummary.characters.length > 0
         ? { characterSummary: previousSummary }
         : {}),
-      historyRoundsBeforeTarget,
-      historyWasTrimmed,
+      historyRoundsBeforeTarget: selectedHistory.rounds,
+      historyWasTrimmed: selectedHistory.wasTrimmed,
+    };
+
+    return {
+      ...sharedContext,
+      targetGenerationMode,
+      writerContext,
+    };
+  }
+
+  async buildDialogueLlmContext(input: {
+    readonly userId: string;
+    readonly storylineId: string;
+    readonly input: string;
+    readonly historyScoreConfig: HistoryScoreConfig;
+  }): Promise<StorylineDialogueContext> {
+    const storyline = await this.getStorylineForUser(
+      input.userId,
+      input.storylineId,
+    );
+    if (storyline === null) {
+      throw new StorylineNotFoundError();
+    }
+
+    const segments = await this.getSegmentsByInternalStorylineId(storyline.id);
+    const initialSegment = segments.find(
+      (segment) => segment.type === "initial",
+    );
+    if (initialSegment === undefined) {
+      throw new InternalServerErrorException(
+        "Storyline initial segment is missing",
+      );
+    }
+
+    const generatedRounds = mapGeneratedRounds(segments);
+    const selectedHistory = selectRecentHistoryRounds(
+      generatedRounds,
+      input.historyScoreConfig,
+    );
+    const previousSummary =
+      (await this.getCharacterSummaryByInternalStorylineId(storyline.id)) ??
+      emptyCharacterSummarySnapshot;
+    const writerContext: StoryDialogueLlmContext = {
+      input: input.input,
+      currentSceneText: buildCurrentSceneText(segments),
+      ...(previousSummary.characters.length > 0
+        ? { characterSummary: previousSummary }
+        : {}),
+      recentHistoryRounds: selectedHistory.rounds,
+      historyWasTrimmed: selectedHistory.wasTrimmed,
     };
 
     return {
       storyline,
-      targetSegmentId: String(targetSegment.id),
       previousSummary,
       writerContext,
-      summaryHistoryRounds: historyRoundsBeforeTarget,
-      ...(historyWasTrimmed ? {} : { initialStoryText: initialSegment.text }),
+      summaryHistoryRounds: selectedHistory.rounds,
+      ...(selectedHistory.wasTrimmed
+        ? {}
+        : { initialStoryText: initialSegment.text }),
     };
   }
 
@@ -305,6 +403,7 @@ export class StorylineService {
             storylineId: createdStoryline.id,
             orderIndex: 0,
             type: "initial",
+            generationMode: "append",
             text: input.initialStoryText.trim(),
             createdAt: now,
           })
@@ -316,6 +415,7 @@ export class StorylineService {
             storylineId: createdStoryline.id,
             orderIndex: 1,
             type: "generated",
+            generationMode: "append",
             text: input.generatedText.trim(),
             instruction: input.instruction.trim(),
             model: input.model,
@@ -378,6 +478,7 @@ export class StorylineService {
             storylineId: createdStoryline.id,
             orderIndex: 0,
             type: "initial",
+            generationMode: "append",
             text: input.initialStoryText.trim(),
             createdAt: now,
           })
@@ -389,6 +490,7 @@ export class StorylineService {
             storylineId: createdStoryline.id,
             orderIndex: 1,
             type: "generated",
+            generationMode: "append",
             text: input.generatedText.trim(),
             instruction: input.instruction.trim(),
             model: input.model,
@@ -479,6 +581,7 @@ export class StorylineService {
             storylineId: internalStorylineId,
             orderIndex: latestSegment.orderIndex + 1,
             type: "generated",
+            generationMode: "append",
             text: input.generatedText.trim(),
             instruction: input.instruction.trim(),
             model: input.model,
@@ -570,6 +673,7 @@ export class StorylineService {
             storylineId: internalStorylineId,
             orderIndex: latestSegment.orderIndex + 1,
             type: "generated",
+            generationMode: "append",
             text: input.generatedText.trim(),
             instruction: input.instruction.trim(),
             model: input.model,
@@ -603,6 +707,206 @@ export class StorylineService {
             },
           })
           .run();
+
+        transaction
+          .update(storylines)
+          .set({ updatedAt: now })
+          .where(eq(storylines.id, internalStorylineId))
+          .run();
+
+        return {
+          storylineId: internalStorylineId,
+          generatedSegmentId: generatedSegment.id,
+        };
+      });
+    } catch (error: unknown) {
+      if (error instanceof StorylineNotFoundError) {
+        throw error;
+      }
+
+      throw new StorylineSaveFailedError(toErrorMessage(error));
+    }
+
+    return this.getCompletedSnapshot(savedIds);
+  }
+
+  async saveDialogueSegmentWithSummary(
+    input: SaveDialogueSegmentWithSummaryInput,
+  ): Promise<CompletedStorylineSnapshot> {
+    const internalUserId = parseAuthenticatedUserId(input.userId);
+    const internalStorylineId = parseExternalId(input.storylineId);
+    if (internalStorylineId === null) {
+      throw new StorylineNotFoundError();
+    }
+
+    const charactersJson = serializeCharacterSummary(input.characterSummary);
+    const previousSummaryJson = serializeCharacterSummary(
+      input.previousSummary,
+    );
+    let savedIds: Readonly<{ storylineId: number; generatedSegmentId: number }>;
+
+    try {
+      savedIds = this.databaseService.db.transaction((transaction) => {
+        const storyline = transaction
+          .select()
+          .from(storylines)
+          .where(
+            and(
+              eq(storylines.id, internalStorylineId),
+              eq(storylines.userId, internalUserId),
+            ),
+          )
+          .limit(1)
+          .get();
+
+        if (storyline === undefined) {
+          throw new StorylineNotFoundError();
+        }
+
+        const latestSegment = transaction
+          .select({ orderIndex: storylineSegments.orderIndex })
+          .from(storylineSegments)
+          .where(eq(storylineSegments.storylineId, internalStorylineId))
+          .orderBy(desc(storylineSegments.orderIndex))
+          .limit(1)
+          .get();
+
+        if (latestSegment === undefined) {
+          throw new Error("Storyline has no segments");
+        }
+
+        const now = new Date();
+        const generatedSegment = transaction
+          .insert(storylineSegments)
+          .values({
+            storylineId: internalStorylineId,
+            orderIndex: latestSegment.orderIndex + 1,
+            type: "generated",
+            generationMode: "dialogue",
+            text: input.generatedText.trim(),
+            instruction: input.input.trim(),
+            model: input.model,
+            elapsedMs: input.elapsedMs,
+            inputTokens: input.usage.inputTokens,
+            outputTokens: input.usage.outputTokens,
+            totalTokens: input.usage.totalTokens,
+            previousSummaryJson,
+            createdAt: now,
+          })
+          .returning({ id: storylineSegments.id })
+          .get();
+
+        if (generatedSegment === undefined) {
+          throw new Error("Failed to insert generated segment");
+        }
+
+        transaction
+          .insert(storylineSummaries)
+          .values({
+            storylineId: internalStorylineId,
+            charactersJson,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .onConflictDoUpdate({
+            target: storylineSummaries.storylineId,
+            set: {
+              charactersJson,
+              updatedAt: now,
+            },
+          })
+          .run();
+
+        transaction
+          .update(storylines)
+          .set({ updatedAt: now })
+          .where(eq(storylines.id, internalStorylineId))
+          .run();
+
+        return {
+          storylineId: internalStorylineId,
+          generatedSegmentId: generatedSegment.id,
+        };
+      });
+    } catch (error: unknown) {
+      if (error instanceof StorylineNotFoundError) {
+        throw error;
+      }
+
+      throw new StorylineSaveFailedError(toErrorMessage(error));
+    }
+
+    return this.getCompletedSnapshot(savedIds);
+  }
+
+  async saveDialogueSegmentWithoutSummaryUpdate(
+    input: SaveDialogueSegmentInput,
+  ): Promise<CompletedStorylineSnapshot> {
+    const internalUserId = parseAuthenticatedUserId(input.userId);
+    const internalStorylineId = parseExternalId(input.storylineId);
+    if (internalStorylineId === null) {
+      throw new StorylineNotFoundError();
+    }
+
+    const previousSummaryJson = serializeCharacterSummary(
+      input.previousSummary,
+    );
+    let savedIds: Readonly<{ storylineId: number; generatedSegmentId: number }>;
+
+    try {
+      savedIds = this.databaseService.db.transaction((transaction) => {
+        const storyline = transaction
+          .select()
+          .from(storylines)
+          .where(
+            and(
+              eq(storylines.id, internalStorylineId),
+              eq(storylines.userId, internalUserId),
+            ),
+          )
+          .limit(1)
+          .get();
+
+        if (storyline === undefined) {
+          throw new StorylineNotFoundError();
+        }
+
+        const latestSegment = transaction
+          .select({ orderIndex: storylineSegments.orderIndex })
+          .from(storylineSegments)
+          .where(eq(storylineSegments.storylineId, internalStorylineId))
+          .orderBy(desc(storylineSegments.orderIndex))
+          .limit(1)
+          .get();
+
+        if (latestSegment === undefined) {
+          throw new Error("Storyline has no segments");
+        }
+
+        const now = new Date();
+        const generatedSegment = transaction
+          .insert(storylineSegments)
+          .values({
+            storylineId: internalStorylineId,
+            orderIndex: latestSegment.orderIndex + 1,
+            type: "generated",
+            generationMode: "dialogue",
+            text: input.generatedText.trim(),
+            instruction: input.input.trim(),
+            model: input.model,
+            elapsedMs: input.elapsedMs,
+            inputTokens: input.usage.inputTokens,
+            outputTokens: input.usage.outputTokens,
+            totalTokens: input.usage.totalTokens,
+            previousSummaryJson,
+            createdAt: now,
+          })
+          .returning({ id: storylineSegments.id })
+          .get();
+
+        if (generatedSegment === undefined) {
+          throw new Error("Failed to insert generated segment");
+        }
 
         transaction
           .update(storylines)
@@ -809,9 +1113,18 @@ export class StorylineService {
 }
 
 function mapSegmentDto(segment: StorylineSegmentRow): StorylineSegmentDto {
+  if (segment.type === "initial") {
+    return {
+      id: String(segment.id),
+      type: "initial",
+      text: segment.text,
+    };
+  }
+
   return {
     id: String(segment.id),
-    type: segment.type,
+    type: "generated",
+    generationMode: getRequiredGenerationMode(segment.generationMode),
     text: segment.text,
   };
 }
@@ -848,6 +1161,7 @@ function mapListItemDto(
     ),
     updatedAt: dateToIsoString(storyline.updatedAt),
     segmentCount: segments.length,
+    chapterCount: countChapters(segments),
   };
 }
 
@@ -893,6 +1207,7 @@ function mapGeneratedRounds(
     .filter((segment) => segment.type === "generated")
     .map((segment, index) => ({
       roundIndex: index + 1,
+      generationMode: getRequiredGenerationMode(segment.generationMode),
       instruction: getRequiredString(segment.instruction, "instruction"),
       generatedText: segment.text,
     }));
@@ -931,6 +1246,117 @@ function getRequiredNumber(value: number | null, field: string): number {
   }
 
   return value;
+}
+
+function getRequiredGenerationMode(
+  value: StorylineGenerationMode | null,
+): StorylineGenerationMode {
+  if (value !== "append" && value !== "dialogue") {
+    throw new InternalServerErrorException(
+      "Storyline generated segment is missing generation mode",
+    );
+  }
+
+  return value;
+}
+
+function countChapters(segments: readonly StorylineSegmentRow[]): number {
+  return segments.filter(
+    (segment) =>
+      segment.type === "initial" ||
+      (segment.type === "generated" &&
+        getRequiredGenerationMode(segment.generationMode) === "append"),
+  ).length;
+}
+
+function selectRecentHistoryRounds(
+  rounds: readonly StoryHistoryRound[],
+  config: HistoryScoreConfig,
+): Readonly<{ rounds: readonly StoryHistoryRound[]; wasTrimmed: boolean }> {
+  const selectedRounds: StoryHistoryRound[] = [];
+  let totalScore = 0;
+
+  for (let index = rounds.length - 1; index >= 0; index -= 1) {
+    const round = rounds[index];
+    if (round === undefined) {
+      continue;
+    }
+
+    const roundScore = getHistoryRoundScore(round, config);
+    if (
+      selectedRounds.length > 0 &&
+      totalScore + roundScore > config.scoreLimit
+    ) {
+      break;
+    }
+
+    selectedRounds.push(round);
+    totalScore += roundScore;
+  }
+
+  selectedRounds.reverse();
+
+  return {
+    rounds: selectedRounds,
+    wasTrimmed: selectedRounds.length < rounds.length,
+  };
+}
+
+function getHistoryRoundScore(
+  round: StoryHistoryRound,
+  config: HistoryScoreConfig,
+): number {
+  return round.generationMode === "dialogue"
+    ? config.dialogueScore
+    : config.appendScore;
+}
+
+function buildCurrentSceneText(
+  segments: readonly StorylineSegmentRow[],
+): string {
+  const latestChapterIndex = findLatestChapterIndex(segments);
+  const latestChapter = segments[latestChapterIndex];
+  if (latestChapter === undefined) {
+    throw new InternalServerErrorException(
+      "Storyline current scene is missing",
+    );
+  }
+
+  const promptParts = ["章节正文：", latestChapter.text];
+  for (const segment of segments.slice(latestChapterIndex + 1)) {
+    if (segment.type !== "generated") {
+      continue;
+    }
+
+    if (getRequiredGenerationMode(segment.generationMode) !== "dialogue") {
+      continue;
+    }
+
+    promptParts.push("", "互动：", segment.text);
+  }
+
+  return promptParts.join("\n");
+}
+
+function findLatestChapterIndex(
+  segments: readonly StorylineSegmentRow[],
+): number {
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
+    const segment = segments[index];
+    if (segment === undefined) {
+      continue;
+    }
+
+    if (segment.type === "initial") {
+      return index;
+    }
+
+    if (getRequiredGenerationMode(segment.generationMode) === "append") {
+      return index;
+    }
+  }
+
+  return -1;
 }
 
 function parseAuthenticatedUserId(userId: string): number {

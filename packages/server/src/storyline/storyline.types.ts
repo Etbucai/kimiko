@@ -2,9 +2,12 @@ import type {
   CompletedStorylineSnapshot,
   ContinueStoryUsage,
   StoryContinuePayload,
+  StorylineGenerationMode,
 } from "@kimiko/schema";
 import type { StoryCharacterSummarySnapshot } from "./storyline-summary.types";
 import type {
+  StoryDialogueLlmContext,
+  StoryDialogueRewriteLlmContext,
   StoryHistoryRound,
   StoryRewriteLlmContext,
 } from "../story/story.service";
@@ -56,11 +59,52 @@ export interface SaveRewrittenSegmentWithSummaryInput {
   readonly characterSummary: StoryCharacterSummarySnapshot;
 }
 
-export interface StorylineRewriteContext {
+export interface SaveDialogueSegmentInput {
+  readonly userId: string;
+  readonly storylineId: string;
+  readonly input: string;
+  readonly generatedText: string;
+  readonly model: string;
+  readonly elapsedMs: number;
+  readonly usage: ContinueStoryUsage;
+  readonly previousSummary: StoryCharacterSummarySnapshot;
+}
+
+export interface SaveDialogueSegmentWithSummaryInput extends SaveDialogueSegmentInput {
+  readonly characterSummary: StoryCharacterSummarySnapshot;
+}
+
+export interface HistoryScoreConfig {
+  readonly appendScore: number;
+  readonly dialogueScore: number;
+  readonly scoreLimit: number;
+}
+
+interface BaseStorylineRewriteContext {
   readonly storyline: StorylineRecord;
   readonly targetSegmentId: string;
+  readonly targetGenerationMode: StorylineGenerationMode;
   readonly previousSummary: StoryCharacterSummarySnapshot;
-  readonly writerContext: StoryRewriteLlmContext;
+  readonly summaryHistoryRounds: readonly StoryHistoryRound[];
+  readonly initialStoryText?: string;
+}
+
+export type StorylineRewriteContext =
+  | (BaseStorylineRewriteContext &
+      Readonly<{
+        targetGenerationMode: "append";
+        writerContext: StoryRewriteLlmContext;
+      }>)
+  | (BaseStorylineRewriteContext &
+      Readonly<{
+        targetGenerationMode: "dialogue";
+        writerContext: StoryDialogueRewriteLlmContext;
+      }>);
+
+export interface StorylineDialogueContext {
+  readonly storyline: StorylineRecord;
+  readonly previousSummary: StoryCharacterSummarySnapshot;
+  readonly writerContext: StoryDialogueLlmContext;
   readonly summaryHistoryRounds: readonly StoryHistoryRound[];
   readonly initialStoryText?: string;
 }

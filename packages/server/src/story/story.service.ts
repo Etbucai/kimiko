@@ -8,6 +8,7 @@ import type {
   ContinueStoryUsage,
   GenerateLlmTextRequest,
   GenerateLlmTextUsage,
+  StorylineGenerationMode,
 } from "@kimiko/schema";
 import { ContinueStoryRequestSchema } from "@kimiko/schema";
 import { LlmService } from "../llm/llm.service";
@@ -36,6 +37,21 @@ export const STORY_SYSTEM_PROMPT = [
   "不要输出标题、解释、列表、调试信息或“以下是续写”等前缀。",
 ].join("\n");
 
+export const STORY_DIALOGUE_SYSTEM_PROMPT = [
+  "你是 StoryAgent，负责在故事线当前场景中生成一次轻量互动。",
+  "用户输入可能是一句角色台词，也可能是一段角色动作描写。",
+  "你必须把用户输入润色进最终正文，不要原样机械复制。",
+  "你需要从当前场景中寻找另一个合适角色作出回应。",
+  "回复角色必须不同于用户输入中的发起角色。",
+  "如果当前场景没有合适的另一个角色，只输出“无事发生”。",
+  "如果有多个合适角色，只选择一个。",
+  "输出 1-2 句短反应，整体建议 20-120 个中文字符。",
+  "角色台词要口语化，正常人聊天一句话通常在 5-25 字。",
+  "优先采用动作或神态加一句口语回应。",
+  "不要继续推进大段新剧情。",
+  "不要输出标题、解释、列表、JSON、调试信息或“以下是互动”等前缀。",
+].join("\n");
+
 export type StoryStreamEvent =
   | Readonly<{ type: "chunk"; delta: string; sequence: number }>
   | Readonly<{
@@ -48,6 +64,7 @@ export type StoryStreamEvent =
 
 export interface StoryHistoryRound {
   readonly roundIndex: number;
+  readonly generationMode: StorylineGenerationMode;
   readonly instruction: string;
   readonly generatedText: string;
 }
@@ -67,6 +84,24 @@ export interface StoryRewriteLlmContext {
   readonly initialStoryText?: string;
   readonly characterSummary?: StoryCharacterSummarySnapshot;
   readonly historyRoundsBeforeTarget: readonly StoryHistoryRound[];
+  readonly historyWasTrimmed: boolean;
+}
+
+export interface StoryDialogueLlmContext {
+  readonly input: string;
+  readonly currentSceneText: string;
+  readonly characterSummary?: StoryCharacterSummarySnapshot;
+  readonly recentHistoryRounds: readonly StoryHistoryRound[];
+  readonly historyWasTrimmed: boolean;
+}
+
+export interface StoryDialogueRewriteLlmContext {
+  readonly rewriteInstruction: string;
+  readonly originalInput: string;
+  readonly originalGeneratedText: string;
+  readonly currentSceneText: string;
+  readonly characterSummary?: StoryCharacterSummarySnapshot;
+  readonly recentHistoryRoundsBeforeTarget: readonly StoryHistoryRound[];
   readonly historyWasTrimmed: boolean;
 }
 
@@ -102,6 +137,26 @@ export class StoryService {
   ): AsyncIterable<StoryStreamEvent> {
     yield* this.streamStoryLlmRequest(
       buildRewriteStoryLlmRequestFromContext(context),
+      options,
+    );
+  }
+
+  async *streamDialogueStoryFromContext(
+    context: StoryDialogueLlmContext,
+    options: Readonly<{ signal: AbortSignal }>,
+  ): AsyncIterable<StoryStreamEvent> {
+    yield* this.streamStoryLlmRequest(
+      buildDialogueStoryLlmRequestFromContext(context),
+      options,
+    );
+  }
+
+  async *streamRewriteDialogueFromContext(
+    context: StoryDialogueRewriteLlmContext,
+    options: Readonly<{ signal: AbortSignal }>,
+  ): AsyncIterable<StoryStreamEvent> {
+    yield* this.streamStoryLlmRequest(
+      buildRewriteDialogueLlmRequestFromContext(context),
       options,
     );
   }
@@ -185,6 +240,24 @@ export function buildRewriteStoryLlmRequestFromContext(
   };
 }
 
+export function buildDialogueStoryLlmRequestFromContext(
+  context: StoryDialogueLlmContext,
+): GenerateLlmTextRequest {
+  return {
+    systemPrompt: STORY_DIALOGUE_SYSTEM_PROMPT,
+    userPrompt: buildDialogueStoryUserPromptFromContext(context),
+  };
+}
+
+export function buildRewriteDialogueLlmRequestFromContext(
+  context: StoryDialogueRewriteLlmContext,
+): GenerateLlmTextRequest {
+  return {
+    systemPrompt: STORY_DIALOGUE_SYSTEM_PROMPT,
+    userPrompt: buildRewriteDialogueUserPromptFromContext(context),
+  };
+}
+
 function buildStoryUserPromptFromContext(context: StoryLlmContext): string {
   const promptParts: string[] = [];
   const characterSummaryText = formatCharacterSummary(context.characterSummary);
@@ -200,22 +273,18 @@ function buildStoryUserPromptFromContext(context: StoryLlmContext): string {
 
   if (context.historyRounds.length > 0) {
     promptParts.push(
-      context.historyWasTrimmed ? "近期故事正文片段：" : "近期续写轨迹：",
+      context.historyWasTrimmed ? "近期故事正文片段：" : "近期生成轨迹：",
     );
 
     for (const round of context.historyRounds) {
       if (context.historyWasTrimmed) {
-        promptParts.push(
-          `第 ${round.roundIndex} 轮续写：`,
-          round.generatedText,
-          "",
-        );
+        promptParts.push(formatRoundTextLabel(round), round.generatedText, "");
       } else {
         promptParts.push(
-          `第 ${round.roundIndex} 轮指令：`,
+          formatRoundInstructionLabel(round),
           round.instruction,
           "",
-          `第 ${round.roundIndex} 轮续写：`,
+          formatRoundTextLabel(round),
           round.generatedText,
           "",
         );
@@ -223,10 +292,10 @@ function buildStoryUserPromptFromContext(context: StoryLlmContext): string {
     }
 
     if (context.historyWasTrimmed) {
-      promptParts.push("近期续写指令轨迹：");
+      promptParts.push("近期生成指令轨迹：");
       for (const round of context.historyRounds) {
         promptParts.push(
-          `第 ${round.roundIndex} 轮指令：`,
+          formatRoundInstructionLabel(round),
           round.instruction,
           "",
         );
@@ -258,22 +327,18 @@ function buildRewriteStoryUserPromptFromContext(
     promptParts.push(
       context.historyWasTrimmed
         ? "目标段之前的近期故事正文片段："
-        : "目标段之前的近期续写轨迹：",
+        : "目标段之前的近期生成轨迹：",
     );
 
     for (const round of context.historyRoundsBeforeTarget) {
       if (context.historyWasTrimmed) {
-        promptParts.push(
-          `第 ${round.roundIndex} 轮续写：`,
-          round.generatedText,
-          "",
-        );
+        promptParts.push(formatRoundTextLabel(round), round.generatedText, "");
       } else {
         promptParts.push(
-          `第 ${round.roundIndex} 轮指令：`,
+          formatRoundInstructionLabel(round),
           round.instruction,
           "",
-          `第 ${round.roundIndex} 轮续写：`,
+          formatRoundTextLabel(round),
           round.generatedText,
           "",
         );
@@ -281,10 +346,10 @@ function buildRewriteStoryUserPromptFromContext(
     }
 
     if (context.historyWasTrimmed) {
-      promptParts.push("目标段之前的近期续写指令轨迹：");
+      promptParts.push("目标段之前的近期生成指令轨迹：");
       for (const round of context.historyRoundsBeforeTarget) {
         promptParts.push(
-          `第 ${round.roundIndex} 轮指令：`,
+          formatRoundInstructionLabel(round),
           round.instruction,
           "",
         );
@@ -308,6 +373,138 @@ function buildRewriteStoryUserPromptFromContext(
   );
 
   return promptParts.join("\n");
+}
+
+function buildDialogueStoryUserPromptFromContext(
+  context: StoryDialogueLlmContext,
+): string {
+  const promptParts: string[] = [];
+  const characterSummaryText = formatCharacterSummary(context.characterSummary);
+
+  if (characterSummaryText !== undefined) {
+    promptParts.push("角色摘要：", characterSummaryText, "");
+  }
+
+  promptParts.push("当前场景：", context.currentSceneText, "");
+
+  appendRecentHistoryPrompt({
+    historyLabel: context.historyWasTrimmed
+      ? "近期故事正文片段："
+      : "近期生成轨迹：",
+    historyWasTrimmed: context.historyWasTrimmed,
+    promptParts,
+    rounds: context.recentHistoryRounds,
+    trimmedInstructionLabel: "近期生成指令轨迹：",
+  });
+
+  promptParts.push(
+    "本轮互动输入：",
+    context.input,
+    "",
+    "请只输出本轮互动正文。",
+    "如果当前场景没有另一个合适角色可以回应，只输出“无事发生”。",
+  );
+
+  return promptParts.join("\n");
+}
+
+function buildRewriteDialogueUserPromptFromContext(
+  context: StoryDialogueRewriteLlmContext,
+): string {
+  const promptParts: string[] = [];
+  const characterSummaryText = formatCharacterSummary(context.characterSummary);
+
+  if (characterSummaryText !== undefined) {
+    promptParts.push("角色摘要：", characterSummaryText, "");
+  }
+
+  promptParts.push("当前场景：", context.currentSceneText, "");
+
+  appendRecentHistoryPrompt({
+    historyLabel: context.historyWasTrimmed
+      ? "目标互动之前的近期故事正文片段："
+      : "目标互动之前的近期生成轨迹：",
+    historyWasTrimmed: context.historyWasTrimmed,
+    promptParts,
+    rounds: context.recentHistoryRoundsBeforeTarget,
+    trimmedInstructionLabel: "目标互动之前的近期生成指令轨迹：",
+  });
+
+  promptParts.push(
+    "原互动输入：",
+    context.originalInput,
+    "",
+    "原互动正文：",
+    context.originalGeneratedText,
+    "",
+    "重写要求：",
+    context.rewriteInstruction,
+    "",
+    "请只输出用于替换原互动正文的新互动正文。",
+    "新正文仍然必须是轻量互动，不要扩写成大段续写。",
+    "如果重写后当前场景仍没有另一个合适角色可以回应，可以只输出“无事发生”。",
+  );
+
+  return promptParts.join("\n");
+}
+
+function appendRecentHistoryPrompt(input: {
+  readonly historyLabel: string;
+  readonly historyWasTrimmed: boolean;
+  readonly promptParts: string[];
+  readonly rounds: readonly StoryHistoryRound[];
+  readonly trimmedInstructionLabel: string;
+}): void {
+  if (input.rounds.length === 0) {
+    return;
+  }
+
+  input.promptParts.push(input.historyLabel);
+
+  for (const round of input.rounds) {
+    if (input.historyWasTrimmed) {
+      input.promptParts.push(
+        formatRoundTextLabel(round),
+        round.generatedText,
+        "",
+      );
+      continue;
+    }
+
+    input.promptParts.push(
+      formatRoundInstructionLabel(round),
+      round.instruction,
+      "",
+      formatRoundTextLabel(round),
+      round.generatedText,
+      "",
+    );
+  }
+
+  if (!input.historyWasTrimmed) {
+    return;
+  }
+
+  input.promptParts.push(input.trimmedInstructionLabel);
+  for (const round of input.rounds) {
+    input.promptParts.push(
+      formatRoundInstructionLabel(round),
+      round.instruction,
+      "",
+    );
+  }
+}
+
+function formatRoundInstructionLabel(round: StoryHistoryRound): string {
+  return round.generationMode === "dialogue"
+    ? `第 ${round.roundIndex} 轮互动输入：`
+    : `第 ${round.roundIndex} 轮续写指令：`;
+}
+
+function formatRoundTextLabel(round: StoryHistoryRound): string {
+  return round.generationMode === "dialogue"
+    ? `第 ${round.roundIndex} 轮互动正文：`
+    : `第 ${round.roundIndex} 轮续写正文：`;
 }
 
 function formatCharacterSummary(

@@ -10,8 +10,11 @@ import type {
 import type { LlmProvider, LlmTextStreamEvent } from "../llm/llm.provider";
 import { LlmService } from "../llm/llm.service";
 import {
+  buildDialogueStoryLlmRequestFromContext,
   buildRewriteStoryLlmRequestFromContext,
+  buildRewriteDialogueLlmRequestFromContext,
   buildStoryLlmRequestFromContext,
+  STORY_DIALOGUE_SYSTEM_PROMPT,
   STORY_SYSTEM_PROMPT,
   StoryService,
 } from "./story.service";
@@ -235,11 +238,13 @@ describe("StoryService", () => {
       historyRounds: [
         {
           roundIndex: 4,
+          generationMode: "append",
           instruction: "调查旧书店。",
           generatedText: "林夏回到旧书店。",
         },
         {
           roundIndex: 5,
+          generationMode: "append",
           instruction: "前往钟楼。",
           generatedText: "林夏走向钟楼。",
         },
@@ -249,10 +254,10 @@ describe("StoryService", () => {
 
     expect(request.systemPrompt).toBe(STORY_SYSTEM_PROMPT);
     expect(request.userPrompt).toContain("近期故事正文片段：");
-    expect(request.userPrompt).toContain("第 4 轮续写：");
+    expect(request.userPrompt).toContain("第 4 轮续写正文：");
     expect(request.userPrompt).toContain("林夏回到旧书店。");
-    expect(request.userPrompt).toContain("近期续写指令轨迹：");
-    expect(request.userPrompt).toContain("第 5 轮指令：");
+    expect(request.userPrompt).toContain("近期生成指令轨迹：");
+    expect(request.userPrompt).toContain("第 5 轮续写指令：");
     expect(request.userPrompt).toContain("当前续写指令：");
     expect(request.userPrompt).not.toContain("故事正文：\n");
   });
@@ -276,6 +281,7 @@ describe("StoryService", () => {
       historyRounds: [
         {
           roundIndex: 1,
+          generationMode: "append",
           instruction: "前往钟楼。",
           generatedText: "林夏走向钟楼。",
         },
@@ -285,7 +291,7 @@ describe("StoryService", () => {
 
     const summaryIndex = request.userPrompt.indexOf("角色摘要：");
     const storyIndex = request.userPrompt.indexOf("故事正文：");
-    const historyIndex = request.userPrompt.indexOf("近期续写轨迹：");
+    const historyIndex = request.userPrompt.indexOf("近期生成轨迹：");
 
     expect(summaryIndex).toBeGreaterThanOrEqual(0);
     expect(storyIndex).toBeGreaterThan(summaryIndex);
@@ -315,6 +321,7 @@ describe("StoryService", () => {
       historyRoundsBeforeTarget: [
         {
           roundIndex: 1,
+          generationMode: "append",
           instruction: "调查旧书店。",
           generatedText: "林夏回到旧书店。",
         },
@@ -325,7 +332,7 @@ describe("StoryService", () => {
     expect(request.systemPrompt).toBe(STORY_SYSTEM_PROMPT);
     expect(request.userPrompt).toContain("角色摘要：");
     expect(request.userPrompt).toContain("故事正文：");
-    expect(request.userPrompt).toContain("目标段之前的近期续写轨迹：");
+    expect(request.userPrompt).toContain("目标段之前的近期生成轨迹：");
     expect(request.userPrompt).toContain("原续写指令：");
     expect(request.userPrompt).toContain("前往钟楼。");
     expect(request.userPrompt).toContain("原生成正文：");
@@ -336,6 +343,75 @@ describe("StoryService", () => {
       "请只输出用于替换原生成正文的新正文。",
     );
     expect(request.userPrompt).not.toContain("当前续写指令：");
+  });
+
+  it("builds dialogue prompts with current scene and short interaction rules", () => {
+    const request = buildDialogueStoryLlmRequestFromContext({
+      input: "大凡朝厨房喊，让馥冰帮他拿奶茶。",
+      currentSceneText: [
+        "章节正文：",
+        "大凡靠在沙发上，馥冰在厨房里翻冰箱。",
+        "",
+        "互动：",
+        "馥冰回头看了他一眼。",
+      ].join("\n"),
+      characterSummary: {
+        characters: [
+          {
+            name: "馥冰",
+            aliases: [],
+            identity: "住在同一屋檐下的少女",
+            relationships: ["和大凡经常拌嘴"],
+            motivation: "",
+            currentStatus: "正在厨房",
+          },
+        ],
+      },
+      recentHistoryRounds: [
+        {
+          roundIndex: 1,
+          generationMode: "dialogue",
+          instruction: "大凡让馥冰拿奶茶。",
+          generatedText: "馥冰没好气地瞪了他一眼。",
+        },
+      ],
+      historyWasTrimmed: false,
+    });
+
+    expect(request.systemPrompt).toBe(STORY_DIALOGUE_SYSTEM_PROMPT);
+    expect(request.systemPrompt).not.toContain("800-1200 字");
+    expect(request.userPrompt).toContain("当前场景：");
+    expect(request.userPrompt).toContain("本轮互动输入：");
+    expect(request.userPrompt).toContain("大凡朝厨房喊");
+    expect(request.userPrompt).toContain("第 1 轮互动输入：");
+    expect(request.userPrompt).toContain("第 1 轮互动正文：");
+    expect(request.userPrompt).toContain("只输出“无事发生”");
+  });
+
+  it("builds dialogue rewrite prompts from original input and text", () => {
+    const request = buildRewriteDialogueLlmRequestFromContext({
+      rewriteInstruction: "语气更嫌弃一点。",
+      originalInput: "大凡让馥冰拿奶茶。",
+      originalGeneratedText: "馥冰叹了口气，还是走向厨房。",
+      currentSceneText: "章节正文：\n大凡靠在沙发上，馥冰站在厨房门口。",
+      recentHistoryRoundsBeforeTarget: [
+        {
+          roundIndex: 1,
+          generationMode: "append",
+          instruction: "进入客厅。",
+          generatedText: "两人在客厅里拌嘴。",
+        },
+      ],
+      historyWasTrimmed: false,
+    });
+
+    expect(request.systemPrompt).toBe(STORY_DIALOGUE_SYSTEM_PROMPT);
+    expect(request.userPrompt).toContain("原互动输入：");
+    expect(request.userPrompt).toContain("大凡让馥冰拿奶茶。");
+    expect(request.userPrompt).toContain("原互动正文：");
+    expect(request.userPrompt).toContain("重写要求：");
+    expect(request.userPrompt).toContain("语气更嫌弃一点。");
+    expect(request.userPrompt).toContain("不要扩写成大段续写");
   });
 });
 

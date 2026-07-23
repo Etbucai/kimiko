@@ -1,6 +1,7 @@
 import type { JSX } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
+import { toast } from "sonner";
 import type {
   StoryCharacterSummarySnapshot,
   StoryContinuePayload,
@@ -20,12 +21,19 @@ import {
   getStorylineSummary,
 } from "../../story/storylineApi";
 import { StoryInitialInput } from "./StoryInitialInput";
+import { StoryActionDrawer } from "./StoryActionDrawer";
+import { StoryActionFab } from "./StoryActionFab";
+import type { StoryActionKind } from "./StoryActionFab";
 import { StorylineComposer } from "./StorylineComposer";
 import type { StorylineComposerMode } from "./StorylineComposer";
 import { StorylineReader } from "./StorylineReader";
-import type { RewriteDraftState } from "./StorylineReader";
+import type {
+  RewriteDraftState,
+  StorylineReaderViewportState,
+} from "./StorylineReader";
 import { StorylineRestoreError } from "./StorylineRestoreError";
 import { StorySummaryDrawer } from "./StorySummaryDrawer";
+import { getLatestGeneratedSegmentId } from "./storylineSegmentUtils";
 
 type StorylinePageStatus =
   | "loading"
@@ -42,6 +50,7 @@ type StorylinePageStatus =
 interface StorylineFieldErrors {
   initialStoryText?: string;
   appendInstruction?: string;
+  dialogueInput?: string;
   rewriteInstruction?: string;
 }
 
@@ -58,7 +67,8 @@ type SummaryDrawerStatus = "idle" | "loading" | "success" | "failed";
 type GenerationIntent =
   | Readonly<{ type: "create" }>
   | Readonly<{ type: "append" }>
-  | Readonly<{ type: "rewrite"; segmentId: StorylineSegmentId }>;
+  | Readonly<{ type: "rewrite"; segmentId: StorylineSegmentId }>
+  | Readonly<{ type: "dialogue" }>;
 
 type StoryPageMode = "recent" | "detail" | "new";
 
@@ -87,16 +97,22 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   const [storyline, setStoryline] = useState<StorylineSnapshot | null>(null);
   const [initialStoryText, setInitialStoryText] = useState("");
   const [appendInstruction, setAppendInstruction] = useState("");
+  const [dialogueInput, setDialogueInput] = useState("");
   const [rewriteInstruction, setRewriteInstruction] = useState("");
   const [rewriteTargetSegmentId, setRewriteTargetSegmentId] =
     useState<StorylineSegmentId | null>(null);
   const [composerMode, setComposerMode] =
     useState<StorylineComposerMode>("append");
+  const [activeDrawerMode, setActiveDrawerMode] =
+    useState<StoryActionKind | null>(null);
   const [activeGenerationIntent, setActiveGenerationIntent] =
     useState<GenerationIntent | null>(null);
   const [temporaryAppendText, setTemporaryAppendText] = useState("");
+  const [temporaryDialogueText, setTemporaryDialogueText] = useState("");
   const [temporaryRewrite, setTemporaryRewrite] =
     useState<RewriteDraftState | null>(null);
+  const [readerViewport, setReaderViewport] =
+    useState<StorylineReaderViewportState | null>(null);
   const [fieldErrors, setFieldErrors] = useState<StorylineFieldErrors>({});
   const [restoreErrorTitle, setRestoreErrorTitle] = useState("故事线恢复失败");
   const [restoreErrorMessage, setRestoreErrorMessage] = useState(
@@ -116,8 +132,20 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     status === "connecting" ||
     status === "streaming" ||
     status === "summarizing";
-  const isComposerVisible = status !== "loading" && status !== "restoreFailed";
+  const isComposerVisible =
+    storyline === null && status !== "loading" && status !== "restoreFailed";
   const temporaryTextStatus = getTemporaryTextStatus(status);
+  const latestGeneratedSegmentId =
+    storyline === null ? null : getLatestGeneratedSegmentId(storyline.segments);
+  const availableActions: readonly StoryActionKind[] =
+    latestGeneratedSegmentId === null
+      ? ["append", "dialogue"]
+      : ["append", "rewrite", "dialogue"];
+  const isActionFabVisible =
+    storyline !== null &&
+    activeDrawerMode === null &&
+    (isGenerating || readerViewport?.isViewingLatestPage === true);
+  const mainBottomPaddingClassName = storyline === null ? "pb-64" : "pb-28";
 
   const restoreStoryline = useCallback(async (): Promise<void> => {
     const requestId = restoreRequestIdRef.current + 1;
@@ -127,7 +155,9 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     generationHandleRef.current = null;
     setStatus("loading");
     setTemporaryAppendText("");
+    setTemporaryDialogueText("");
     setTemporaryRewrite(null);
+    setActiveDrawerMode(null);
     setActiveGenerationIntent(null);
     setFieldErrors({});
     setRestoreErrorTitle("故事线恢复失败");
@@ -142,6 +172,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
       setStoryline(null);
       setInitialStoryText("");
       setAppendInstruction("");
+      setDialogueInput("");
       setRewriteInstruction("");
       setRewriteTargetSegmentId(null);
       setComposerMode("append");
@@ -188,6 +219,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     setStoryline(result.storyline);
     setInitialStoryText("");
     setAppendInstruction("");
+    setDialogueInput("");
     setRewriteInstruction("");
     setRewriteTargetSegmentId(null);
     setComposerMode("append");
@@ -237,11 +269,48 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     );
   }
 
+  function handleDialogueInputChange(value: string): void {
+    setDialogueInput(value);
+    setFieldErrors((previousFieldErrors) =>
+      removeFieldError(previousFieldErrors, "dialogueInput"),
+    );
+  }
+
   function handleRewriteInstructionChange(value: string): void {
     setRewriteInstruction(value);
     setFieldErrors((previousFieldErrors) =>
       removeFieldError(previousFieldErrors, "rewriteInstruction"),
     );
+  }
+
+  const handleReaderViewportChange = useCallback(
+    (state: StorylineReaderViewportState): void => {
+      setReaderViewport(state);
+    },
+    [],
+  );
+
+  function handleSelectStoryAction(action: StoryActionKind): void {
+    if (isGenerating || storyline === null) {
+      return;
+    }
+
+    if (action === "rewrite") {
+      const latestGeneratedSegmentId = getLatestGeneratedSegmentId(
+        storyline.segments,
+      );
+      if (latestGeneratedSegmentId === null) {
+        return;
+      }
+
+      setRewriteTargetSegmentId(latestGeneratedSegmentId);
+      setFieldErrors((previousFieldErrors) =>
+        removeFieldError(previousFieldErrors, "rewriteInstruction"),
+      );
+    }
+
+    setGenerationStatusMessage("");
+    setActiveDrawerMode(action);
   }
 
   function handleSubmit(): void {
@@ -251,8 +320,10 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     }
 
     const validationResult = validatePayload({
+      actionMode: activeDrawerMode,
       appendInstruction,
       composerMode,
+      dialogueInput,
       initialStoryText,
       rewriteInstruction,
       rewriteTargetSegmentId,
@@ -265,9 +336,11 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
 
     const intent = validationResult.intent;
     shouldFollowScrollRef.current = intent.type !== "rewrite" && isNearBottom();
+    setActiveDrawerMode(null);
     setActiveGenerationIntent(intent);
     setFieldErrors({});
     setTemporaryAppendText("");
+    setTemporaryDialogueText("");
     setTemporaryRewrite(
       intent.type === "rewrite"
         ? { targetSegmentId: intent.segmentId, text: "" }
@@ -295,6 +368,13 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
             return;
           }
 
+          if (intent.type === "dialogue") {
+            setTemporaryDialogueText(
+              (previousText) => `${previousText}${delta}`,
+            );
+            return;
+          }
+
           shouldFollowScrollRef.current = isNearBottom();
           setTemporaryAppendText((previousText) => `${previousText}${delta}`);
         },
@@ -309,6 +389,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
             intent.type !== "rewrite" && isNearBottom();
           setStoryline(event.storyline);
           setTemporaryAppendText("");
+          setTemporaryDialogueText("");
           setTemporaryRewrite(null);
           setActiveGenerationIntent(null);
           setGenerationStatusMessage("");
@@ -328,6 +409,11 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
             return;
           }
 
+          if (intent.type === "dialogue") {
+            setDialogueInput("");
+            return;
+          }
+
           setRewriteInstruction("");
           setRewriteTargetSegmentId(null);
           setComposerMode("append");
@@ -336,22 +422,35 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
           generationHandleRef.current = null;
           if (intent.type === "rewrite") {
             setTemporaryRewrite(null);
+          } else if (intent.type === "dialogue") {
+            setTemporaryDialogueText("");
           } else {
             setTemporaryAppendText("");
           }
           setActiveGenerationIntent(null);
-          setGenerationStatusMessage(generationCancelledMessage);
+          if (intent.type === "create") {
+            setGenerationStatusMessage(generationCancelledMessage);
+          } else {
+            toast(generationCancelledMessage);
+          }
           setStatus("cancelled");
         },
         onError(error) {
           generationHandleRef.current = null;
           if (intent.type === "rewrite") {
             setTemporaryRewrite(null);
+          } else if (intent.type === "dialogue") {
+            setTemporaryDialogueText("");
           } else {
             setTemporaryAppendText("");
           }
           setActiveGenerationIntent(null);
-          setGenerationStatusMessage(getGenerationErrorMessage(error));
+          const message = getGenerationErrorMessage(error);
+          if (intent.type === "create") {
+            setGenerationStatusMessage(message);
+          } else {
+            toast.error(message);
+          }
           setStatus("failed");
         },
         onAuthRequired() {
@@ -365,20 +464,6 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
 
   function handleCancel(): void {
     generationHandleRef.current?.cancel();
-  }
-
-  function handleStartRewrite(segmentId: StorylineSegmentId): void {
-    if (isGenerating) {
-      return;
-    }
-
-    setComposerMode("rewrite");
-    setRewriteTargetSegmentId(segmentId);
-    setTemporaryRewrite(null);
-    setGenerationStatusMessage("");
-    setFieldErrors((previousFieldErrors) =>
-      removeFieldError(previousFieldErrors, "rewriteInstruction"),
-    );
   }
 
   function handleCancelRewrite(): void {
@@ -410,7 +495,12 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     }
 
     if (
-      hasUnsavedDraft(initialStoryText, appendInstruction, rewriteInstruction)
+      hasUnsavedDraft(
+        initialStoryText,
+        appendInstruction,
+        rewriteInstruction,
+        dialogueInput,
+      )
     ) {
       const shouldLeave = window.confirm(
         "当前输入尚未提交，离开会丢失。确定返回故事列表吗？",
@@ -469,7 +559,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   return (
     <main
       aria-label="StoryAgent"
-      className="min-h-svh px-4 pt-[calc(6rem+env(safe-area-inset-top))] pb-64 [background:radial-gradient(circle_at_top_left,var(--accent-bg),transparent_28rem),var(--bg)] md:px-6 md:pt-[calc(6.5rem+env(safe-area-inset-top))]"
+      className={`min-h-svh px-4 pt-[calc(6rem+env(safe-area-inset-top))] ${mainBottomPaddingClassName} [background:radial-gradient(circle_at_top_left,var(--accent-bg),transparent_28rem),var(--bg)] md:px-6 md:pt-[calc(6.5rem+env(safe-area-inset-top))]`}
     >
       <StoryPageHeader onBackToList={handleGoToStorylineList} />
       <section className="mx-auto flex w-full max-w-3xl flex-col gap-5">
@@ -489,12 +579,15 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
           <>
             {storyline !== null ? (
               <StorylineReader
-                canRewrite={!isGenerating}
-                onStartRewrite={handleStartRewrite}
+                onViewportChange={handleReaderViewportChange}
                 storyline={storyline}
                 temporaryAppendText={temporaryAppendText}
                 temporaryAppendVisible={
                   activeGenerationIntent?.type === "append"
+                }
+                temporaryDialogueText={temporaryDialogueText}
+                temporaryDialogueVisible={
+                  activeGenerationIntent?.type === "dialogue"
                 }
                 temporaryRewrite={temporaryRewrite}
                 temporaryTextStatus={temporaryTextStatus}
@@ -558,6 +651,38 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
         />
       ) : null}
 
+      {activeDrawerMode !== null ? (
+        <StoryActionDrawer
+          error={getDrawerError(fieldErrors, activeDrawerMode)}
+          mode={activeDrawerMode}
+          onChange={(value) => {
+            handleDrawerValueChange(activeDrawerMode, value, {
+              onAppendChange: handleAppendInstructionChange,
+              onDialogueChange: handleDialogueInputChange,
+              onRewriteChange: handleRewriteInstructionChange,
+            });
+          }}
+          onClose={() => setActiveDrawerMode(null)}
+          onSubmit={handleSubmit}
+          value={getDrawerValue(
+            {
+              appendInstruction,
+              dialogueInput,
+              rewriteInstruction,
+            },
+            activeDrawerMode,
+          )}
+        />
+      ) : null}
+
+      <StoryActionFab
+        availableActions={availableActions}
+        isGenerating={isGenerating}
+        isVisible={isActionFabVisible}
+        onCancelGeneration={handleCancel}
+        onSelectAction={handleSelectStoryAction}
+      />
+
       <StorySummaryDrawer
         errorMessage={summaryErrorMessage}
         isOpen={isSummaryDrawerOpen}
@@ -571,8 +696,10 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
 }
 
 interface ValidatePayloadInput {
+  actionMode: StoryActionKind | null;
   appendInstruction: string;
   composerMode: StorylineComposerMode;
+  dialogueInput: string;
   initialStoryText: string;
   rewriteInstruction: string;
   rewriteTargetSegmentId: StorylineSegmentId | null;
@@ -608,7 +735,9 @@ function validatePayload(input: ValidatePayloadInput): PayloadValidationResult {
     };
   }
 
-  if (input.composerMode === "rewrite") {
+  const actionMode = input.actionMode ?? input.composerMode;
+
+  if (actionMode === "rewrite") {
     const instruction = input.rewriteInstruction.trim();
     const targetSegmentId = input.rewriteTargetSegmentId;
     if (instruction.length === 0) {
@@ -636,6 +765,27 @@ function validatePayload(input: ValidatePayloadInput): PayloadValidationResult {
         type: "rewrite",
         segmentId: targetSegmentId,
       },
+    };
+  }
+
+  if (actionMode === "dialogue") {
+    const dialogueInput = input.dialogueInput.trim();
+    if (dialogueInput.length === 0) {
+      fieldErrors.dialogueInput = "请输入互动内容";
+    }
+
+    if (Object.keys(fieldErrors).length > 0) {
+      return { success: false, fieldErrors };
+    }
+
+    return {
+      success: true,
+      payload: {
+        mode: "dialogue",
+        storylineId: input.storyline.id,
+        input: dialogueInput,
+      },
+      intent: { type: "dialogue" },
     };
   }
 
@@ -695,12 +845,68 @@ function hasUnsavedDraft(
   initialStoryText: string,
   appendInstruction: string,
   rewriteInstruction: string,
+  dialogueInput: string,
 ): boolean {
   return (
     initialStoryText.trim().length > 0 ||
     appendInstruction.trim().length > 0 ||
-    rewriteInstruction.trim().length > 0
+    rewriteInstruction.trim().length > 0 ||
+    dialogueInput.trim().length > 0
   );
+}
+
+function getDrawerError(
+  fieldErrors: StorylineFieldErrors,
+  mode: StoryActionKind,
+): string | undefined {
+  switch (mode) {
+    case "append":
+      return fieldErrors.appendInstruction;
+    case "rewrite":
+      return fieldErrors.rewriteInstruction;
+    case "dialogue":
+      return fieldErrors.dialogueInput;
+  }
+}
+
+function getDrawerValue(
+  values: Readonly<{
+    appendInstruction: string;
+    dialogueInput: string;
+    rewriteInstruction: string;
+  }>,
+  mode: StoryActionKind,
+): string {
+  switch (mode) {
+    case "append":
+      return values.appendInstruction;
+    case "rewrite":
+      return values.rewriteInstruction;
+    case "dialogue":
+      return values.dialogueInput;
+  }
+}
+
+function handleDrawerValueChange(
+  mode: StoryActionKind,
+  value: string,
+  handlers: Readonly<{
+    onAppendChange: (value: string) => void;
+    onDialogueChange: (value: string) => void;
+    onRewriteChange: (value: string) => void;
+  }>,
+): void {
+  switch (mode) {
+    case "append":
+      handlers.onAppendChange(value);
+      return;
+    case "rewrite":
+      handlers.onRewriteChange(value);
+      return;
+    case "dialogue":
+      handlers.onDialogueChange(value);
+      return;
+  }
 }
 
 function getGenerationErrorMessage(

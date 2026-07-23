@@ -179,6 +179,12 @@ export const StorylineSegmentIdSchema = z.string().trim().min(1);
 
 export type StorylineSegmentId = z.infer<typeof StorylineSegmentIdSchema>;
 
+export const StorylineGenerationModeSchema = z.enum(["append", "dialogue"]);
+
+export type StorylineGenerationMode = z.infer<
+  typeof StorylineGenerationModeSchema
+>;
+
 export const StorylineInitialSegmentSchema = z
   .object({
     id: StorylineSegmentIdSchema,
@@ -195,6 +201,7 @@ export const StorylineGeneratedSegmentSchema = z
   .object({
     id: StorylineSegmentIdSchema,
     type: z.literal("generated"),
+    generationMode: StorylineGenerationModeSchema,
     text: z.string().trim().min(1),
   })
   .strict();
@@ -249,6 +256,7 @@ export const StorylineListItemSchema = z
     preview: z.string().trim().min(1).max(240),
     updatedAt: z.string().datetime(),
     segmentCount: z.number().int().positive(),
+    chapterCount: z.number().int().positive(),
   })
   .strict();
 
@@ -352,10 +360,23 @@ export type StoryContinueRewritePayload = z.infer<
   typeof StoryContinueRewritePayloadSchema
 >;
 
+export const StoryContinueDialoguePayloadSchema = z
+  .object({
+    mode: z.literal("dialogue"),
+    storylineId: StorylineIdSchema,
+    input: z.string().trim().min(1).max(1_000),
+  })
+  .strict();
+
+export type StoryContinueDialoguePayload = z.infer<
+  typeof StoryContinueDialoguePayloadSchema
+>;
+
 export const StoryContinuePayloadSchema = z.discriminatedUnion("mode", [
   StoryContinueCreatePayloadSchema,
   StoryContinueAppendPayloadSchema,
   StoryContinueRewritePayloadSchema,
+  StoryContinueDialoguePayloadSchema,
 ]);
 
 export type StoryContinuePayload = z.infer<typeof StoryContinuePayloadSchema>;

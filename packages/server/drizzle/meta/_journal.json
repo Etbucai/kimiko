@@ -36,6 +36,13 @@
       "when": 1784722887730,
       "tag": "0004_lean_deathbird",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1784799454447,
+      "tag": "0005_regular_wraith",
+      "breakpoints": true
     }
   ]
 }
