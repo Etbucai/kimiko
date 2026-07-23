@@ -93,6 +93,8 @@ export function StoryPage({
     useState<StorylineSegmentId | null>(null);
   const [composerMode, setComposerMode] =
     useState<StorylineComposerMode>("append");
+  const [activeGenerationIntent, setActiveGenerationIntent] =
+    useState<GenerationIntent | null>(null);
   const [temporaryAppendText, setTemporaryAppendText] = useState("");
   const [temporaryRewrite, setTemporaryRewrite] =
     useState<RewriteDraftState | null>(null);
@@ -128,6 +130,7 @@ export function StoryPage({
     setStatus("loading");
     setTemporaryAppendText("");
     setTemporaryRewrite(null);
+    setActiveGenerationIntent(null);
     setFieldErrors({});
     setRestoreErrorTitle("故事线恢复失败");
     setRestoreErrorMessage(restoreFailureMessage);
@@ -208,7 +211,7 @@ export function StoryPage({
   }, [restoreStoryline]);
 
   useEffect(() => {
-    if (!shouldFollowScrollRef.current) {
+    if (storyline !== null || !shouldFollowScrollRef.current) {
       return undefined;
     }
 
@@ -264,6 +267,7 @@ export function StoryPage({
 
     const intent = validationResult.intent;
     shouldFollowScrollRef.current = intent.type !== "rewrite" && isNearBottom();
+    setActiveGenerationIntent(intent);
     setFieldErrors({});
     setTemporaryAppendText("");
     setTemporaryRewrite(
@@ -308,6 +312,7 @@ export function StoryPage({
           setStoryline(event.storyline);
           setTemporaryAppendText("");
           setTemporaryRewrite(null);
+          setActiveGenerationIntent(null);
           setGenerationStatusMessage("");
           setStatus("completed");
 
@@ -336,6 +341,7 @@ export function StoryPage({
           } else {
             setTemporaryAppendText("");
           }
+          setActiveGenerationIntent(null);
           setGenerationStatusMessage(generationCancelledMessage);
           setStatus("cancelled");
         },
@@ -346,11 +352,13 @@ export function StoryPage({
           } else {
             setTemporaryAppendText("");
           }
+          setActiveGenerationIntent(null);
           setGenerationStatusMessage(getGenerationErrorMessage(error));
           setStatus("failed");
         },
         onAuthRequired() {
           generationHandleRef.current = null;
+          setActiveGenerationIntent(null);
           void navigate("/login", { replace: true });
         },
       },
@@ -463,11 +471,10 @@ export function StoryPage({
   return (
     <main
       aria-label="StoryAgent"
-      className="min-h-svh px-4 pt-6 pb-64 [background:radial-gradient(circle_at_top_left,var(--accent-bg),transparent_28rem),var(--bg)] md:px-6 md:pt-10"
+      className="min-h-svh px-4 pt-[calc(6rem+env(safe-area-inset-top))] pb-64 [background:radial-gradient(circle_at_top_left,var(--accent-bg),transparent_28rem),var(--bg)] md:px-6 md:pt-[calc(6.5rem+env(safe-area-inset-top))]"
     >
+      <StoryPageHeader onBackToList={handleGoToStorylineList} />
       <section className="mx-auto flex w-full max-w-3xl flex-col gap-5">
-        <StoryPageHeader onBackToList={handleGoToStorylineList} />
-
         {status === "loading" ? <StorylineLoading /> : null}
 
         {status === "restoreFailed" ? (
@@ -488,6 +495,9 @@ export function StoryPage({
                 onStartRewrite={handleStartRewrite}
                 storyline={storyline}
                 temporaryAppendText={temporaryAppendText}
+                temporaryAppendVisible={
+                  activeGenerationIntent?.type === "append"
+                }
                 temporaryRewrite={temporaryRewrite}
                 temporaryTextStatus={temporaryTextStatus}
               />
@@ -715,22 +725,24 @@ function StoryPageHeader({
   onBackToList,
 }: StoryPageHeaderProps): JSX.Element {
   return (
-    <header className="flex flex-col gap-3 rounded-3xl border border-[var(--border)] bg-[var(--panel-bg)] p-5 shadow-[var(--shadow)] md:flex-row md:items-center md:justify-between md:p-6">
-      <div>
-        <p className="m-0 text-sm font-semibold text-[var(--accent)]">
-          StoryAgent
-        </p>
-        <h1 className="mt-1 mb-0 text-2xl font-bold text-[var(--text-h)]">
-          故事工作台
-        </h1>
+    <header className="fixed inset-x-0 top-0 z-10 border-b border-[var(--border)] bg-[var(--panel-bg)] px-4 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3 shadow-[0_10px_24px_rgba(0,0,0,0.08)] backdrop-blur md:px-6">
+      <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="m-0 text-xs font-semibold text-[var(--accent)]">
+            StoryAgent
+          </p>
+          <h1 className="mt-0.5 mb-0 truncate text-lg font-bold text-[var(--text-h)] md:text-xl">
+            故事工作台
+          </h1>
+        </div>
+        <button
+          className="min-h-10 shrink-0 rounded-full border border-[var(--border)] bg-transparent px-4 py-2 text-sm font-bold text-[var(--text-h)] transition-[border-color,transform] duration-200 hover:-translate-y-px hover:border-[var(--accent-border)]"
+          onClick={onBackToList}
+          type="button"
+        >
+          返回列表
+        </button>
       </div>
-      <button
-        className="min-h-11 rounded-2xl border border-[var(--border)] bg-transparent px-5 py-3 font-bold text-[var(--text-h)] transition-[border-color,transform] duration-200 hover:-translate-y-px hover:border-[var(--accent-border)]"
-        onClick={onBackToList}
-        type="button"
-      >
-        返回故事列表
-      </button>
     </header>
   );
 }
