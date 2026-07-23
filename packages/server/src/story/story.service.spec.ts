@@ -340,7 +340,11 @@ describe("StoryService", () => {
     expect(request.userPrompt).toContain("重写指令：");
     expect(request.userPrompt).toContain("文风更加轻快");
     expect(request.userPrompt).toContain(
-      "请只输出用于替换原生成正文的新正文。",
+      "请输出一整段用于替换原生成正文的新正文。",
+    );
+    expect(request.userPrompt).toContain("不能只从需要修改的位置继续写。");
+    expect(request.userPrompt).toContain(
+      "请尽量保留原生成正文中与指令不冲突的大部分内容",
     );
     expect(request.userPrompt).not.toContain("当前续写指令：");
   });
@@ -380,9 +384,19 @@ describe("StoryService", () => {
 
     expect(request.systemPrompt).toBe(STORY_DIALOGUE_SYSTEM_PROMPT);
     expect(request.systemPrompt).not.toContain("800-1200 字");
+    expect(request.systemPrompt).toContain(
+      "最终输出必须同时包含两部分：先把用户输入润色成故事正文，再写另一个角色的互动反应。",
+    );
+    expect(request.systemPrompt).toContain("不要只输出另一角色的回应");
     expect(request.userPrompt).toContain("当前场景：");
     expect(request.userPrompt).toContain("本轮互动输入：");
     expect(request.userPrompt).toContain("大凡朝厨房喊");
+    expect(request.userPrompt).toContain(
+      "本轮互动正文必须先呈现用户输入的润色版本，再呈现另一个角色的反应。",
+    );
+    expect(request.userPrompt).toContain(
+      "不要省略用户输入对应的动作或台词，不要只写另一角色如何回应。",
+    );
     expect(request.userPrompt).toContain("第 1 轮互动输入：");
     expect(request.userPrompt).toContain("第 1 轮互动正文：");
     expect(request.userPrompt).toContain("只输出“无事发生”");
@@ -411,6 +425,10 @@ describe("StoryService", () => {
     expect(request.userPrompt).toContain("原互动正文：");
     expect(request.userPrompt).toContain("重写要求：");
     expect(request.userPrompt).toContain("语气更嫌弃一点。");
+    expect(request.userPrompt).toContain(
+      "新互动正文必须同时包含原互动输入的润色版本和另一个角色的反应。",
+    );
+    expect(request.userPrompt).toContain("不要只输出另一角色的回应");
     expect(request.userPrompt).toContain("不要扩写成大段续写");
   });
 });
