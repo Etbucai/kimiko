@@ -137,7 +137,7 @@ function buildCharacterSummaryUserPrompt(
   }
 
   promptParts.push(
-    "本轮续写指令：",
+    getInstructionLabel(input.operation),
     input.currentInstruction,
     "",
     "本轮生成正文：",
@@ -147,6 +147,10 @@ function buildCharacterSummaryUserPrompt(
   );
 
   return promptParts.join("\n");
+}
+
+function getInstructionLabel(operation: GenerateCharacterSummaryInput["operation"]): string {
+  return operation === "rewrite" ? "本轮重写指令：" : "本轮续写指令：";
 }
 
 function stringifyPromptJson(value: unknown): string {

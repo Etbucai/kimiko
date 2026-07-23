@@ -1,19 +1,37 @@
 import type { JSX } from "react";
-import type { StorylineSegment, StorylineSnapshot } from "@kimiko/schema";
+import type {
+  StorylineSegment,
+  StorylineSegmentId,
+  StorylineSnapshot,
+} from "@kimiko/schema";
+
+export interface RewriteDraftState {
+  readonly targetSegmentId: StorylineSegmentId;
+  readonly text: string;
+}
 
 interface StorylineReaderProps {
   storyline: StorylineSnapshot;
-  temporaryGeneratedText: string;
+  temporaryAppendText: string;
+  temporaryRewrite: RewriteDraftState | null;
   temporaryTextStatus: "streaming" | "summarizing" | null;
+  canRewrite: boolean;
+  onStartRewrite: (segmentId: StorylineSegmentId) => void;
 }
 
 export function StorylineReader({
   storyline,
-  temporaryGeneratedText,
+  temporaryAppendText,
+  temporaryRewrite,
   temporaryTextStatus,
+  canRewrite,
+  onStartRewrite,
 }: StorylineReaderProps): JSX.Element {
   const hasGeneratedSegment = storyline.segments.some(
     (segment) => segment.type === "generated",
+  );
+  const latestGeneratedSegmentId = getLatestGeneratedSegmentId(
+    storyline.segments,
   );
 
   return (
@@ -25,19 +43,27 @@ export function StorylineReader({
         {storyline.segments.map((segment, index) => (
           <StorylineSegmentBlock
             key={segment.id}
+            canRewrite={
+              canRewrite &&
+              segment.type === "generated" &&
+              segment.id === latestGeneratedSegmentId
+            }
+            onStartRewrite={onStartRewrite}
             segment={segment}
             showDivider={shouldShowGeneratedDivider(
               storyline.segments,
               index,
             )}
+            temporaryRewrite={temporaryRewrite}
+            temporaryTextStatus={temporaryTextStatus}
           />
         ))}
 
-        {temporaryGeneratedText.length > 0 ? (
+        {temporaryAppendText.length > 0 ? (
           <section aria-label="正在生成的续写" className="flex flex-col gap-4">
             {hasGeneratedSegment ? <SegmentDivider label="生成中" /> : null}
             <p className="m-0 whitespace-pre-wrap text-base leading-8 text-[var(--text-h)]">
-              {temporaryGeneratedText}
+              {temporaryAppendText}
             </p>
             {temporaryTextStatus !== null ? (
               <p className="m-0 text-xs text-[var(--text)]" role="status">
@@ -51,6 +77,16 @@ export function StorylineReader({
       </div>
     </article>
   );
+}
+
+function getLatestGeneratedSegmentId(
+  segments: readonly StorylineSegment[],
+): StorylineSegmentId | null {
+  const latestGeneratedSegment = [...segments]
+    .reverse()
+    .find((segment) => segment.type === "generated");
+
+  return latestGeneratedSegment?.id ?? null;
 }
 
 function shouldShowGeneratedDivider(
@@ -68,13 +104,21 @@ function shouldShowGeneratedDivider(
 }
 
 interface StorylineSegmentBlockProps {
+  canRewrite: boolean;
+  onStartRewrite: (segmentId: StorylineSegmentId) => void;
   segment: StorylineSegment;
   showDivider: boolean;
+  temporaryRewrite: RewriteDraftState | null;
+  temporaryTextStatus: "streaming" | "summarizing" | null;
 }
 
 function StorylineSegmentBlock({
+  canRewrite,
+  onStartRewrite,
   segment,
   showDivider,
+  temporaryRewrite,
+  temporaryTextStatus,
 }: StorylineSegmentBlockProps): JSX.Element {
   return (
     <section className="flex flex-col gap-4">
@@ -82,6 +126,33 @@ function StorylineSegmentBlock({
       <p className="m-0 whitespace-pre-wrap text-base leading-8 text-[var(--text-h)]">
         {segment.text}
       </p>
+      {canRewrite ? (
+        <div className="flex justify-end">
+          <button
+            className="rounded-full border border-[var(--border)] bg-transparent px-3 py-1 text-xs font-semibold text-[var(--text-h)] transition-[border-color,transform] duration-200 hover:-translate-y-px hover:border-[var(--accent-border)]"
+            onClick={() => onStartRewrite(segment.id)}
+            type="button"
+          >
+            重写
+          </button>
+        </div>
+      ) : null}
+      {temporaryRewrite?.targetSegmentId === segment.id &&
+      temporaryRewrite.text.length > 0 ? (
+        <section aria-label="正在重写的正文" className="flex flex-col gap-4">
+          <SegmentDivider label="重写中" />
+          <p className="m-0 whitespace-pre-wrap text-base leading-8 text-[var(--text-h)]">
+            {temporaryRewrite.text}
+          </p>
+          {temporaryTextStatus !== null ? (
+            <p className="m-0 text-xs text-[var(--text)]" role="status">
+              {temporaryTextStatus === "streaming"
+                ? "正在生成..."
+                : "正在记录角色摘要..."}
+            </p>
+          ) : null}
+        </section>
+      ) : null}
     </section>
   );
 }

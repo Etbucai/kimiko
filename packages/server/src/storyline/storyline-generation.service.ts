@@ -1,10 +1,14 @@
 import { Injectable } from "@nestjs/common";
 import { Env } from "../env";
 import { StoryService } from "../story/story.service";
-import { StorylineNotFoundError } from "./storyline.errors";
+import {
+  StorySegmentNotRewritableError,
+  StorylineNotFoundError,
+} from "./storyline.errors";
 import { StorylineLockService } from "./storyline-lock.service";
 import { StorylineService } from "./storyline.service";
 import { StorylineSummaryService } from "./storyline-summary.service";
+import { emptyCharacterSummarySnapshot } from "./storyline-summary.types";
 import type {
   ContinueStorylineInput,
   StorylineStreamEvent,
@@ -25,6 +29,11 @@ export class StorylineGenerationService {
   ): AsyncIterable<StorylineStreamEvent> {
     if (input.payload.mode === "create") {
       yield* this.streamCreateStoryline(input, options);
+      return;
+    }
+
+    if (input.payload.mode === "rewrite") {
+      yield* this.streamRewriteStoryline(input, options);
       return;
     }
 
@@ -70,6 +79,7 @@ export class StorylineGenerationService {
         const characterSummary =
           await this.storylineSummaryService.generateCharacterSummary(
             {
+              operation: "append",
               previousSummary: null,
               initialStoryText: input.payload.initialStoryText,
               recentHistoryRounds: [],
@@ -132,6 +142,8 @@ export class StorylineGenerationService {
         currentInstruction: input.payload.instruction,
         historyRoundLimit: Env.story.historyRoundLimit,
       });
+      const previousSummary =
+        context.characterSummary ?? emptyCharacterSummarySnapshot;
 
       for await (const event of this.storyService.streamContinueStoryFromContext(
         context,
@@ -154,7 +166,8 @@ export class StorylineGenerationService {
         const characterSummary =
           await this.storylineSummaryService.generateCharacterSummary(
             {
-              previousSummary: context.characterSummary ?? null,
+              operation: "append",
+              previousSummary,
               ...(context.initialStoryText !== undefined
                 ? { initialStoryText: context.initialStoryText }
                 : {}),
@@ -172,6 +185,96 @@ export class StorylineGenerationService {
           await this.storylineService.saveAppendedSegmentWithSummary({
             userId: input.userId,
             storylineId: storyline.externalId,
+            instruction: input.payload.instruction,
+            generatedText: event.continuedStory,
+            model: event.model,
+            elapsedMs: event.elapsedMs,
+            usage: event.usage,
+            previousSummary,
+            characterSummary,
+          });
+
+        yield {
+          type: "completed",
+          storyline: savedStoryline,
+          generatedSegmentId: savedStoryline.latestGeneration.segmentId,
+        };
+      }
+    } finally {
+      releaseLock();
+    }
+  }
+
+  private async *streamRewriteStoryline(
+    input: ContinueStorylineInput,
+    options: Readonly<{ signal: AbortSignal }>,
+  ): AsyncIterable<StorylineStreamEvent> {
+    if (input.payload.mode !== "rewrite") {
+      throw new StorySegmentNotRewritableError("Expected rewrite payload");
+    }
+
+    const storyline = await this.storylineService.getStorylineForUser(
+      input.userId,
+      input.payload.storylineId,
+    );
+    if (storyline === null) {
+      throw new StorylineNotFoundError();
+    }
+
+    const releaseLock = this.storylineLockService.acquireStorylineLock(
+      storyline.externalId,
+    );
+
+    try {
+      const context = await this.storylineService.buildRewriteLlmContext({
+        userId: input.userId,
+        storylineId: storyline.externalId,
+        segmentId: input.payload.segmentId,
+        rewriteInstruction: input.payload.instruction,
+        historyRoundLimit: Env.story.historyRoundLimit,
+      });
+
+      for await (const event of this.storyService.streamRewriteStoryFromContext(
+        context.writerContext,
+        options,
+      )) {
+        if (options.signal.aborted) {
+          return;
+        }
+
+        if (event.type === "chunk") {
+          yield event;
+          continue;
+        }
+
+        yield { type: "summaryStarted" };
+        if (options.signal.aborted) {
+          return;
+        }
+
+        const characterSummary =
+          await this.storylineSummaryService.generateCharacterSummary(
+            {
+              operation: "rewrite",
+              previousSummary: context.previousSummary,
+              ...(context.initialStoryText !== undefined
+                ? { initialStoryText: context.initialStoryText }
+                : {}),
+              recentHistoryRounds: context.summaryHistoryRounds,
+              currentInstruction: input.payload.instruction,
+              generatedText: event.continuedStory,
+            },
+            options,
+          );
+        if (options.signal.aborted) {
+          return;
+        }
+
+        const savedStoryline =
+          await this.storylineService.saveRewrittenSegmentWithSummary({
+            userId: input.userId,
+            storylineId: storyline.externalId,
+            segmentId: context.targetSegmentId,
             instruction: input.payload.instruction,
             generatedText: event.continuedStory,
             model: event.model,

@@ -5,10 +5,14 @@ import type {
   StoryCharacterSummarySnapshot,
   StoryContinuePayload,
   StorylineGenerationMetadata,
+  StorylineSegmentId,
   StorylineId,
   StorylineSnapshot,
 } from "@kimiko/schema";
-import type { StoryRealtimeGenerationHandle } from "../../story/storyRealtimeApi";
+import type {
+  StoryRealtimeGenerationError,
+  StoryRealtimeGenerationHandle,
+} from "../../story/storyRealtimeApi";
 import { startStoryRealtimeGeneration } from "../../story/storyRealtimeApi";
 import {
   getRecentStoryline,
@@ -17,7 +21,9 @@ import {
 } from "../../story/storylineApi";
 import { StoryInitialInput } from "./StoryInitialInput";
 import { StorylineComposer } from "./StorylineComposer";
+import type { StorylineComposerMode } from "./StorylineComposer";
 import { StorylineReader } from "./StorylineReader";
+import type { RewriteDraftState } from "./StorylineReader";
 import { StorylineRestoreError } from "./StorylineRestoreError";
 import { StorySummaryDrawer } from "./StorySummaryDrawer";
 
@@ -35,15 +41,24 @@ type StorylinePageStatus =
 
 interface StorylineFieldErrors {
   initialStoryText?: string;
-  instruction?: string;
+  appendInstruction?: string;
+  rewriteInstruction?: string;
 }
 
 type PayloadValidationResult =
-  | Readonly<{ success: true; payload: StoryContinuePayload }>
+  | Readonly<{
+      success: true;
+      payload: StoryContinuePayload;
+      intent: GenerationIntent;
+    }>
   | Readonly<{ success: false; fieldErrors: StorylineFieldErrors }>;
 
 type TemporaryTextStatus = "streaming" | "summarizing" | null;
 type SummaryDrawerStatus = "idle" | "loading" | "success" | "failed";
+type GenerationIntent =
+  | Readonly<{ type: "create" }>
+  | Readonly<{ type: "append" }>
+  | Readonly<{ type: "rewrite"; segmentId: StorylineSegmentId }>;
 
 type StoryPageMode = "recent" | "detail" | "new";
 
@@ -72,8 +87,15 @@ export function StoryPage({
   const [status, setStatus] = useState<StorylinePageStatus>("loading");
   const [storyline, setStoryline] = useState<StorylineSnapshot | null>(null);
   const [initialStoryText, setInitialStoryText] = useState("");
-  const [instruction, setInstruction] = useState("");
-  const [temporaryGeneratedText, setTemporaryGeneratedText] = useState("");
+  const [appendInstruction, setAppendInstruction] = useState("");
+  const [rewriteInstruction, setRewriteInstruction] = useState("");
+  const [rewriteTargetSegmentId, setRewriteTargetSegmentId] =
+    useState<StorylineSegmentId | null>(null);
+  const [composerMode, setComposerMode] =
+    useState<StorylineComposerMode>("append");
+  const [temporaryAppendText, setTemporaryAppendText] = useState("");
+  const [temporaryRewrite, setTemporaryRewrite] =
+    useState<RewriteDraftState | null>(null);
   const [fieldErrors, setFieldErrors] = useState<StorylineFieldErrors>({});
   const [restoreErrorTitle, setRestoreErrorTitle] =
     useState("故事线恢复失败");
@@ -104,7 +126,8 @@ export function StoryPage({
     generationHandleRef.current?.close();
     generationHandleRef.current = null;
     setStatus("loading");
-    setTemporaryGeneratedText("");
+    setTemporaryAppendText("");
+    setTemporaryRewrite(null);
     setFieldErrors({});
     setRestoreErrorTitle("故事线恢复失败");
     setRestoreErrorMessage(restoreFailureMessage);
@@ -117,7 +140,10 @@ export function StoryPage({
     if (mode === "new") {
       setStoryline(null);
       setInitialStoryText("");
-      setInstruction("");
+      setAppendInstruction("");
+      setRewriteInstruction("");
+      setRewriteTargetSegmentId(null);
+      setComposerMode("append");
       setStatus("empty");
       return;
     }
@@ -160,7 +186,10 @@ export function StoryPage({
 
     setStoryline(result.storyline);
     setInitialStoryText("");
-    setInstruction("");
+    setAppendInstruction("");
+    setRewriteInstruction("");
+    setRewriteTargetSegmentId(null);
+    setComposerMode("append");
     setStatus(result.storyline === null ? "empty" : "ready");
   }, [mode, navigate, storylineId]);
 
@@ -191,7 +220,7 @@ export function StoryPage({
     });
 
     return () => cancelAnimationFrame(frameId);
-  }, [status, storyline, temporaryGeneratedText]);
+  }, [status, storyline, temporaryAppendText]);
 
   function handleInitialStoryTextChange(value: string): void {
     setInitialStoryText(value);
@@ -200,10 +229,17 @@ export function StoryPage({
     );
   }
 
-  function handleInstructionChange(value: string): void {
-    setInstruction(value);
+  function handleAppendInstructionChange(value: string): void {
+    setAppendInstruction(value);
     setFieldErrors((previousFieldErrors) =>
-      removeFieldError(previousFieldErrors, "instruction"),
+      removeFieldError(previousFieldErrors, "appendInstruction"),
+    );
+  }
+
+  function handleRewriteInstructionChange(value: string): void {
+    setRewriteInstruction(value);
+    setFieldErrors((previousFieldErrors) =>
+      removeFieldError(previousFieldErrors, "rewriteInstruction"),
     );
   }
 
@@ -214,8 +250,11 @@ export function StoryPage({
     }
 
     const validationResult = validatePayload({
+      appendInstruction,
+      composerMode,
       initialStoryText,
-      instruction,
+      rewriteInstruction,
+      rewriteTargetSegmentId,
       storyline,
     });
     if (!validationResult.success) {
@@ -223,9 +262,15 @@ export function StoryPage({
       return;
     }
 
-    shouldFollowScrollRef.current = isNearBottom();
+    const intent = validationResult.intent;
+    shouldFollowScrollRef.current = intent.type !== "rewrite" && isNearBottom();
     setFieldErrors({});
-    setTemporaryGeneratedText("");
+    setTemporaryAppendText("");
+    setTemporaryRewrite(
+      intent.type === "rewrite"
+        ? { targetSegmentId: intent.segmentId, text: "" }
+        : null,
+    );
     setGenerationStatusMessage("");
     setStatus("connecting");
     generationHandleRef.current?.close();
@@ -234,45 +279,74 @@ export function StoryPage({
       validationResult.payload,
       {
         onStarted() {
-          shouldFollowScrollRef.current = isNearBottom();
+          shouldFollowScrollRef.current =
+            intent.type !== "rewrite" && isNearBottom();
           setStatus("streaming");
         },
         onChunk(delta) {
-          shouldFollowScrollRef.current = isNearBottom();
           setStatus("streaming");
-          setTemporaryGeneratedText((previousText) => `${previousText}${delta}`);
+          if (intent.type === "rewrite") {
+            setTemporaryRewrite((previousDraft) => ({
+              targetSegmentId: intent.segmentId,
+              text: `${previousDraft?.text ?? ""}${delta}`,
+            }));
+            return;
+          }
+
+          shouldFollowScrollRef.current = isNearBottom();
+          setTemporaryAppendText((previousText) => `${previousText}${delta}`);
         },
         onSummaryStarted() {
-          shouldFollowScrollRef.current = isNearBottom();
+          shouldFollowScrollRef.current =
+            intent.type !== "rewrite" && isNearBottom();
           setStatus("summarizing");
         },
         onCompleted(event) {
           generationHandleRef.current = null;
-          shouldFollowScrollRef.current = isNearBottom();
+          shouldFollowScrollRef.current =
+            intent.type !== "rewrite" && isNearBottom();
           setStoryline(event.storyline);
-          setTemporaryGeneratedText("");
-          setInitialStoryText("");
-          setInstruction("");
+          setTemporaryAppendText("");
+          setTemporaryRewrite(null);
           setGenerationStatusMessage("");
           setStatus("completed");
-          if (mode === "new") {
+
+          if (intent.type === "create") {
+            setInitialStoryText("");
+            setAppendInstruction("");
             void navigate(`/storylines/${event.storyline.id}`, {
               replace: true,
             });
+            return;
           }
+
+          if (intent.type === "append") {
+            setAppendInstruction("");
+            return;
+          }
+
+          setRewriteInstruction("");
+          setRewriteTargetSegmentId(null);
+          setComposerMode("append");
         },
         onCancelled() {
           generationHandleRef.current = null;
-          setTemporaryGeneratedText("");
+          if (intent.type === "rewrite") {
+            setTemporaryRewrite(null);
+          } else {
+            setTemporaryAppendText("");
+          }
           setGenerationStatusMessage(generationCancelledMessage);
           setStatus("cancelled");
         },
-        onError(message) {
+        onError(error) {
           generationHandleRef.current = null;
-          setTemporaryGeneratedText("");
-          setGenerationStatusMessage(
-            message.length > 0 ? message : generationFailureMessage,
-          );
+          if (intent.type === "rewrite") {
+            setTemporaryRewrite(null);
+          } else {
+            setTemporaryAppendText("");
+          }
+          setGenerationStatusMessage(getGenerationErrorMessage(error));
           setStatus("failed");
         },
         onAuthRequired() {
@@ -285,6 +359,34 @@ export function StoryPage({
 
   function handleCancel(): void {
     generationHandleRef.current?.cancel();
+  }
+
+  function handleStartRewrite(segmentId: StorylineSegmentId): void {
+    if (isGenerating) {
+      return;
+    }
+
+    setComposerMode("rewrite");
+    setRewriteTargetSegmentId(segmentId);
+    setTemporaryRewrite(null);
+    setGenerationStatusMessage("");
+    setFieldErrors((previousFieldErrors) =>
+      removeFieldError(previousFieldErrors, "rewriteInstruction"),
+    );
+  }
+
+  function handleCancelRewrite(): void {
+    if (isGenerating) {
+      return;
+    }
+
+    setComposerMode("append");
+    setRewriteTargetSegmentId(null);
+    setTemporaryRewrite(null);
+    setGenerationStatusMessage("");
+    setFieldErrors((previousFieldErrors) =>
+      removeFieldError(previousFieldErrors, "rewriteInstruction"),
+    );
   }
 
   function handleGoToStorylineList(): void {
@@ -301,7 +403,9 @@ export function StoryPage({
       return;
     }
 
-    if (hasUnsavedDraft(initialStoryText, instruction)) {
+    if (
+      hasUnsavedDraft(initialStoryText, appendInstruction, rewriteInstruction)
+    ) {
       const shouldLeave = window.confirm(
         "当前输入尚未提交，离开会丢失。确定返回故事列表吗？",
       );
@@ -380,8 +484,11 @@ export function StoryPage({
           <>
             {storyline !== null ? (
               <StorylineReader
+                canRewrite={!isGenerating}
+                onStartRewrite={handleStartRewrite}
                 storyline={storyline}
-                temporaryGeneratedText={temporaryGeneratedText}
+                temporaryAppendText={temporaryAppendText}
+                temporaryRewrite={temporaryRewrite}
                 temporaryTextStatus={temporaryTextStatus}
               />
             ) : (
@@ -392,10 +499,10 @@ export function StoryPage({
                   onChange={handleInitialStoryTextChange}
                   value={initialStoryText}
                 />
-                {temporaryGeneratedText.length > 0 ? (
+                {temporaryAppendText.length > 0 ? (
                   <TemporaryGeneratedText
                     status={temporaryTextStatus}
-                    text={temporaryGeneratedText}
+                    text={temporaryAppendText}
                   />
                 ) : null}
               </>
@@ -421,12 +528,27 @@ export function StoryPage({
       {isComposerVisible ? (
         <StorylineComposer
           disabled={isGenerating}
-          error={fieldErrors.instruction}
+          error={
+            composerMode === "rewrite"
+              ? fieldErrors.rewriteInstruction
+              : fieldErrors.appendInstruction
+          }
           isGenerating={isGenerating}
-          onCancel={handleCancel}
-          onChange={handleInstructionChange}
+          mode={composerMode}
+          modeHint={
+            composerMode === "rewrite" ? "正在重写上一段" : undefined
+          }
+          onCancelGeneration={handleCancel}
+          onCancelRewrite={handleCancelRewrite}
+          onChange={
+            composerMode === "rewrite"
+              ? handleRewriteInstructionChange
+              : handleAppendInstructionChange
+          }
           onSubmit={handleSubmit}
-          value={instruction}
+          value={
+            composerMode === "rewrite" ? rewriteInstruction : appendInstruction
+          }
         />
       ) : null}
 
@@ -443,21 +565,24 @@ export function StoryPage({
 }
 
 interface ValidatePayloadInput {
+  appendInstruction: string;
+  composerMode: StorylineComposerMode;
   initialStoryText: string;
-  instruction: string;
+  rewriteInstruction: string;
+  rewriteTargetSegmentId: StorylineSegmentId | null;
   storyline: StorylineSnapshot | null;
 }
 
 function validatePayload(input: ValidatePayloadInput): PayloadValidationResult {
-  const instruction = input.instruction.trim();
   const fieldErrors: StorylineFieldErrors = {};
 
-  if (instruction.length === 0) {
-    fieldErrors.instruction = "请输入续写指令";
-  }
-
   if (input.storyline === null) {
+    const instruction = input.appendInstruction.trim();
     const initialStoryText = input.initialStoryText.trim();
+    if (instruction.length === 0) {
+      fieldErrors.appendInstruction = "请输入续写指令";
+    }
+
     if (initialStoryText.length === 0) {
       fieldErrors.initialStoryText = "请输入故事正文";
     }
@@ -473,7 +598,44 @@ function validatePayload(input: ValidatePayloadInput): PayloadValidationResult {
         initialStoryText,
         instruction,
       },
+      intent: { type: "create" },
     };
+  }
+
+  if (input.composerMode === "rewrite") {
+    const instruction = input.rewriteInstruction.trim();
+    const targetSegmentId = input.rewriteTargetSegmentId;
+    if (instruction.length === 0) {
+      fieldErrors.rewriteInstruction = "请输入重写指令";
+    }
+
+    if (targetSegmentId === null) {
+      fieldErrors.rewriteInstruction = "当前段落不可重写";
+      return { success: false, fieldErrors };
+    }
+
+    if (Object.keys(fieldErrors).length > 0) {
+      return { success: false, fieldErrors };
+    }
+
+    return {
+      success: true,
+      payload: {
+        mode: "rewrite",
+        storylineId: input.storyline.id,
+        segmentId: targetSegmentId,
+        instruction,
+      },
+      intent: {
+        type: "rewrite",
+        segmentId: targetSegmentId,
+      },
+    };
+  }
+
+  const instruction = input.appendInstruction.trim();
+  if (instruction.length === 0) {
+    fieldErrors.appendInstruction = "请输入续写指令";
   }
 
   if (Object.keys(fieldErrors).length > 0) {
@@ -487,6 +649,7 @@ function validatePayload(input: ValidatePayloadInput): PayloadValidationResult {
       storylineId: input.storyline.id,
       instruction,
     },
+    intent: { type: "append" },
   };
 }
 
@@ -522,8 +685,26 @@ function removeFieldError(
   return nextFieldErrors;
 }
 
-function hasUnsavedDraft(initialStoryText: string, instruction: string): boolean {
-  return initialStoryText.trim().length > 0 || instruction.trim().length > 0;
+function hasUnsavedDraft(
+  initialStoryText: string,
+  appendInstruction: string,
+  rewriteInstruction: string,
+): boolean {
+  return (
+    initialStoryText.trim().length > 0 ||
+    appendInstruction.trim().length > 0 ||
+    rewriteInstruction.trim().length > 0
+  );
+}
+
+function getGenerationErrorMessage(
+  error: StoryRealtimeGenerationError,
+): string {
+  if (error.code === "STORY_SEGMENT_NOT_REWRITABLE") {
+    return "当前段落不可重写";
+  }
+
+  return error.message.length > 0 ? error.message : generationFailureMessage;
 }
 
 interface StoryPageHeaderProps {

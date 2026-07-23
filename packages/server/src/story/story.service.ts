@@ -60,6 +60,16 @@ export interface StoryLlmContext {
   readonly historyWasTrimmed: boolean;
 }
 
+export interface StoryRewriteLlmContext {
+  readonly rewriteInstruction: string;
+  readonly originalInstruction: string;
+  readonly originalGeneratedText: string;
+  readonly initialStoryText?: string;
+  readonly characterSummary?: StoryCharacterSummarySnapshot;
+  readonly historyRoundsBeforeTarget: readonly StoryHistoryRound[];
+  readonly historyWasTrimmed: boolean;
+}
+
 @Injectable()
 export class StoryService {
   constructor(private readonly llmService: LlmService) {}
@@ -82,6 +92,16 @@ export class StoryService {
   ): AsyncIterable<StoryStreamEvent> {
     yield* this.streamStoryLlmRequest(
       buildStoryLlmRequestFromContext(context),
+      options,
+    );
+  }
+
+  async *streamRewriteStoryFromContext(
+    context: StoryRewriteLlmContext,
+    options: Readonly<{ signal: AbortSignal }>,
+  ): AsyncIterable<StoryStreamEvent> {
+    yield* this.streamStoryLlmRequest(
+      buildRewriteStoryLlmRequestFromContext(context),
       options,
     );
   }
@@ -156,6 +176,15 @@ export function buildStoryLlmRequestFromContext(
   };
 }
 
+export function buildRewriteStoryLlmRequestFromContext(
+  context: StoryRewriteLlmContext,
+): GenerateLlmTextRequest {
+  return {
+    systemPrompt: STORY_SYSTEM_PROMPT,
+    userPrompt: buildRewriteStoryUserPromptFromContext(context),
+  };
+}
+
 function buildStoryUserPromptFromContext(context: StoryLlmContext): string {
   const promptParts: string[] = [];
   const characterSummaryText = formatCharacterSummary(
@@ -204,6 +233,75 @@ function buildStoryUserPromptFromContext(context: StoryLlmContext): string {
   }
 
   promptParts.push("当前续写指令：", context.currentInstruction);
+
+  return promptParts.join("\n");
+}
+
+function buildRewriteStoryUserPromptFromContext(
+  context: StoryRewriteLlmContext,
+): string {
+  const promptParts: string[] = [];
+  const characterSummaryText = formatCharacterSummary(
+    context.characterSummary,
+  );
+  const initialStoryText = context.initialStoryText?.trim();
+
+  if (characterSummaryText !== undefined) {
+    promptParts.push("角色摘要：", characterSummaryText, "");
+  }
+
+  if (initialStoryText !== undefined && initialStoryText.length > 0) {
+    promptParts.push("故事正文：", initialStoryText, "");
+  }
+
+  if (context.historyRoundsBeforeTarget.length > 0) {
+    promptParts.push(
+      context.historyWasTrimmed
+        ? "目标段之前的近期故事正文片段："
+        : "目标段之前的近期续写轨迹：",
+    );
+
+    for (const round of context.historyRoundsBeforeTarget) {
+      if (context.historyWasTrimmed) {
+        promptParts.push(
+          `第 ${round.roundIndex} 轮续写：`,
+          round.generatedText,
+          "",
+        );
+      } else {
+        promptParts.push(
+          `第 ${round.roundIndex} 轮指令：`,
+          round.instruction,
+          "",
+          `第 ${round.roundIndex} 轮续写：`,
+          round.generatedText,
+          "",
+        );
+      }
+    }
+
+    if (context.historyWasTrimmed) {
+      promptParts.push("目标段之前的近期续写指令轨迹：");
+      for (const round of context.historyRoundsBeforeTarget) {
+        promptParts.push(`第 ${round.roundIndex} 轮指令：`, round.instruction, "");
+      }
+    }
+  }
+
+  promptParts.push(
+    "原续写指令：",
+    context.originalInstruction,
+    "",
+    "原生成正文：",
+    context.originalGeneratedText,
+    "",
+    "重写指令：",
+    context.rewriteInstruction,
+    "",
+    "请只输出用于替换原生成正文的新正文。",
+    "不要输出初始故事正文，不要重复原生成正文，不要继续写目标段之后的新剧情。",
+    "新正文必须承接目标段之前的上下文，可以保留原生成正文中仍合理的部分，但必须优先服从重写指令。",
+  );
 
   return promptParts.join("\n");
 }

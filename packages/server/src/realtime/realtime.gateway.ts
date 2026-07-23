@@ -15,6 +15,7 @@ import type { IncomingMessage } from "node:http";
 import WebSocket, { WebSocketServer } from "ws";
 import { verifyAccessToken } from "../auth/jwt-auth.utils";
 import {
+  StorySegmentNotRewritableError,
   StorylineBusyError,
   StorylineNotFoundError,
   StorylineSaveFailedError,
@@ -43,6 +44,7 @@ const errorMessages: Record<RealtimeErrorCode, string> = {
   STORYLINE_BUSY: "当前故事线正在生成，请稍后重试",
   STORYLINE_SAVE_FAILED: "保存失败，请稍后重试",
   STORY_SUMMARY_FAILED: "生成失败，请稍后重试",
+  STORY_SEGMENT_NOT_REWRITABLE: "当前段落不可重写",
 };
 
 @Injectable()
@@ -358,6 +360,10 @@ function mapStreamErrorCode(error: unknown): RealtimeErrorCode {
 
   if (error instanceof StorylineSaveFailedError) {
     return "STORYLINE_SAVE_FAILED";
+  }
+
+  if (error instanceof StorySegmentNotRewritableError) {
+    return "STORY_SEGMENT_NOT_REWRITABLE";
   }
 
   if (error instanceof StorySummaryFailedError) {

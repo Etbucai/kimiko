@@ -10,6 +10,7 @@ import type {
 import type { LlmProvider, LlmTextStreamEvent } from "../llm/llm.provider";
 import { LlmService } from "../llm/llm.service";
 import {
+  buildRewriteStoryLlmRequestFromContext,
   buildStoryLlmRequestFromContext,
   STORY_SYSTEM_PROMPT,
   StoryService,
@@ -284,6 +285,48 @@ describe("StoryService", () => {
     expect(historyIndex).toBeGreaterThan(storyIndex);
     expect(request.userPrompt).toContain('"name": "林夏"');
     expect(request.userPrompt).toContain("调查旧钟楼的记者");
+  });
+
+  it("builds rewrite prompts from prior context and original generation", () => {
+    const request = buildRewriteStoryLlmRequestFromContext({
+      rewriteInstruction: "文风更加轻快，增加气味描写。",
+      originalInstruction: "前往钟楼。",
+      originalGeneratedText: "林夏走向钟楼。",
+      characterSummary: {
+        characters: [
+          {
+            name: "林夏",
+            aliases: [],
+            identity: "调查旧钟楼的记者",
+            relationships: ["与周岚是旧识"],
+            motivation: "查清钟楼失踪案",
+            currentStatus: "正在前往钟楼",
+          },
+        ],
+      },
+      initialStoryText: "雨停以后。",
+      historyRoundsBeforeTarget: [
+        {
+          roundIndex: 1,
+          instruction: "调查旧书店。",
+          generatedText: "林夏回到旧书店。",
+        },
+      ],
+      historyWasTrimmed: false,
+    });
+
+    expect(request.systemPrompt).toBe(STORY_SYSTEM_PROMPT);
+    expect(request.userPrompt).toContain("角色摘要：");
+    expect(request.userPrompt).toContain("故事正文：");
+    expect(request.userPrompt).toContain("目标段之前的近期续写轨迹：");
+    expect(request.userPrompt).toContain("原续写指令：");
+    expect(request.userPrompt).toContain("前往钟楼。");
+    expect(request.userPrompt).toContain("原生成正文：");
+    expect(request.userPrompt).toContain("林夏走向钟楼。");
+    expect(request.userPrompt).toContain("重写指令：");
+    expect(request.userPrompt).toContain("文风更加轻快");
+    expect(request.userPrompt).toContain("请只输出用于替换原生成正文的新正文。");
+    expect(request.userPrompt).not.toContain("当前续写指令：");
   });
 });
 

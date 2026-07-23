@@ -1,10 +1,15 @@
 import type { JSX } from "react";
 
+export type StorylineComposerMode = "append" | "rewrite";
+
 interface StorylineComposerProps {
   disabled: boolean;
   error?: string | undefined;
   isGenerating: boolean;
-  onCancel: () => void;
+  mode: StorylineComposerMode;
+  modeHint?: string | undefined;
+  onCancelGeneration: () => void;
+  onCancelRewrite: () => void;
   onChange: (value: string) => void;
   onSubmit: () => void;
   value: string;
@@ -14,12 +19,25 @@ export function StorylineComposer({
   disabled,
   error,
   isGenerating,
-  onCancel,
+  mode,
+  modeHint,
+  onCancelGeneration,
+  onCancelRewrite,
   onChange,
   onSubmit,
   value,
 }: StorylineComposerProps): JSX.Element {
   const errorId = "story-instruction-error";
+  const label = mode === "rewrite" ? "重写指令" : "续写指令";
+  const placeholder =
+    mode === "rewrite"
+      ? "例如：不要转变场景，文风更加轻快，增加对气味的描写"
+      : "描述接下来要发生的主要情节和人物行动";
+  const submitText = isGenerating
+    ? "取消生成"
+    : mode === "rewrite"
+      ? "生成重写"
+      : "生成续写";
 
   return (
     <form
@@ -27,7 +45,7 @@ export function StorylineComposer({
       onSubmit={(event) => {
         event.preventDefault();
         if (isGenerating) {
-          onCancel();
+          onCancelGeneration();
           return;
         }
 
@@ -35,8 +53,13 @@ export function StorylineComposer({
       }}
     >
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-3">
+        {modeHint !== undefined ? (
+          <p className="m-0 text-xs font-semibold text-[var(--accent)]">
+            {modeHint}
+          </p>
+        ) : null}
         <label className="flex flex-col gap-2 text-sm font-semibold text-[var(--text-h)]">
-          续写指令
+          {label}
           <textarea
             aria-describedby={error !== undefined ? errorId : undefined}
             aria-invalid={error !== undefined}
@@ -44,7 +67,7 @@ export function StorylineComposer({
             disabled={disabled}
             maxLength={8_000}
             onChange={(event) => onChange(event.currentTarget.value)}
-            placeholder="描述接下来要发生的主要情节和人物行动"
+            placeholder={placeholder}
             value={value}
           />
         </label>
@@ -61,8 +84,17 @@ export function StorylineComposer({
           className="min-h-12 rounded-2xl border-0 bg-[var(--accent)] px-5 py-3 font-bold text-white transition-[filter,transform] duration-200 enabled:cursor-pointer enabled:hover:-translate-y-px enabled:hover:brightness-[1.06] disabled:cursor-not-allowed disabled:opacity-70"
           type="submit"
         >
-          {isGenerating ? "取消生成" : "生成续写"}
+          {submitText}
         </button>
+        {mode === "rewrite" && !isGenerating ? (
+          <button
+            className="min-h-11 rounded-2xl border border-[var(--border)] bg-transparent px-5 py-3 font-bold text-[var(--text-h)] transition-[border-color,transform] duration-200 hover:-translate-y-px hover:border-[var(--accent-border)]"
+            onClick={onCancelRewrite}
+            type="button"
+          >
+            取消重写
+          </button>
+        ) : null}
       </div>
     </form>
   );

@@ -32,6 +32,7 @@ describe("StorylineSummaryService", () => {
 
   it("builds the extractor prompt from prior summary and current story data", () => {
     const request = buildCharacterSummaryLlmRequest({
+      operation: "append",
       previousSummary: {
         characters: [
           {
@@ -63,6 +64,19 @@ describe("StorylineSummaryService", () => {
     expect(request.userPrompt).toContain("近期故事上下文：");
     expect(request.userPrompt).toContain("本轮续写指令：");
     expect(request.userPrompt).toContain("本轮生成正文：");
+  });
+
+  it("labels rewrite instructions distinctly in the extractor prompt", () => {
+    const request = buildCharacterSummaryLlmRequest({
+      operation: "rewrite",
+      previousSummary: null,
+      recentHistoryRounds: [],
+      currentInstruction: "文风更加轻快。",
+      generatedText: "林夏重新走向钟楼。",
+    });
+
+    expect(request.userPrompt).toContain("本轮重写指令：");
+    expect(request.userPrompt).not.toContain("本轮续写指令：");
   });
 
   it("parses valid character summary JSON and allows an empty list", () => {
@@ -145,6 +159,7 @@ describe("StorylineSummaryService", () => {
     await expect(
       summaryService.generateCharacterSummary(
         {
+          operation: "append",
           previousSummary: null,
           initialStoryText: "雨停以后。",
           recentHistoryRounds: [],
@@ -175,6 +190,7 @@ describe("StorylineSummaryService", () => {
     await expect(
       summaryService.generateCharacterSummary(
         {
+          operation: "append",
           previousSummary: null,
           recentHistoryRounds: [],
           currentInstruction: "前往钟楼。",

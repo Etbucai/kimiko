@@ -357,9 +357,23 @@ export type StoryContinueAppendPayload = z.infer<
   typeof StoryContinueAppendPayloadSchema
 >;
 
+export const StoryContinueRewritePayloadSchema = z
+  .object({
+    mode: z.literal("rewrite"),
+    storylineId: StorylineIdSchema,
+    segmentId: StorylineSegmentIdSchema,
+    instruction: z.string().trim().min(1).max(8_000),
+  })
+  .strict();
+
+export type StoryContinueRewritePayload = z.infer<
+  typeof StoryContinueRewritePayloadSchema
+>;
+
 export const StoryContinuePayloadSchema = z.discriminatedUnion("mode", [
   StoryContinueCreatePayloadSchema,
   StoryContinueAppendPayloadSchema,
+  StoryContinueRewritePayloadSchema,
 ]);
 
 export type StoryContinuePayload = z.infer<
@@ -471,6 +485,7 @@ export const StoryRealtimeErrorCodeSchema = z.enum([
   "STORYLINE_BUSY",
   "STORYLINE_SAVE_FAILED",
   "STORY_SUMMARY_FAILED",
+  "STORY_SEGMENT_NOT_REWRITABLE",
 ]);
 
 export type StoryRealtimeErrorCode = z.infer<

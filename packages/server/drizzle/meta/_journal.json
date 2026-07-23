@@ -29,6 +29,13 @@
       "when": 1784713974451,
       "tag": "0003_old_synch",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1784722887730,
+      "tag": "0004_lean_deathbird",
+      "breakpoints": true
     }
   ]
 }

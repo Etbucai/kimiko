@@ -46,6 +46,7 @@ export const storylineSegments = sqliteTable(
     inputTokens: integer("input_tokens"),
     outputTokens: integer("output_tokens"),
     totalTokens: integer("total_tokens"),
+    previousSummaryJson: text("previous_summary_json"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .$defaultFn(() => new Date())
       .notNull(),

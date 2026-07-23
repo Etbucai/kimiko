@@ -3,6 +3,7 @@ import type {
   StoryCompletedServerEvent,
   StoryContinueClientMessage,
   StoryContinuePayload,
+  StoryRealtimeErrorCode,
   StoryRealtimeServerEvent,
 } from "@kimiko/schema";
 import { StoryRealtimeServerEventSchema } from "@kimiko/schema";
@@ -12,13 +13,19 @@ const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
 const defaultGenerationErrorMessage = "生成失败，请稍后重试";
 const authPolicyViolationCode = 1008;
 
+export interface StoryRealtimeGenerationError {
+  readonly code: StoryRealtimeErrorCode | "UNKNOWN";
+  readonly message: string;
+  readonly retryable: boolean;
+}
+
 export interface StoryRealtimeGenerationCallbacks {
   onStarted: () => void;
   onChunk: (delta: string, sequence: number) => void;
   onSummaryStarted: () => void;
   onCompleted: (event: StoryCompletedServerEvent) => void;
   onCancelled: () => void;
-  onError: (message: string) => void;
+  onError: (error: StoryRealtimeGenerationError) => void;
   onAuthRequired: () => void;
 }
 
@@ -62,7 +69,7 @@ export function startStoryRealtimeGeneration(
 
     const serverEvent = parseServerEvent(event.data);
     if (serverEvent === null) {
-      settleWithError(defaultGenerationErrorMessage);
+      settleWithError(createUnknownGenerationError());
       return;
     }
 
@@ -93,14 +100,18 @@ export function startStoryRealtimeGeneration(
         socket.close();
         return;
       case "story.error":
-        settleWithError(serverEvent.message);
+        settleWithError({
+          code: serverEvent.code,
+          message: serverEvent.message,
+          retryable: serverEvent.retryable,
+        });
         return;
     }
   });
 
   socket.addEventListener("error", () => {
     if (!isSettled) {
-      settleWithError(defaultGenerationErrorMessage);
+      settleWithError(createUnknownGenerationError());
     }
   });
 
@@ -123,17 +134,17 @@ export function startStoryRealtimeGeneration(
     }
 
     isSettled = true;
-    callbacks.onError(defaultGenerationErrorMessage);
+    callbacks.onError(createUnknownGenerationError());
   });
 
-  function settleWithError(message: string): void {
+  function settleWithError(error: StoryRealtimeGenerationError): void {
     if (isSettled) {
       return;
     }
 
     isSettled = true;
     isClosedByClient = true;
-    callbacks.onError(message);
+    callbacks.onError(error);
     socket.close();
   }
 
@@ -208,5 +219,15 @@ function createNoopGenerationHandle(): StoryRealtimeGenerationHandle {
   return {
     cancel: () => undefined,
     close: () => undefined,
+  };
+}
+
+function createUnknownGenerationError(
+  message = defaultGenerationErrorMessage,
+): StoryRealtimeGenerationError {
+  return {
+    code: "UNKNOWN",
+    message,
+    retryable: true,
   };
 }

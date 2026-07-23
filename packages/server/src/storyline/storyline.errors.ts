@@ -19,6 +19,13 @@ export class StorylineSaveFailedError extends Error {
   }
 }
 
+export class StorySegmentNotRewritableError extends Error {
+  constructor(message = "Story segment is not rewritable") {
+    super(message);
+    this.name = "StorySegmentNotRewritableError";
+  }
+}
+
 export class StorySummaryFailedError extends Error {
   constructor(message = "Failed to generate story summary") {
     super(message);
