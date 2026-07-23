@@ -164,7 +164,7 @@ previousSummaryJson: text("previous_summary_json"),
 - create 的 generated segment 保存空角色摘要快照：
 
 ```json
-{"characters":[]}
+{ "characters": [] }
 ```
 
 - append 的 generated segment 保存 append 开始前的当前角色摘要；如果故事线当前没有摘要，则保存空角色摘要快照。
@@ -195,13 +195,13 @@ export class StorySegmentNotRewritableError extends Error {
 
 映射规则：
 
-| 内部错误 | WebSocket 错误码 | message | retryable |
-| --- | --- | --- | --- |
-| `StorySegmentNotRewritableError` | `STORY_SEGMENT_NOT_REWRITABLE` | `当前段落不可重写` | `true` |
-| `StorylineNotFoundError` | `STORYLINE_NOT_FOUND` | `故事线不存在` | `true` |
-| `StorylineBusyError` | `STORYLINE_BUSY` | `当前故事线正在生成，请稍后重试` | `true` |
-| `StorylineSaveFailedError` | `STORYLINE_SAVE_FAILED` | `保存失败，请稍后重试` | `true` |
-| `StorySummaryFailedError` | `STORY_SUMMARY_FAILED` | `生成失败，请稍后重试` | `true` |
+| 内部错误                         | WebSocket 错误码               | message                          | retryable |
+| -------------------------------- | ------------------------------ | -------------------------------- | --------- |
+| `StorySegmentNotRewritableError` | `STORY_SEGMENT_NOT_REWRITABLE` | `当前段落不可重写`               | `true`    |
+| `StorylineNotFoundError`         | `STORYLINE_NOT_FOUND`          | `故事线不存在`                   | `true`    |
+| `StorylineBusyError`             | `STORYLINE_BUSY`               | `当前故事线正在生成，请稍后重试` | `true`    |
+| `StorylineSaveFailedError`       | `STORYLINE_SAVE_FAILED`        | `保存失败，请稍后重试`           | `true`    |
+| `StorySummaryFailedError`        | `STORY_SUMMARY_FAILED`         | `生成失败，请稍后重试`           | `true`    |
 
 说明：
 
@@ -458,7 +458,7 @@ async saveRewrittenSegmentWithSummary(
 
 ```ts
 if (input.payload.mode === "rewrite") {
-  yield* this.streamRewriteStoryline(input, options);
+  yield * this.streamRewriteStoryline(input, options);
   return;
 }
 ```
@@ -500,7 +500,7 @@ if (input.payload.mode === "rewrite") {
 `saveCreatedStorylineWithSummary` 插入 generated segment 时，写入：
 
 ```ts
-previousSummaryJson: serializeCharacterSummary(emptyCharacterSummarySnapshot)
+previousSummaryJson: serializeCharacterSummary(emptyCharacterSummarySnapshot);
 ```
 
 当前 summary 表仍保存 Writer + Extractor 之后的新摘要。
@@ -512,8 +512,7 @@ append 开始时，`buildLlmContext` 已读取当前 summary。保存 appended g
 调整输入：
 
 ```ts
-export interface SaveAppendedSegmentWithSummaryInput
-  extends SaveAppendedSegmentInput {
+export interface SaveAppendedSegmentWithSummaryInput extends SaveAppendedSegmentInput {
   readonly previousSummary: StoryCharacterSummarySnapshot;
   readonly characterSummary: StoryCharacterSummarySnapshot;
 }
@@ -522,7 +521,7 @@ export interface SaveAppendedSegmentWithSummaryInput
 `StorylineGenerationService.streamAppendStoryline` 调用保存时：
 
 ```ts
-previousSummary: context.characterSummary ?? emptyCharacterSummarySnapshot
+previousSummary: context.characterSummary ?? emptyCharacterSummarySnapshot;
 ```
 
 插入 generated segment 时写入 `previousSummaryJson`。

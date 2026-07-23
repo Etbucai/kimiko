@@ -98,7 +98,9 @@ function encodeJsonPart(value: unknown): string {
 }
 
 function decodeJsonPart(value: string): unknown {
-  return JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as unknown;
+  return JSON.parse(
+    Buffer.from(value, "base64url").toString("utf8"),
+  ) as unknown;
 }
 
 function parseToken(token: string): Readonly<{
@@ -144,9 +146,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isJwtHeader(value: unknown): value is JwtHeader {
   return (
-    isRecord(value) &&
-    value.alg === JWT_ALGORITHM &&
-    value.typ === JWT_TYPE
+    isRecord(value) && value.alg === JWT_ALGORITHM && value.typ === JWT_TYPE
   );
 }
 

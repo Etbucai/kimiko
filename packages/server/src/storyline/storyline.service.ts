@@ -165,7 +165,9 @@ export class StorylineService {
     }
 
     const segments = await this.getSegmentsByInternalStorylineId(storyline.id);
-    const initialSegment = segments.find((segment) => segment.type === "initial");
+    const initialSegment = segments.find(
+      (segment) => segment.type === "initial",
+    );
     if (initialSegment === undefined) {
       throw new InternalServerErrorException(
         "Storyline initial segment is missing",
@@ -177,9 +179,8 @@ export class StorylineService {
     const historyRounds = historyWasTrimmed
       ? generatedRounds.slice(-input.historyRoundLimit)
       : generatedRounds;
-    const characterSummary = await this.getCharacterSummaryByInternalStorylineId(
-      storyline.id,
-    );
+    const characterSummary =
+      await this.getCharacterSummaryByInternalStorylineId(storyline.id);
 
     return {
       currentInstruction: input.currentInstruction,
@@ -211,7 +212,9 @@ export class StorylineService {
     }
 
     const segments = await this.getSegmentsByInternalStorylineId(storyline.id);
-    const initialSegment = segments.find((segment) => segment.type === "initial");
+    const initialSegment = segments.find(
+      (segment) => segment.type === "initial",
+    );
     if (initialSegment === undefined) {
       throw new InternalServerErrorException(
         "Storyline initial segment is missing",
@@ -296,13 +299,16 @@ export class StorylineService {
           throw new Error("Failed to insert storyline");
         }
 
-        transaction.insert(storylineSegments).values({
-          storylineId: createdStoryline.id,
-          orderIndex: 0,
-          type: "initial",
-          text: input.initialStoryText.trim(),
-          createdAt: now,
-        }).run();
+        transaction
+          .insert(storylineSegments)
+          .values({
+            storylineId: createdStoryline.id,
+            orderIndex: 0,
+            type: "initial",
+            text: input.initialStoryText.trim(),
+            createdAt: now,
+          })
+          .run();
 
         const generatedSegment = transaction
           .insert(storylineSegments)
@@ -522,7 +528,9 @@ export class StorylineService {
     }
 
     const charactersJson = serializeCharacterSummary(input.characterSummary);
-    const previousSummaryJson = serializeCharacterSummary(input.previousSummary);
+    const previousSummaryJson = serializeCharacterSummary(
+      input.previousSummary,
+    );
     let savedIds: Readonly<{ storylineId: number; generatedSegmentId: number }>;
 
     try {
@@ -727,12 +735,16 @@ export class StorylineService {
   ): Promise<CompletedStorylineSnapshot> {
     const snapshot = await this.getSnapshotByInternalId(savedIds.storylineId);
     if (snapshot === null) {
-      throw new StorylineSaveFailedError("Completed storyline snapshot missing");
+      throw new StorylineSaveFailedError(
+        "Completed storyline snapshot missing",
+      );
     }
 
     const latestGeneration = snapshot.latestGeneration;
     if (latestGeneration === null) {
-      throw new StorylineSaveFailedError("Completed storyline snapshot missing");
+      throw new StorylineSaveFailedError(
+        "Completed storyline snapshot missing",
+      );
     }
 
     if (latestGeneration.segmentId !== String(savedIds.generatedSegmentId)) {
@@ -857,7 +869,9 @@ function validateRewritableSegment(
   segments: readonly StorylineSegmentRow[],
   targetSegmentId: number,
 ): StorylineSegmentRow {
-  const targetSegment = segments.find((segment) => segment.id === targetSegmentId);
+  const targetSegment = segments.find(
+    (segment) => segment.id === targetSegmentId,
+  );
   if (targetSegment?.type !== "generated") {
     throw new StorySegmentNotRewritableError();
   }
@@ -1004,7 +1018,9 @@ function parseSegmentPreviousSummary(
   return parseCharacterSummaryJson(previousSummaryJson);
 }
 
-function parseCharacterSummaryJson(value: string): StoryCharacterSummarySnapshot {
+function parseCharacterSummaryJson(
+  value: string,
+): StoryCharacterSummarySnapshot {
   let parsedValue: unknown;
   try {
     parsedValue = JSON.parse(value) as unknown;

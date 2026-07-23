@@ -23,7 +23,10 @@ import {
 type ChatCompletionCreateMock = jest.Mock<
   Promise<ChatCompletion | AsyncIterable<ChatCompletionChunk>>,
   [
-    ChatCompletionCreateParamsNonStreaming | ChatCompletionCreateParamsStreaming,
+    (
+      | ChatCompletionCreateParamsNonStreaming
+      | ChatCompletionCreateParamsStreaming
+    ),
     Readonly<{ signal: AbortSignal }>?,
   ]
 >;
@@ -44,8 +47,10 @@ describe("OpenAiCompatibleProvider", () => {
     const createMock: ChatCompletionCreateMock = jest.fn<
       Promise<ChatCompletion | AsyncIterable<ChatCompletionChunk>>,
       [
-        | ChatCompletionCreateParamsNonStreaming
-        | ChatCompletionCreateParamsStreaming,
+        (
+          | ChatCompletionCreateParamsNonStreaming
+          | ChatCompletionCreateParamsStreaming
+        ),
         Readonly<{ signal: AbortSignal }>?,
       ]
     >();

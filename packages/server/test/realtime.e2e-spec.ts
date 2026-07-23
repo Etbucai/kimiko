@@ -701,7 +701,9 @@ async function readEvent(socket: WebSocket): Promise<StoryRealtimeServerEvent> {
 }
 
 function parseRealtimeEvent(data: WebSocket.RawData): StoryRealtimeServerEvent {
-  return StoryRealtimeServerEventSchema.parse(JSON.parse(rawDataToString(data)));
+  return StoryRealtimeServerEventSchema.parse(
+    JSON.parse(rawDataToString(data)),
+  );
 }
 
 function rawDataToString(data: WebSocket.RawData): string {

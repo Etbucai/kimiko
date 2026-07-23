@@ -170,9 +170,7 @@ interface StorylineListCardProps {
   storyline: StorylineListItem;
 }
 
-function StorylineListCard({
-  storyline,
-}: StorylineListCardProps): JSX.Element {
+function StorylineListCard({ storyline }: StorylineListCardProps): JSX.Element {
   return (
     <Link
       className="group rounded-3xl border border-[var(--border)] bg-[var(--panel-bg)] p-5 text-[var(--text)] no-underline shadow-[var(--shadow)] transition-[border-color,transform] duration-200 hover:-translate-y-px hover:border-[var(--accent-border)] md:p-6"

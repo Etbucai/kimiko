@@ -187,9 +187,7 @@ export function buildRewriteStoryLlmRequestFromContext(
 
 function buildStoryUserPromptFromContext(context: StoryLlmContext): string {
   const promptParts: string[] = [];
-  const characterSummaryText = formatCharacterSummary(
-    context.characterSummary,
-  );
+  const characterSummaryText = formatCharacterSummary(context.characterSummary);
   const initialStoryText = context.initialStoryText?.trim();
 
   if (characterSummaryText !== undefined) {
@@ -227,7 +225,11 @@ function buildStoryUserPromptFromContext(context: StoryLlmContext): string {
     if (context.historyWasTrimmed) {
       promptParts.push("近期续写指令轨迹：");
       for (const round of context.historyRounds) {
-        promptParts.push(`第 ${round.roundIndex} 轮指令：`, round.instruction, "");
+        promptParts.push(
+          `第 ${round.roundIndex} 轮指令：`,
+          round.instruction,
+          "",
+        );
       }
     }
   }
@@ -241,9 +243,7 @@ function buildRewriteStoryUserPromptFromContext(
   context: StoryRewriteLlmContext,
 ): string {
   const promptParts: string[] = [];
-  const characterSummaryText = formatCharacterSummary(
-    context.characterSummary,
-  );
+  const characterSummaryText = formatCharacterSummary(context.characterSummary);
   const initialStoryText = context.initialStoryText?.trim();
 
   if (characterSummaryText !== undefined) {
@@ -283,7 +283,11 @@ function buildRewriteStoryUserPromptFromContext(
     if (context.historyWasTrimmed) {
       promptParts.push("目标段之前的近期续写指令轨迹：");
       for (const round of context.historyRoundsBeforeTarget) {
-        promptParts.push(`第 ${round.roundIndex} 轮指令：`, round.instruction, "");
+        promptParts.push(
+          `第 ${round.roundIndex} 轮指令：`,
+          round.instruction,
+          "",
+        );
       }
     }
   }

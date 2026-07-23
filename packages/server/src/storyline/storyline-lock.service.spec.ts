@@ -26,14 +26,10 @@ describe("StorylineLockService", () => {
     expect(() => lockService.acquireStorylineLock("storyline-1")).toThrow(
       StorylineBusyError,
     );
-    expect(() =>
-      lockService.acquireStorylineLock("storyline-2"),
-    ).not.toThrow();
+    expect(() => lockService.acquireStorylineLock("storyline-2")).not.toThrow();
 
     release();
     release();
-    expect(() =>
-      lockService.acquireStorylineLock("storyline-1"),
-    ).not.toThrow();
+    expect(() => lockService.acquireStorylineLock("storyline-1")).not.toThrow();
   });
 });

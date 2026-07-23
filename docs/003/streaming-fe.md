@@ -1,11 +1,13 @@
 # 流式输出前端技术方案
 
 ## 背景
+
 本文档对应 PRD：[streaming.md](./streaming.md)，参考服务端技术方案：[streaming-server.md](./streaming-server.md)，并基于上一期 StoryAgent 前端：[../002/story-fe.md](../002/story-fe.md)。
 
 本期目标是把 StoryAgent 页面从非流式 HTTP 生成改为 WebSocket 流式生成：用户点击生成后，页面即时追加展示服务端返回的文本增量，并在完成后展示模型、耗时和 Token。
 
 ## 已确认决策
+
 - Story 页面继续挂载在 `/`，继续由 `RequireAuth` 保护。
 - 本期生成链路替换为 WebSocket 流式输出。
 - 删除现有非流式 HTTP `continueStory` 客户端，不保留页面 fallback。
@@ -22,6 +24,7 @@
 - 验证范围为 `typecheck`、`lint`、`build`。
 
 ## 现有前端约束
+
 - 前端使用 React、react-router、Tailwind CSS。
 - API base URL 来自 `VITE_API_BASE_URL`。
 - 登录态保存在 `localStorage`，通过 `getStoredAuthSession()` 读取。
@@ -32,6 +35,7 @@
 - 本期不新增前端第三方依赖。
 
 ## IDL Schema
+
 WebSocket 消息 schema 放在 `packages/schema/src/index.ts`。
 
 ### 客户端消息
@@ -95,9 +99,7 @@ export const StoryChunkServerEventSchema = z
   })
   .strict();
 
-export type StoryChunkServerEvent = z.infer<
-  typeof StoryChunkServerEventSchema
->;
+export type StoryChunkServerEvent = z.infer<typeof StoryChunkServerEventSchema>;
 
 export const StoryCompletedServerEventSchema = z
   .object({
@@ -149,9 +151,7 @@ export const StoryErrorServerEventSchema = z
   })
   .strict();
 
-export type StoryErrorServerEvent = z.infer<
-  typeof StoryErrorServerEventSchema
->;
+export type StoryErrorServerEvent = z.infer<typeof StoryErrorServerEventSchema>;
 
 export const StoryRealtimeServerEventSchema = z.discriminatedUnion("type", [
   StoryStartedServerEventSchema,
@@ -167,11 +167,13 @@ export type StoryRealtimeServerEvent = z.infer<
 ```
 
 说明：
+
 - 客户端发送消息前应使用 schema 或 `satisfies` 保证结构符合契约。
 - 前端收到服务端消息后必须用 `StoryRealtimeServerEventSchema.safeParse` 做运行时校验。
 - 收到无法解析或不符合 schema 的服务端消息时，视为生成失败。
 
 ## 文件组织
+
 新增或调整以下文件：
 
 - `packages/web/src/story/storyRealtimeApi.ts`
@@ -192,6 +194,7 @@ export type StoryRealtimeServerEvent = z.infer<
   - 增加 WebSocket 消息 IDL schema。
 
 ## WebSocket URL 推导
+
 从 `VITE_API_BASE_URL` 推导 WebSocket base：
 
 ```ts
@@ -214,11 +217,13 @@ const socket = new WebSocket(url);
 ```
 
 说明：
+
 - 本地 `http://localhost:3000` 推导为 `ws://localhost:3000/realtime`。
 - 生产 `https://api.example.com` 推导为 `wss://api.example.com/realtime`。
 - 不新增 `VITE_WS_BASE_URL`。
 
 ## Realtime API 设计
+
 `storyRealtimeApi.ts` 暴露：
 
 ```ts
@@ -243,6 +248,7 @@ export function startStoryRealtimeGeneration(
 ```
 
 处理规则：
+
 - 调用时读取 `getStoredAuthSession()`。
 - session 不存在或失效时，不建连，直接触发 `onAuthRequired`。
 - 建连成功后发送 `story.continue`。
@@ -258,21 +264,18 @@ export function startStoryRealtimeGeneration(
 - WebSocket `error` 统一视为生成失败。
 
 取消规则：
+
 - `cancel()` 发送 `story.cancel`。
 - 如果 socket 还未 open，则直接关闭 socket 并触发取消状态。
 - `close()` 用于组件卸载清理，不触发 UI 状态回调。
 
 ## 页面状态模型
+
 `StoryPage` 使用本地状态，不引入全局 Store，不写 localStorage，不保留历史列表。
 
 ```ts
 type StoryGenerationStatus =
-  | "idle"
-  | "connecting"
-  | "streaming"
-  | "completed"
-  | "cancelled"
-  | "failed";
+  "idle" | "connecting" | "streaming" | "completed" | "cancelled" | "failed";
 
 interface StoryStreamingResult {
   continuedStory: string;
@@ -287,6 +290,7 @@ interface StoryStreamingResult {
 ```
 
 状态规则：
+
 - 初始状态为 `idle`，不展示结果区。
 - 点击生成后先做字段校验。
 - 校验失败时不建连，只展示字段级错误。
@@ -301,6 +305,7 @@ interface StoryStreamingResult {
 - 组件卸载时关闭当前连接，不更新 UI 状态。
 
 ## UI 行为
+
 - 页面仍只展示故事正文输入、续写指令输入、主按钮和结果区。
 - 未开始生成时，主按钮文案为 `生成续写`。
 - `connecting` / `streaming` 时，主按钮文案为 `取消生成`。
@@ -316,6 +321,7 @@ interface StoryStreamingResult {
 - 不提供复制、保存、导出、结果对比。
 
 ## 鉴权行为
+
 - 页面仍由 `RequireAuth` 保护。
 - 发起 WebSocket 前再次通过 `getStoredAuthSession()` 读取登录态。
 - 登录态不存在或失效时跳转 `/login`。
@@ -323,12 +329,14 @@ interface StoryStreamingResult {
 - 其他 close/error 视为生成失败，不跳转登录。
 
 ## 与 002 非流式实现的关系
+
 - 本期删除前端非流式 `continueStory` HTTP 客户端。
 - 后端保留 `POST /story/continue`，但前端 Story 页面不再调用它。
 - `StoryResult` 从依赖 `ContinueStoryResponse` 改为依赖页面本地的 `StoryStreamingResult`。
 - 002 的输入校验、字段提示、受保护首页、元数据展示规则继续保留。
 
 ## 测试与验证
+
 本期不新增前端测试框架。实现完成后执行：
 
 ```bash
@@ -341,6 +349,7 @@ pnpm --filter @kimiko/web build
 ```
 
 人工验收：
+
 - 登录后访问 `/`。
 - 填写故事正文和续写指令。
 - 点击生成后按钮变为 `取消生成`，输入框禁用。
@@ -351,6 +360,7 @@ pnpm --filter @kimiko/web build
 - 登录态失效时跳转 `/login`。
 
 ## 本期不做
+
 - 不做非流式/流式切换。
 - 不做 HTTP fallback。
 - 不做自动重试。

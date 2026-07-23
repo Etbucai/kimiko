@@ -257,9 +257,7 @@ type StorylinePageStatus =
 
 ```ts
 const isGenerating =
-  status === "connecting" ||
-  status === "streaming" ||
-  status === "summarizing";
+  status === "connecting" || status === "streaming" || status === "summarizing";
 
 const temporaryTextStatus =
   status === "streaming"
@@ -454,4 +452,3 @@ interface StorylineComposerProps {
 4. 更新 `StorylineReader.tsx` 和空态临时正文展示，支持 `正在记录角色摘要...`。
 5. 保持 `StorylineComposer.tsx` 现有交互，只让 `isGenerating` 覆盖 `summarizing`。
 6. 运行前端 typecheck、lint 和 workspace build。
-

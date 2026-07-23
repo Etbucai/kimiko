@@ -25,6 +25,7 @@
 - 扩展后的 `StoryRealtimeErrorCodeSchema`
 
 关键接口与事件：
+
 - `GET /storylines/recent`
 - WebSocket `story.continue`，payload 使用 `mode: "create" | "append"`。
 - WebSocket `story.completed` 返回保存成功后的 `CompletedStorylineSnapshot`。
@@ -151,15 +152,13 @@ export const storylines = sqliteTable(
       .notNull(),
   },
   (table) => [
-    index("storyline_user_id_updated_at_idx").on(
-      table.userId,
-      table.updatedAt,
-    ),
+    index("storyline_user_id_updated_at_idx").on(table.userId, table.updatedAt),
   ],
 );
 ```
 
 说明：
+
 - `userId` 使用现有 `user.id` 外键。
 - `updatedAt` 在每次成功保存 generated segment 时更新。
 - `GET /storylines/recent` 按 `updatedAt desc, id desc` 查询当前用户最近一条。
@@ -199,6 +198,7 @@ export const storylineSegments = sqliteTable(
 ```
 
 说明：
+
 - `type: "initial"` 的行保存初始故事正文。
 - `type: "generated"` 的行保存 Agent 续写正文。
 - `orderIndex` 从 `0` 开始递增。
@@ -226,6 +226,7 @@ type EnvShape = Readonly<{
 ```
 
 解析规则：
+
 - 环境变量名：`STORY_HISTORY_ROUND_LIMIT`。
 - 默认值：`20`。
 - 必须为正整数。
@@ -260,6 +261,7 @@ export class StorylineController {
 ```
 
 处理流程：
+
 1. `JwtAuthGuard` 验证 Bearer token。
 2. 使用 `CurrentUser` 获取 `user.userId`。
 3. `StorylineService.getRecentStoryline(user.userId)` 查询当前用户最近故事线。
@@ -267,6 +269,7 @@ export class StorylineController {
 5. 如果存在，加载该故事线所有 segment，映射为 `StorylineSnapshot`。
 
 响应规则：
+
 - `200`：返回符合 `GetRecentStorylineResponseSchema` 的响应体。
 - `401`：鉴权失败，沿用现有 `JwtAuthGuard` 行为。
 - 其他异常由 Nest 默认异常过滤处理。
@@ -283,6 +286,7 @@ type StorylineSnapshot = {
 ```
 
 说明：
+
 - `segments` 按 `orderIndex asc` 返回。
 - `updatedAt` 使用 ISO datetime 字符串。
 - `latestGeneration` 取 `orderIndex` 最大的 generated segment 元数据。
@@ -313,6 +317,7 @@ type StoryContinueClientMessage = {
 ```
 
 校验规则：
+
 - 使用 `StoryRealtimeClientMessageSchema.safeParse`。
 - 旧 `{ storyText, instruction }` payload 不再兼容，会返回 `INVALID_PAYLOAD`。
 - `mode: "create"` 校验 `initialStoryText` 和 `instruction`。
@@ -332,6 +337,7 @@ type StoryCompletedServerEvent = {
 ```
 
 说明：
+
 - `storyline` 是保存成功后的最新完整快照。
 - `generatedSegmentId` 指向本轮新增 generated segment。
 - 不再返回旧的平铺 `continuedStory`、`model`、`elapsedMs`、`usage` 字段。
@@ -339,6 +345,7 @@ type StoryCompletedServerEvent = {
 ### 错误码扩展
 
 新增：
+
 - `STORYLINE_NOT_FOUND`：故事线不存在、已删除或不属于当前用户。
 - `STORYLINE_BUSY`：同一故事线或同一用户 create 已有活跃生成。
 - `STORYLINE_SAVE_FAILED`：LLM 已完成，但保存故事线历史失败。
@@ -424,6 +431,7 @@ streamContinueStoryline(
 14. finally 中释放 storyline 锁。
 
 说明：
+
 - append 保存前重新读取最大 `orderIndex`，避免使用生成开始前的陈旧序号。
 - 进程内锁保证同一进程内不会出现同一故事线两个 append 同时保存。
 - SQLite 事务保证保存成功要么完整写入，要么完全回滚。
@@ -433,12 +441,11 @@ streamContinueStoryline(
 `StorylineLockService` 管理两类锁：
 
 ```ts
-type StorylineLockKey =
-  | `create:${string}`
-  | `storyline:${string}`;
+type StorylineLockKey = `create:${string}` | `storyline:${string}`;
 ```
 
 规则：
+
 - `create:{userId}` 锁住同一用户的首轮 create。
 - `storyline:{storylineId}` 锁住同一故事线的 append。
 - acquire 失败时抛出领域错误，由 RealtimeGateway 映射为 `STORYLINE_BUSY`。
@@ -448,6 +455,7 @@ type StorylineLockKey =
 - 不做跨进程锁，不做数据库 stale lock。
 
 与 RealtimeGateway 单连接 busy 的关系：
+
 - RealtimeGateway 继续维护单连接 `activeTask`，防止同一连接同时发起多个任务。
 - StorylineLockService 负责跨连接、跨标签页、同一用户 create、同一故事线 append 的业务并发。
 - 单连接 busy 返回 `BUSY`。
@@ -508,6 +516,7 @@ type StorylineLockKey =
 ```
 
 规则：
+
 - 历史窗口按 generated 轮次数计算。
 - N 来自 `Env.story.historyRoundLimit`。
 - 当前待生成指令不计入历史窗口。
@@ -543,6 +552,7 @@ streamContinueStoryFromContext(
 ```
 
 说明：
+
 - `StoryService` 继续负责 StoryAgent prompt 和 LLM 流式调用。
 - `StorylineService` 负责从数据库构造 `StoryLlmContext`。
 - `StorylineGenerationService` 负责锁、调用、保存和快照。
@@ -576,12 +586,14 @@ saveAppendedSegment(
 ```
 
 保存失败处理：
+
 - 如果事务中任一步失败，抛出 `StorylineSaveFailedError`。
 - RealtimeGateway 或 generation service 将其映射为 `STORYLINE_SAVE_FAILED`。
 - 不发送 completed。
 - 不保存 partial segment。
 
 快照映射规则：
+
 - `storyline.id` -> `String(id)`。
 - `segment.id` -> `String(id)`。
 - `updatedAt` -> `updatedAt.toISOString()`。
@@ -605,6 +617,7 @@ saveAppendedSegment(
 ## RealtimeGateway 调整
 
 `RealtimeGateway` 继续承担 WebSocket 边界职责：
+
 - 鉴权。
 - 消息解析。
 - 单连接 active task。
@@ -613,6 +626,7 @@ saveAppendedSegment(
 - 事件发送。
 
 调整点：
+
 - 注入 `StorylineGenerationService`。
 - 鉴权后在 client state 中记录 `user.sub`。
 - 收到 `story.continue` 后调用：
@@ -634,6 +648,7 @@ this.storylineGenerationService.streamContinueStoryline(
 - `StorylineSaveFailedError` 映射 `STORYLINE_SAVE_FAILED`。
 
 取消规则：
+
 - 收到匹配 `story.cancel` 后 abort LLM。
 - 不保存当前临时文本。
 - 发送 `story.cancelled`。
@@ -641,6 +656,7 @@ this.storylineGenerationService.streamContinueStoryline(
 - release StorylineLockService 锁。
 
 断连规则：
+
 - 断连时 abort LLM。
 - 不保存当前临时文本。
 - 不发送事件。
@@ -650,11 +666,13 @@ this.storylineGenerationService.streamContinueStoryline(
 ## 错误处理
 
 HTTP：
+
 - `GET /storylines/recent` 未登录返回 `401`。
 - 查询成功但无数据返回 `{ storyline: null }`。
 - 数据库异常返回 `500`，前端展示恢复失败页。
 
 WebSocket：
+
 - 缺失或非法 token：关闭连接，code `1008`。
 - 非 JSON：`INVALID_MESSAGE`。
 - schema 不合法：`INVALID_PAYLOAD`。
@@ -667,6 +685,7 @@ WebSocket：
 - 保存失败：`STORYLINE_SAVE_FAILED`。
 
 日志：
+
 - 可以记录 requestId、userId、storylineId、错误类型。
 - 不记录完整初始正文。
 - 不记录完整续写指令。
@@ -686,6 +705,7 @@ WebSocket：
 ### Schema 测试
 
 覆盖：
+
 - `StoryContinuePayloadSchema` 接受 create payload。
 - `StoryContinuePayloadSchema` 接受 append payload。
 - 旧 `{ storyText, instruction }` payload 被拒绝。
@@ -695,6 +715,7 @@ WebSocket：
 ### Env 测试
 
 `env.spec.ts` 覆盖：
+
 - 未配置 `STORY_HISTORY_ROUND_LIMIT` 时默认 `20`。
 - 正整数配置成功。
 - `0`、负数、非数字、浮点数启动失败。
@@ -703,6 +724,7 @@ WebSocket：
 ### StorylineService 单元测试
 
 覆盖：
+
 - 无故事线时 `getRecentStoryline` 返回 `{ storyline: null }`。
 - 多条故事线时按 `updatedAt desc, id desc` 返回最近一条。
 - 快照按 `orderIndex asc` 返回 segments。
@@ -717,6 +739,7 @@ WebSocket：
 ### StorylineLockService 单元测试
 
 覆盖：
+
 - 同一用户 create 锁互斥。
 - 不同用户 create 锁不互斥。
 - 同一 storyline append 锁互斥。
@@ -727,6 +750,7 @@ WebSocket：
 ### StoryService 单元测试
 
 覆盖：
+
 - create context prompt 包含 initial 正文和当前指令。
 - append 未裁剪 context prompt 包含 initial、历史 instruction、历史 generated、当前指令。
 - append 已裁剪 context prompt 不包含 initial。
@@ -739,6 +763,7 @@ WebSocket：
 ### RealtimeGateway 单元测试
 
 覆盖：
+
 - 旧 payload 返回 `INVALID_PAYLOAD`。
 - create payload 调用 StorylineGenerationService。
 - append payload 调用 StorylineGenerationService。
@@ -753,12 +778,14 @@ WebSocket：
 ### E2E 测试
 
 HTTP：
+
 - 未登录 `GET /storylines/recent` 返回 `401`。
 - 登录后无故事线返回 `{ storyline: null }`。
 - 登录后有故事线返回符合 `GetRecentStorylineResponseSchema` 的快照。
 - 用户 A 不能恢复用户 B 的故事线。
 
 WebSocket：
+
 - 未带 token 建连关闭 `1008`。
 - create 成功后返回 chunk 和 completed。
 - create completed 中返回新 `storyline.id`、initial segment、generated segment、latestGeneration。

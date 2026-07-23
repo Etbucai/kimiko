@@ -23,10 +23,7 @@ export const storylines = sqliteTable(
       .notNull(),
   },
   (table) => [
-    index("storyline_user_id_updated_at_idx").on(
-      table.userId,
-      table.updatedAt,
-    ),
+    index("storyline_user_id_updated_at_idx").on(table.userId, table.updatedAt),
   ],
 );
 
@@ -76,19 +73,13 @@ export const storylineSummaries = sqliteTable(
       .notNull(),
   },
   (table) => [
-    uniqueIndex("storyline_summary_storyline_id_unique").on(
-      table.storylineId,
-    ),
+    uniqueIndex("storyline_summary_storyline_id_unique").on(table.storylineId),
   ],
 );
 
 export type Storyline = InferSelectModel<typeof storylines>;
 export type NewStoryline = InferInsertModel<typeof storylines>;
 export type StorylineSegment = InferSelectModel<typeof storylineSegments>;
-export type NewStorylineSegment = InferInsertModel<
-  typeof storylineSegments
->;
+export type NewStorylineSegment = InferInsertModel<typeof storylineSegments>;
 export type StorylineSummary = InferSelectModel<typeof storylineSummaries>;
-export type NewStorylineSummary = InferInsertModel<
-  typeof storylineSummaries
->;
+export type NewStorylineSummary = InferInsertModel<typeof storylineSummaries>;

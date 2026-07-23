@@ -1,16 +1,19 @@
 # 流式输出后端技术方案
 
 ## 背景
+
 本文档对应 PRD：[streaming.md](./streaming.md)，并依赖上一期故事续写能力：[../002/story-server.md](../002/story-server.md)。
 
 本期目标是在服务端建立 `realtime` 模块，通过原生 WebSocket 让 StoryAgent 的故事续写支持流式输出。现有非流式接口 `POST /story/continue` 保持不变，本期新增实时通道，不破坏 002 已完成的 HTTP 能力。
 
 ## 前端 IDL 结论
+
 当前 `docs/003` 下没有独立前端技术方案文件，因此不存在需要读取并修改的 `streaming-fe.md` IDL schema。本服务端技术方案直接定义 WebSocket 消息契约，后续前端技术方案应复用本文档中的消息 schema。
 
 本期不生成 `streaming-fe-idl-change.md`。
 
 ## 已确认决策
+
 - 使用原生 WebSocket，不使用 Socket.IO，不使用 SSE。
 - 服务端新增 `RealtimeModule`。
 - WebSocket 路径为 `/realtime`。
@@ -28,6 +31,7 @@
 - 现有 `POST /story/continue` 非流式接口保持不变。
 
 ## 新增依赖
+
 当前服务端尚未安装 WebSocket 相关 Nest 依赖。实现时需要新增：
 
 - `@nestjs/websockets`
@@ -38,6 +42,7 @@
 依赖版本必须通过 `pnpm-workspace.yaml` 的 `catalog` 管理，`packages/server/package.json` 中使用 `catalog:` 引用。`@types/ws` 放在 `devDependencies`，其余放在 `dependencies`。
 
 ## 模块设计
+
 新增文件：
 
 - `packages/server/src/realtime/realtime.module.ts`
@@ -70,6 +75,7 @@
   - 未配置 LLM provider 时，流式接口同样返回 `ServiceUnavailableException`。
 
 ## WebSocket 启动配置
+
 在 `main.ts` 中注册 `WsAdapter`：
 
 ```ts
@@ -82,11 +88,13 @@ await app.listen(Env.port);
 ```
 
 说明：
+
 - HTTP CORS 仍由 `configureApp` 负责。
 - WebSocket 鉴权不依赖 HTTP CORS。
 - WebSocket 连接必须在 gateway 层校验 `accessToken`。
 
 ## 鉴权设计
+
 建连 URL：
 
 ```text
@@ -94,17 +102,20 @@ ws://localhost:3000/realtime?accessToken={accessToken}
 ```
 
 处理流程：
+
 1. `RealtimeGateway.handleConnection` 读取请求 URL 中的 `accessToken`。
 2. 缺失 token 时关闭连接，关闭码使用 `1008`。
 3. token 非法或过期时关闭连接，关闭码使用 `1008`。
 4. token 合法时，在连接上下文中记录 `userId` 和 `uniqueName`。
 
 鉴权只用于访问控制：
+
 - 不把用户信息传入 prompt。
 - 不保存用户输入、输出或历史消息。
 - 不写数据库。
 
 ## WebSocket 消息契约
+
 所有消息均为 JSON 字符串。服务端收到非法 JSON 时返回 `story.error`，如果无法解析出 `requestId`，则 `requestId` 为空字符串。
 
 ### 客户端消息：开始续写
@@ -121,6 +132,7 @@ type StoryContinueClientMessage = {
 ```
 
 校验规则：
+
 - `requestId` 必须为非空字符串。
 - `payload` 必须符合现有 `ContinueStoryRequestSchema`。
 - 当前连接已有活跃任务时，服务端返回 `BUSY` 错误。
@@ -135,6 +147,7 @@ type StoryCancelClientMessage = {
 ```
 
 处理规则：
+
 - `requestId` 必须匹配当前活跃任务。
 - 匹配时中止上游 LLM 请求，并发送 `story.cancelled`。
 - 不匹配时返回 `NO_ACTIVE_TASK` 错误。
@@ -162,6 +175,7 @@ type StoryChunkServerEvent = {
 ```
 
 规则：
+
 - `sequence` 从 `1` 开始递增。
 - `delta` 只包含本次新增文本。
 - 空 `delta` 不发送。
@@ -184,6 +198,7 @@ type StoryCompletedServerEvent = {
 ```
 
 规则：
+
 - `continuedStory` 为服务端累计的完整续写正文。
 - `elapsedMs` 只统计 LLM 流式调用耗时。
 - `usage` 必须来自 provider 流式响应。
@@ -221,6 +236,7 @@ type StoryErrorServerEvent = {
 ```
 
 错误文案使用稳定通用文案：
+
 - `INVALID_MESSAGE`：`消息格式不正确`
 - `INVALID_PAYLOAD`：`请求参数不正确`
 - `BUSY`：`当前连接已有生成任务`
@@ -230,6 +246,7 @@ type StoryErrorServerEvent = {
 - `LLM_USAGE_MISSING`：`生成元数据缺失，请稍后重试`
 
 ## LLM 流式抽象
+
 在 `LlmProvider` 中新增流式接口：
 
 ```ts
@@ -265,11 +282,13 @@ streamTextFromParsedRequest(
 ```
 
 说明：
+
 - 非流式 `generateText` 保持不变。
 - 流式接口同样复用 `GenerateLlmTextRequest`，不允许前端传入模型、温度、max token。
 - `AbortSignal` 用于客户端取消和断连取消。
 
 ## OpenAI-compatible provider 流式实现
+
 `OpenAiCompatibleProvider.streamText` 使用 chat completions streaming：
 
 ```ts
@@ -289,6 +308,7 @@ client.chat.completions.create(
 ```
 
 映射规则：
+
 - 每个 chunk 的 `choices[0].delta.content` 非空时，产出 `type: "chunk"`。
 - 记录最后出现的 `model`。
 - 从包含 usage 的 chunk 中读取 token 用量。
@@ -298,6 +318,7 @@ client.chat.completions.create(
 - `AbortError` 由调用方识别为取消，不映射为普通生成失败。
 
 ## Story 流式服务
+
 `StoryService` 增加：
 
 ```ts
@@ -308,6 +329,7 @@ streamContinueStory(
 ```
 
 处理流程：
+
 1. 使用 `ContinueStoryRequestSchema.safeParse(body)` 校验请求。
 2. 复用现有 `buildStoryLlmRequest` 构造固定 system prompt 和结构化 user prompt。
 3. 调用 `llmService.streamTextFromParsedRequest`。
@@ -317,10 +339,12 @@ streamContinueStory(
 7. 返回最终 `continuedStory`、`model`、`elapsedMs`、`usage`。
 
 `elapsedMs` 口径：
+
 - 从开始调用 LLM stream 到收到 LLM completed 事件。
 - 不包含 WebSocket 建连、客户端消息解析和发送 completed 事件后的清理时间。
 
 ## RealtimeGateway 任务状态
+
 每个已鉴权连接维护一个本地活跃任务：
 
 ```ts
@@ -331,6 +355,7 @@ type ActiveRealtimeTask = {
 ```
 
 状态规则：
+
 - 初始无活跃任务。
 - 收到合法 `story.continue` 后创建活跃任务。
 - 活跃任务存在时再次收到 `story.continue`，返回 `BUSY`。
@@ -339,10 +364,13 @@ type ActiveRealtimeTask = {
 - completed、error、cancelled 后清空活跃任务。
 
 ## 错误处理
+
 握手阶段：
+
 - 缺失或非法 token：关闭连接，code `1008`，reason `Unauthorized`。
 
 消息阶段：
+
 - 非 JSON 或不符合消息结构：发送 `INVALID_MESSAGE`。
 - `story.continue` payload 校验失败：发送 `INVALID_PAYLOAD`。
 - 当前连接已有活跃任务：发送 `BUSY`。
@@ -351,12 +379,16 @@ type ActiveRealtimeTask = {
 - LLM usage 缺失：发送 `LLM_USAGE_MISSING`。
 
 服务端日志：
+
 - 可以记录错误类型和 requestId。
 - 不记录完整故事正文、续写指令或完整模型输出。
 
 ## 测试方案
+
 ### 单元测试
+
 覆盖：
+
 - `RealtimeGateway` 缺失 token 时关闭连接。
 - 非法 token 时关闭连接。
 - 非法 JSON 返回 `INVALID_MESSAGE`。
@@ -369,7 +401,9 @@ type ActiveRealtimeTask = {
 - 空输出时发送 `LLM_EMPTY_RESPONSE`。
 
 ### Provider 单元测试
+
 覆盖：
+
 - OpenAI streaming delta 被映射为 `LlmTextStreamEvent` chunk。
 - stream usage 被映射为 completed usage。
 - usage 缺失时抛出 `BadGatewayException`。
@@ -377,7 +411,9 @@ type ActiveRealtimeTask = {
 - abort signal 生效时中止上游请求。
 
 ### E2E 测试
+
 使用 `ws` 客户端覆盖：
+
 - 未携带 token 建连失败。
 - 非法 token 建连失败。
 - 合法 token 建连成功。
@@ -388,6 +424,7 @@ type ActiveRealtimeTask = {
 - 测试中 override `LLM_PROVIDER`，不调用真实 LLM 网络。
 
 ## 验证命令
+
 实现完成后执行：
 
 ```bash
@@ -409,6 +446,7 @@ pnpm --filter @kimiko/web build
 ```
 
 ## 本期不做
+
 - 不做 Socket.IO。
 - 不做 SSE。
 - 不做多任务并发。

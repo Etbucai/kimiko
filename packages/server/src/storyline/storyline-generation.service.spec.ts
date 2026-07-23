@@ -6,15 +6,23 @@ import type { StorylineSummaryService } from "./storyline-summary.service";
 import { StorylineGenerationService } from "./storyline-generation.service";
 
 describe("StorylineGenerationService", () => {
-  let storylineService: jest.Mocked<Pick<
-    StorylineService,
-    | "getStorylineForUser"
-    | "buildRewriteLlmContext"
-    | "saveRewrittenSegmentWithSummary"
-  >>;
-  let storyService: jest.Mocked<Pick<StoryService, "streamRewriteStoryFromContext">>;
-  let lockService: jest.Mocked<Pick<StorylineLockService, "acquireStorylineLock">>;
-  let summaryService: jest.Mocked<Pick<StorylineSummaryService, "generateCharacterSummary">>;
+  let storylineService: jest.Mocked<
+    Pick<
+      StorylineService,
+      | "getStorylineForUser"
+      | "buildRewriteLlmContext"
+      | "saveRewrittenSegmentWithSummary"
+    >
+  >;
+  let storyService: jest.Mocked<
+    Pick<StoryService, "streamRewriteStoryFromContext">
+  >;
+  let lockService: jest.Mocked<
+    Pick<StorylineLockService, "acquireStorylineLock">
+  >;
+  let summaryService: jest.Mocked<
+    Pick<StorylineSummaryService, "generateCharacterSummary">
+  >;
   let releaseLock: jest.Mock;
   let generationService: StorylineGenerationService;
 
@@ -209,7 +217,9 @@ describe("StorylineGenerationService", () => {
   });
 });
 
-async function collectAsyncIterable<T>(iterable: AsyncIterable<T>): Promise<T[]> {
+async function collectAsyncIterable<T>(
+  iterable: AsyncIterable<T>,
+): Promise<T[]> {
   const events: T[] = [];
   for await (const event of iterable) {
     events.push(event);

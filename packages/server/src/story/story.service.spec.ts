@@ -98,7 +98,10 @@ describe("StoryService", () => {
   });
 
   it("streams story chunks and completes with accumulated metadata", async () => {
-    jest.spyOn(Date, "now").mockReturnValueOnce(2_000).mockReturnValueOnce(2_050);
+    jest
+      .spyOn(Date, "now")
+      .mockReturnValueOnce(2_000)
+      .mockReturnValueOnce(2_050);
     llmProvider.streamText.mockReturnValue(
       createStream([
         {
@@ -156,9 +159,13 @@ describe("StoryService", () => {
     ]);
     expect(llmProvider.streamText.mock.calls[0]?.[0]).toEqual({
       systemPrompt: STORY_SYSTEM_PROMPT,
-      userPrompt: ["故事正文：", "雨停以后。", "", "续写指令：", "继续调查。"].join(
-        "\n",
-      ),
+      userPrompt: [
+        "故事正文：",
+        "雨停以后。",
+        "",
+        "续写指令：",
+        "继续调查。",
+      ].join("\n"),
     });
   });
 
@@ -325,7 +332,9 @@ describe("StoryService", () => {
     expect(request.userPrompt).toContain("林夏走向钟楼。");
     expect(request.userPrompt).toContain("重写指令：");
     expect(request.userPrompt).toContain("文风更加轻快");
-    expect(request.userPrompt).toContain("请只输出用于替换原生成正文的新正文。");
+    expect(request.userPrompt).toContain(
+      "请只输出用于替换原生成正文的新正文。",
+    );
     expect(request.userPrompt).not.toContain("当前续写指令：");
   });
 });

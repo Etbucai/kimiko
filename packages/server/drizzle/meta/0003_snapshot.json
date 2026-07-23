@@ -95,17 +95,12 @@
       "indexes": {
         "storyline_segment_storyline_order_unique": {
           "name": "storyline_segment_storyline_order_unique",
-          "columns": [
-            "storyline_id",
-            "order_index"
-          ],
+          "columns": ["storyline_id", "order_index"],
           "isUnique": true
         },
         "storyline_segment_storyline_id_idx": {
           "name": "storyline_segment_storyline_id_idx",
-          "columns": [
-            "storyline_id"
-          ],
+          "columns": ["storyline_id"],
           "isUnique": false
         }
       },
@@ -114,12 +109,8 @@
           "name": "storyline_segment_storyline_id_storyline_id_fk",
           "tableFrom": "storyline_segment",
           "tableTo": "storyline",
-          "columnsFrom": [
-            "storyline_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["storyline_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -170,9 +161,7 @@
       "indexes": {
         "storyline_summary_storyline_id_unique": {
           "name": "storyline_summary_storyline_id_unique",
-          "columns": [
-            "storyline_id"
-          ],
+          "columns": ["storyline_id"],
           "isUnique": true
         }
       },
@@ -181,12 +170,8 @@
           "name": "storyline_summary_storyline_id_storyline_id_fk",
           "tableFrom": "storyline_summary",
           "tableTo": "storyline",
-          "columnsFrom": [
-            "storyline_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["storyline_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -230,10 +215,7 @@
       "indexes": {
         "storyline_user_id_updated_at_idx": {
           "name": "storyline_user_id_updated_at_idx",
-          "columns": [
-            "user_id",
-            "updated_at"
-          ],
+          "columns": ["user_id", "updated_at"],
           "isUnique": false
         }
       },
@@ -242,12 +224,8 @@
           "name": "storyline_user_id_user_id_fk",
           "tableFrom": "storyline",
           "tableTo": "user",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -336,23 +314,17 @@
       "indexes": {
         "user_refresh_session_token_hash_unique": {
           "name": "user_refresh_session_token_hash_unique",
-          "columns": [
-            "token_hash"
-          ],
+          "columns": ["token_hash"],
           "isUnique": true
         },
         "user_refresh_session_user_id_idx": {
           "name": "user_refresh_session_user_id_idx",
-          "columns": [
-            "user_id"
-          ],
+          "columns": ["user_id"],
           "isUnique": false
         },
         "user_refresh_session_expires_at_idx": {
           "name": "user_refresh_session_expires_at_idx",
-          "columns": [
-            "expires_at"
-          ],
+          "columns": ["expires_at"],
           "isUnique": false
         }
       },
@@ -361,12 +333,8 @@
           "name": "user_refresh_session_user_id_user_id_fk",
           "tableFrom": "user_refresh_session",
           "tableTo": "user",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -424,9 +392,7 @@
       "indexes": {
         "user_unique_name_unique": {
           "name": "user_unique_name_unique",
-          "columns": [
-            "unique_name"
-          ],
+          "columns": ["unique_name"],
           "isUnique": true
         }
       },

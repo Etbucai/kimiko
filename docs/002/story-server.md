@@ -1,11 +1,13 @@
 # StoryAgent 后端技术方案
 
 ## 背景
+
 本文档对应 PRD：[story.md](./story.md) 和前端技术方案：[story-fe.md](./story-fe.md)。
 
 本轮后端目标是提供 StoryAgent 领域接口，让前端通过一次请求完成故事续写：提交故事正文和续写指令，后端构造稳定提示词，调用现有 LLM 能力，并返回续写正文、模型、耗时和 Token 用量。
 
 ## IDL 结论
+
 已读取 `story-fe.md` 中的 IDL Schema。本轮后端沿用前端技术方案中的 IDL，不需要修改，因此不额外输出 `story-fe-idl-change.md`。
 
 后端需要在 `packages/schema/src/index.ts` 中补充并使用以下共享契约：
@@ -18,9 +20,7 @@ export const ContinueStoryRequestSchema = z
   })
   .strict();
 
-export type ContinueStoryRequest = z.infer<
-  typeof ContinueStoryRequestSchema
->;
+export type ContinueStoryRequest = z.infer<typeof ContinueStoryRequestSchema>;
 
 export const ContinueStoryUsageSchema = z
   .object({
@@ -41,18 +41,18 @@ export const ContinueStoryResponseSchema = z
   })
   .strict();
 
-export type ContinueStoryResponse = z.infer<
-  typeof ContinueStoryResponseSchema
->;
+export type ContinueStoryResponse = z.infer<typeof ContinueStoryResponseSchema>;
 ```
 
 接口契约：
+
 - `POST /story/continue`
 - 请求体：`ContinueStoryRequest`
 - 响应体：`ContinueStoryResponse`
 - 必须登录，请求需要通过现有 `JwtAuthGuard`。
 
 ## 已确认决策
+
 - 新增 Story 领域接口，不让前端直接拼接 LLM prompt。
 - 新增 `StoryModule`，不并入 `LlmModule`。
 - `StoryService` 复用现有 `LlmService`。
@@ -66,6 +66,7 @@ export type ContinueStoryResponse = z.infer<
 - 本轮不新增第三方依赖，不新增数据库表，不新增迁移。
 
 ## 模块设计
+
 新增文件：
 
 - `packages/server/src/story/story.module.ts`
@@ -94,6 +95,7 @@ export type ContinueStoryResponse = z.infer<
   - 增加 Story IDL schema。
 
 ## 控制器设计
+
 `StoryController` 只承担 HTTP 边界职责：
 
 ```ts
@@ -111,11 +113,13 @@ export class StoryController {
 ```
 
 说明：
+
 - controller 不解析字段、不拼 prompt、不处理 LLM 细节。
 - controller 不读取 `request.user`，登录态只用于访问控制。
 - 非法 token、缺失 token 等行为沿用现有 `JwtAuthGuard`。
 
 ## Service 设计
+
 `StoryService` 对外暴露：
 
 ```ts
@@ -123,6 +127,7 @@ async continueStory(body: unknown): Promise<ContinueStoryResponse>
 ```
 
 处理流程：
+
 1. 使用 `ContinueStoryRequestSchema.safeParse(body)` 校验请求。
 2. 校验失败时返回 `BadRequestException`，错误信息包含首个字段路径。
 3. 使用 trim 后的 `storyText` 和 `instruction` 构造 LLM 请求。
@@ -134,12 +139,14 @@ async continueStory(body: unknown): Promise<ContinueStoryResponse>
 9. 返回 `ContinueStoryResponse`。
 
 响应映射：
+
 - `continuedStory` 取 LLM 返回 `text` 的 trim 结果。
 - `model` 取 LLM 返回 `model`。
 - `elapsedMs` 取本次 LLM 调用耗时。
 - `usage` 取 LLM 返回 usage。
 
 ## Prompt 设计
+
 使用固定 system prompt 加结构化 user prompt。
 
 system prompt 负责稳定 StoryAgent 行为：
@@ -165,23 +172,28 @@ user prompt 使用明确分段，避免把正文和指令混在一起：
 ```
 
 说明：
+
 - 后端不允许前端传入 system prompt。
 - 后端不允许前端传入模型、温度、max token 等生成参数。
 - 字数要求只通过提示词约束，不做字符串截断。
 
 ## 错误处理
+
 请求校验错误：
+
 - `storyText` 缺失、空字符串、超长时返回 `400`。
 - `instruction` 缺失、空字符串、超长时返回 `400`。
 - 请求体包含未声明字段时返回 `400`。
 
 LLM 失败：
+
 - 保留现有 `LlmService` 和 provider 的 Nest 异常映射。
 - 上游空响应、无 choices 等继续映射为 `502`。
 - 上游超时继续映射为 `504`。
 - 上游不可用、限流、鉴权失败等继续映射为 `503`。
 
 Story 映射失败：
+
 - LLM 返回空 `text` 时返回 `502`。
 - LLM 返回缺失 `usage` 或 usage 字段不完整时返回 `502`。
 - 不伪造 Token 数据，不返回部分成功结果。
@@ -189,6 +201,7 @@ Story 映射失败：
 前端会统一展示固定文案 `生成失败，请稍后重试`，后端仍保留准确 HTTP 状态，方便服务端测试和排查。
 
 ## 鉴权与状态
+
 - `POST /story/continue` 必须使用 `JwtAuthGuard`。
 - 后端只验证登录态，不读取或使用 `userId`。
 - 不写数据库。
@@ -197,8 +210,11 @@ Story 映射失败：
 - 不实现流式输出。
 
 ## 测试方案
+
 ### 单元测试
+
 `story.service.spec.ts` 覆盖：
+
 - trim 后的 `storyText` 和 `instruction` 被正确传入 prompt。
 - 生成请求包含固定 system prompt。
 - 成功时返回 `continuedStory`、`model`、`elapsedMs`、`usage`。
@@ -211,7 +227,9 @@ Story 映射失败：
 - LLM 异常不被吞掉，按原异常传播。
 
 ### E2E 测试
+
 `story.e2e-spec.ts` 覆盖：
+
 - 未登录请求 `POST /story/continue` 返回 `401`。
 - 登录后非法请求返回 `400`。
 - 登录后成功请求返回符合 `ContinueStoryResponseSchema` 的响应。
@@ -220,6 +238,7 @@ Story 映射失败：
 - 成功链路断言 provider 收到的 prompt 包含故事正文、续写指令和 StoryAgent 输出约束。
 
 ## 验证命令
+
 实现完成后执行：
 
 ```bash

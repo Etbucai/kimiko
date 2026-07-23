@@ -67,7 +67,9 @@ export class LlmService {
   }
 }
 
-function normalizeOptionalPrompt(value: string | undefined): string | undefined {
+function normalizeOptionalPrompt(
+  value: string | undefined,
+): string | undefined {
   const normalizedValue = value?.trim();
   return normalizedValue !== undefined && normalizedValue.length > 0
     ? normalizedValue

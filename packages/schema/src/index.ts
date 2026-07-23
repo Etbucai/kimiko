@@ -63,9 +63,7 @@ export const GetMyUserInfoResponseSchema = z
   })
   .strict();
 
-export type GetMyUserInfoResponse = z.infer<
-  typeof GetMyUserInfoResponseSchema
->;
+export type GetMyUserInfoResponse = z.infer<typeof GetMyUserInfoResponseSchema>;
 
 export const LoginUserResponseSchema = z
   .object({
@@ -90,9 +88,7 @@ export const RefreshTokenResponseSchema = z
   })
   .strict();
 
-export type RefreshTokenResponse = z.infer<
-  typeof RefreshTokenResponseSchema
->;
+export type RefreshTokenResponse = z.infer<typeof RefreshTokenResponseSchema>;
 
 export const LogoutUserRequestSchema = RefreshTokenRequestSchema;
 
@@ -102,17 +98,14 @@ export const LogoutUserResponseSchema = z.object({}).strict();
 
 export type LogoutUserResponse = z.infer<typeof LogoutUserResponseSchema>;
 
-const OptionalPromptSchema = z.preprocess(
-  (value) => {
-    if (typeof value !== "string") {
-      return value;
-    }
+const OptionalPromptSchema = z.preprocess((value) => {
+  if (typeof value !== "string") {
+    return value;
+  }
 
-    const normalizedValue = value.trim();
-    return normalizedValue.length > 0 ? normalizedValue : undefined;
-  },
-  z.string().trim().min(1).max(8_000).optional(),
-);
+  const normalizedValue = value.trim();
+  return normalizedValue.length > 0 ? normalizedValue : undefined;
+}, z.string().trim().min(1).max(8_000).optional());
 
 export const GenerateLlmTextRequestSchema = z
   .object({
@@ -133,9 +126,7 @@ export const GenerateLlmTextUsageSchema = z
   })
   .strict();
 
-export type GenerateLlmTextUsage = z.infer<
-  typeof GenerateLlmTextUsageSchema
->;
+export type GenerateLlmTextUsage = z.infer<typeof GenerateLlmTextUsageSchema>;
 
 export const GenerateLlmTextResponseSchema = z
   .object({
@@ -157,9 +148,7 @@ export const ContinueStoryRequestSchema = z
   })
   .strict();
 
-export type ContinueStoryRequest = z.infer<
-  typeof ContinueStoryRequestSchema
->;
+export type ContinueStoryRequest = z.infer<typeof ContinueStoryRequestSchema>;
 
 export const ContinueStoryUsageSchema = z
   .object({
@@ -180,9 +169,7 @@ export const ContinueStoryResponseSchema = z
   })
   .strict();
 
-export type ContinueStoryResponse = z.infer<
-  typeof ContinueStoryResponseSchema
->;
+export type ContinueStoryResponse = z.infer<typeof ContinueStoryResponseSchema>;
 
 export const StorylineIdSchema = z.string().trim().min(1);
 
@@ -190,9 +177,7 @@ export type StorylineId = z.infer<typeof StorylineIdSchema>;
 
 export const StorylineSegmentIdSchema = z.string().trim().min(1);
 
-export type StorylineSegmentId = z.infer<
-  typeof StorylineSegmentIdSchema
->;
+export type StorylineSegmentId = z.infer<typeof StorylineSegmentIdSchema>;
 
 export const StorylineInitialSegmentSchema = z
   .object({
@@ -249,10 +234,9 @@ export const StorylineSnapshotSchema = z
 
 export type StorylineSnapshot = z.infer<typeof StorylineSnapshotSchema>;
 
-export const CompletedStorylineSnapshotSchema =
-  StorylineSnapshotSchema.extend({
-    latestGeneration: StorylineGenerationMetadataSchema,
-  });
+export const CompletedStorylineSnapshotSchema = StorylineSnapshotSchema.extend({
+  latestGeneration: StorylineGenerationMetadataSchema,
+});
 
 export type CompletedStorylineSnapshot = z.infer<
   typeof CompletedStorylineSnapshotSchema
@@ -309,9 +293,7 @@ export const StoryCharacterSummarySchema = z
   })
   .strict();
 
-export type StoryCharacterSummary = z.infer<
-  typeof StoryCharacterSummarySchema
->;
+export type StoryCharacterSummary = z.infer<typeof StoryCharacterSummarySchema>;
 
 export const StoryCharacterSummarySnapshotSchema = z
   .object({
@@ -376,9 +358,7 @@ export const StoryContinuePayloadSchema = z.discriminatedUnion("mode", [
   StoryContinueRewritePayloadSchema,
 ]);
 
-export type StoryContinuePayload = z.infer<
-  typeof StoryContinuePayloadSchema
->;
+export type StoryContinuePayload = z.infer<typeof StoryContinuePayloadSchema>;
 
 export const StoryRealtimeRequestIdSchema = z.string().trim().min(1);
 
@@ -434,9 +414,7 @@ export const StoryChunkServerEventSchema = z
   })
   .strict();
 
-export type StoryChunkServerEvent = z.infer<
-  typeof StoryChunkServerEventSchema
->;
+export type StoryChunkServerEvent = z.infer<typeof StoryChunkServerEventSchema>;
 
 export const StorySummaryStartedServerEventSchema = z
   .object({
@@ -502,9 +480,7 @@ export const StoryErrorServerEventSchema = z
   })
   .strict();
 
-export type StoryErrorServerEvent = z.infer<
-  typeof StoryErrorServerEventSchema
->;
+export type StoryErrorServerEvent = z.infer<typeof StoryErrorServerEventSchema>;
 
 export const StoryRealtimeServerEventSchema = z.discriminatedUnion("type", [
   StoryStartedServerEventSchema,

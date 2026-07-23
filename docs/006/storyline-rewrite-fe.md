@@ -103,7 +103,7 @@ export const StoryContinuePayloadSchema = z.discriminatedUnion("mode", [
 `StoryRealtimeErrorCodeSchema` 新增：
 
 ```ts
-"STORY_SEGMENT_NOT_REWRITABLE"
+"STORY_SEGMENT_NOT_REWRITABLE";
 ```
 
 完整错误码 union 更新为：
@@ -248,7 +248,7 @@ export interface StoryRealtimeGenerationCallbacks {
 重写仍调用：
 
 ```ts
-startStoryRealtimeGeneration(payload, callbacks)
+startStoryRealtimeGeneration(payload, callbacks);
 ```
 
 payload 示例：
@@ -337,9 +337,7 @@ const [temporaryRewrite, setTemporaryRewrite] =
 
 ```ts
 const isGenerating =
-  status === "connecting" ||
-  status === "streaming" ||
-  status === "summarizing";
+  status === "connecting" || status === "streaming" || status === "summarizing";
 
 const isRewriteMode = composerMode === "rewrite";
 const canEnterRewrite = !isGenerating && storyline !== null;
@@ -350,7 +348,7 @@ const canEnterRewrite = !isGenerating && storyline !== null;
 ```ts
 function getLatestGeneratedSegment(
   storyline: StorylineSnapshot,
-): StorylineGeneratedSegment | null
+): StorylineGeneratedSegment | null;
 ```
 
 `StorylineReader` 只对该 segment 展示重写按钮。
@@ -581,11 +579,11 @@ interface StorylineComposerProps {
 
 文案规则：
 
-| 场景 | label | placeholder | 主按钮 |
-| --- | --- | --- | --- |
-| append | 续写指令 | 描述接下来要发生的主要情节和人物行动 | 生成续写 |
-| rewrite | 重写指令 | 例如：不要转变场景，文风更加轻快，增加对气味的描写 | 生成重写 |
-| generating | 当前模式 label | 当前模式 placeholder | 取消生成 |
+| 场景       | label          | placeholder                                        | 主按钮   |
+| ---------- | -------------- | -------------------------------------------------- | -------- |
+| append     | 续写指令       | 描述接下来要发生的主要情节和人物行动               | 生成续写 |
+| rewrite    | 重写指令       | 例如：不要转变场景，文风更加轻快，增加对气味的描写 | 生成重写 |
+| generating | 当前模式 label | 当前模式 placeholder                               | 取消生成 |
 
 重写模式提示：
 

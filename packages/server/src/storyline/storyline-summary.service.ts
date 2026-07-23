@@ -65,10 +65,7 @@ export function parseCharacterSummaryResponse(
     throw new StorySummaryFailedError("Summary response is empty");
   }
 
-  if (
-    !normalizedValue.startsWith("{") ||
-    !normalizedValue.endsWith("}")
-  ) {
+  if (!normalizedValue.startsWith("{") || !normalizedValue.endsWith("}")) {
     throw new StorySummaryFailedError("Summary response must be pure JSON");
   }
 
@@ -83,7 +80,9 @@ export function parseCharacterSummaryResponse(
   if (!result.success) {
     const firstIssue = result.error.issues[0];
     const message =
-      firstIssue === undefined ? "Summary schema is invalid" : firstIssue.message;
+      firstIssue === undefined
+        ? "Summary schema is invalid"
+        : firstIssue.message;
     throw new StorySummaryFailedError(message);
   }
 
@@ -149,7 +148,9 @@ function buildCharacterSummaryUserPrompt(
   return promptParts.join("\n");
 }
 
-function getInstructionLabel(operation: GenerateCharacterSummaryInput["operation"]): string {
+function getInstructionLabel(
+  operation: GenerateCharacterSummaryInput["operation"],
+): string {
   return operation === "rewrite" ? "本轮重写指令：" : "本轮续写指令：";
 }
 

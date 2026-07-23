@@ -1,9 +1,6 @@
 import { BadGatewayException, Injectable } from "@nestjs/common";
 import { WebSocketGateway } from "@nestjs/websockets";
-import type {
-  OnGatewayDisconnect,
-  OnGatewayInit,
-} from "@nestjs/websockets";
+import type { OnGatewayDisconnect, OnGatewayInit } from "@nestjs/websockets";
 import type {
   StoryCancelClientMessage,
   StoryContinueClientMessage,
@@ -181,7 +178,10 @@ export class RealtimeGateway
     message: StoryCancelClientMessage,
   ): void {
     const clientState = this.clientStates.get(client);
-    if (clientState?.activeTask === undefined || clientState.activeTask === null) {
+    if (
+      clientState?.activeTask === undefined ||
+      clientState.activeTask === null
+    ) {
       sendError(client, message.requestId, "NO_ACTIVE_TASK", false);
       return;
     }
@@ -232,9 +232,7 @@ export class RealtimeGateway
   }
 }
 
-function parseClientMessage(
-  rawMessage: unknown,
-):
+function parseClientMessage(rawMessage: unknown):
   | Readonly<{ success: true; message: StoryRealtimeClientMessage }>
   | Readonly<{
       success: false;

@@ -2,7 +2,11 @@ import type { JSX } from "react";
 import { useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import type { LoginUserRequest } from "@kimiko/schema";
-import { getErrorMessage, loginUser, saveAuthSession } from "../../auth/authApi";
+import {
+  getErrorMessage,
+  loginUser,
+  saveAuthSession,
+} from "../../auth/authApi";
 import { AuthPage } from "./AuthPage";
 import {
   authButtonClassName,

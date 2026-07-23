@@ -113,7 +113,10 @@ async function readJsonResponse(response: Response): Promise<unknown> {
   return JSON.parse(text) as unknown;
 }
 
-function getResponseErrorMessage(responseBody: unknown, status: number): string {
+function getResponseErrorMessage(
+  responseBody: unknown,
+  status: number,
+): string {
   if (isRecord(responseBody)) {
     const message = responseBody.message;
     if (typeof message === "string" && message.length > 0) {
@@ -144,14 +147,20 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
 
-function parsePersistedAuthSession(value: unknown): PersistedAuthSession | null {
+function parsePersistedAuthSession(
+  value: unknown,
+): PersistedAuthSession | null {
   if (!isRecord(value)) {
     return null;
   }
 
   const session = LoginSessionSchema.safeParse(value.session);
   const me = GetMyUserInfoResponseSchema.safeParse(value.me);
-  if (!session.success || !me.success || session.data.userId !== me.data.userId) {
+  if (
+    !session.success ||
+    !me.success ||
+    session.data.userId !== me.data.userId
+  ) {
     return null;
   }
 

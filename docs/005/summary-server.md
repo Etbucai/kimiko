@@ -161,9 +161,7 @@ export const storylineSummaries = sqliteTable(
       .notNull(),
   },
   (table) => [
-    uniqueIndex("storyline_summary_storyline_id_unique").on(
-      table.storylineId,
-    ),
+    uniqueIndex("storyline_summary_storyline_id_unique").on(table.storylineId),
   ],
 );
 ```
@@ -203,9 +201,7 @@ export const StoryCharacterSummarySnapshotSchema = z
 类型：
 
 ```ts
-export type StoryCharacterSummary = z.infer<
-  typeof StoryCharacterSummarySchema
->;
+export type StoryCharacterSummary = z.infer<typeof StoryCharacterSummarySchema>;
 
 export type StoryCharacterSummarySnapshot = z.infer<
   typeof StoryCharacterSummarySnapshotSchema
@@ -622,4 +618,3 @@ STORY_SUMMARY_FAILED: "生成失败，请稍后重试",
     - `pnpm --filter @kimiko/server test`
     - `pnpm --filter @kimiko/server test:e2e`
     - `pnpm --filter @kimiko/server build`
-

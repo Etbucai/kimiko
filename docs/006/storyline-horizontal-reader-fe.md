@@ -120,9 +120,7 @@ type StorylineReaderPage =
 
 ```tsx
 <section className="min-w-full snap-center px-1">
-  <div className="rounded-3xl ...">
-    ...
-  </div>
+  <div className="rounded-3xl ...">...</div>
 </section>
 ```
 

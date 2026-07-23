@@ -66,7 +66,12 @@ export function StorylineReader({
         temporaryAppendText,
         temporaryAppendVisible,
       }),
-    [canRewrite, storyline.segments, temporaryAppendText, temporaryAppendVisible],
+    [
+      canRewrite,
+      storyline.segments,
+      temporaryAppendText,
+      temporaryAppendVisible,
+    ],
   );
   const pageIdentity = useMemo(
     () => pages.map((page) => String(page.id)).join("|"),
@@ -201,7 +206,10 @@ export function StorylineReader({
 
     event.preventDefault();
     const direction = event.key === "ArrowLeft" ? -1 : 1;
-    const nextIndex = clampPageIndex(currentPageIndex + direction, pages.length);
+    const nextIndex = clampPageIndex(
+      currentPageIndex + direction,
+      pages.length,
+    );
     if (nextIndex === currentPageIndex) {
       return;
     }

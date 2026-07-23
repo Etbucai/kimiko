@@ -25,8 +25,7 @@ export interface SaveCreatedStorylineInput {
   readonly usage: ContinueStoryUsage;
 }
 
-export interface SaveCreatedStorylineWithSummaryInput
-  extends SaveCreatedStorylineInput {
+export interface SaveCreatedStorylineWithSummaryInput extends SaveCreatedStorylineInput {
   readonly characterSummary: StoryCharacterSummarySnapshot;
 }
 
@@ -40,8 +39,7 @@ export interface SaveAppendedSegmentInput {
   readonly usage: ContinueStoryUsage;
 }
 
-export interface SaveAppendedSegmentWithSummaryInput
-  extends SaveAppendedSegmentInput {
+export interface SaveAppendedSegmentWithSummaryInput extends SaveAppendedSegmentInput {
   readonly previousSummary: StoryCharacterSummarySnapshot;
   readonly characterSummary: StoryCharacterSummarySnapshot;
 }

@@ -279,7 +279,9 @@ describe("StorylineService", () => {
         rewriteInstruction: "文风更加轻快。",
         historyRoundLimit: 10,
       }),
-    ).rejects.toThrow("Storyline generated segment is missing previous summary");
+    ).rejects.toThrow(
+      "Storyline generated segment is missing previous summary",
+    );
   });
 });
 

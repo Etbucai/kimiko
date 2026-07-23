@@ -74,12 +74,11 @@ const notFoundFailureTitle = "故事线不可用";
 const summaryFailureMessage = "获取角色摘要失败，请稍后重试";
 const bottomScrollThresholdPx = 140;
 
-export function StoryPage({
-  mode,
-  storylineId,
-}: StoryPageProps): JSX.Element {
+export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   const navigate = useNavigate();
-  const generationHandleRef = useRef<StoryRealtimeGenerationHandle | null>(null);
+  const generationHandleRef = useRef<StoryRealtimeGenerationHandle | null>(
+    null,
+  );
   const isMountedRef = useRef(false);
   const restoreRequestIdRef = useRef(0);
   const shouldFollowScrollRef = useRef(true);
@@ -99,8 +98,7 @@ export function StoryPage({
   const [temporaryRewrite, setTemporaryRewrite] =
     useState<RewriteDraftState | null>(null);
   const [fieldErrors, setFieldErrors] = useState<StorylineFieldErrors>({});
-  const [restoreErrorTitle, setRestoreErrorTitle] =
-    useState("故事线恢复失败");
+  const [restoreErrorTitle, setRestoreErrorTitle] = useState("故事线恢复失败");
   const [restoreErrorMessage, setRestoreErrorMessage] = useState(
     restoreFailureMessage,
   );
@@ -545,9 +543,7 @@ export function StoryPage({
           }
           isGenerating={isGenerating}
           mode={composerMode}
-          modeHint={
-            composerMode === "rewrite" ? "正在重写上一段" : undefined
-          }
+          modeHint={composerMode === "rewrite" ? "正在重写上一段" : undefined}
           onCancelGeneration={handleCancel}
           onCancelRewrite={handleCancelRewrite}
           onChange={
@@ -721,9 +717,7 @@ interface StoryPageHeaderProps {
   onBackToList: () => void;
 }
 
-function StoryPageHeader({
-  onBackToList,
-}: StoryPageHeaderProps): JSX.Element {
+function StoryPageHeader({ onBackToList }: StoryPageHeaderProps): JSX.Element {
   return (
     <header className="fixed inset-x-0 top-0 z-10 border-b border-[var(--border)] bg-[var(--panel-bg)] px-4 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3 shadow-[0_10px_24px_rgba(0,0,0,0.08)] backdrop-blur md:px-6">
       <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-3">

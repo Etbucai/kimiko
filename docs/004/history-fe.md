@@ -54,9 +54,7 @@ export type StorylineId = z.infer<typeof StorylineIdSchema>;
 
 export const StorylineSegmentIdSchema = z.string().trim().min(1);
 
-export type StorylineSegmentId = z.infer<
-  typeof StorylineSegmentIdSchema
->;
+export type StorylineSegmentId = z.infer<typeof StorylineSegmentIdSchema>;
 ```
 
 ### Storyline 分段快照
@@ -117,10 +115,9 @@ export const StorylineSnapshotSchema = z
 
 export type StorylineSnapshot = z.infer<typeof StorylineSnapshotSchema>;
 
-export const CompletedStorylineSnapshotSchema =
-  StorylineSnapshotSchema.extend({
-    latestGeneration: StorylineGenerationMetadataSchema,
-  });
+export const CompletedStorylineSnapshotSchema = StorylineSnapshotSchema.extend({
+  latestGeneration: StorylineGenerationMetadataSchema,
+});
 
 export type CompletedStorylineSnapshot = z.infer<
   typeof CompletedStorylineSnapshotSchema
@@ -128,6 +125,7 @@ export type CompletedStorylineSnapshot = z.infer<
 ```
 
 说明：
+
 - `segments` 按展示顺序返回。
 - `initial` segment 表示用户首轮提交的初始故事正文。
 - `generated` segment 表示 Agent 成功完成并保存的续写正文。
@@ -150,6 +148,7 @@ export type GetRecentStorylineResponse = z.infer<
 ```
 
 接口契约：
+
 - `GET /storylines/recent`
 - 必须登录。
 - 请求头包含 `Authorization: Bearer {accessToken}`。
@@ -190,12 +189,11 @@ export const StoryContinuePayloadSchema = z.discriminatedUnion("mode", [
   StoryContinueAppendPayloadSchema,
 ]);
 
-export type StoryContinuePayload = z.infer<
-  typeof StoryContinuePayloadSchema
->;
+export type StoryContinuePayload = z.infer<typeof StoryContinuePayloadSchema>;
 ```
 
 说明：
+
 - `mode: "create"` 用于无故事线空态下的首轮生成。
 - `mode: "append"` 用于已有故事线的后续生成。
 - 004 前端不再把旧的 `ContinueStoryRequest` 作为页面提交契约。
@@ -262,9 +260,7 @@ export const StoryChunkServerEventSchema = z
   })
   .strict();
 
-export type StoryChunkServerEvent = z.infer<
-  typeof StoryChunkServerEventSchema
->;
+export type StoryChunkServerEvent = z.infer<typeof StoryChunkServerEventSchema>;
 
 export const StoryCompletedServerEventSchema = z
   .object({
@@ -317,9 +313,7 @@ export const StoryErrorServerEventSchema = z
   })
   .strict();
 
-export type StoryErrorServerEvent = z.infer<
-  typeof StoryErrorServerEventSchema
->;
+export type StoryErrorServerEvent = z.infer<typeof StoryErrorServerEventSchema>;
 
 export const StoryRealtimeServerEventSchema = z.discriminatedUnion("type", [
   StoryStartedServerEventSchema,
@@ -335,6 +329,7 @@ export type StoryRealtimeServerEvent = z.infer<
 ```
 
 说明：
+
 - `story.chunk` 只用于临时流式展示。
 - `story.completed` 表示 LLM 生成完成且服务端保存成功。
 - `story.completed.storyline` 是前端新的正式快照来源。
@@ -394,6 +389,7 @@ export async function getRecentStoryline(): Promise<GetRecentStorylineResult>;
 ```
 
 处理规则：
+
 - 调用时读取 `getStoredAuthSession()`。
 - session 不存在或已失效时，返回 `authRequired`。
 - 请求 `GET /storylines/recent`。
@@ -429,6 +425,7 @@ export function startStoryRealtimeGeneration(
 ```
 
 处理规则：
+
 - 调用时读取 `getStoredAuthSession()`。
 - session 不存在或失效时，不建连，直接触发 `onAuthRequired`。
 - 建连 URL 继续从 `VITE_API_BASE_URL` 推导：
@@ -467,6 +464,7 @@ function getRealtimeBaseUrl(apiBaseUrl: string): string {
 - `close()` 用于组件卸载清理，不触发 UI 状态回调。
 
 取消规则：
+
 - 生成中主按钮文案为 `取消生成`。
 - 点击取消时调用 `cancel()`。
 - socket open 后发送 `story.cancel`。
@@ -501,6 +499,7 @@ interface StorylinePageState {
 ```
 
 状态规则：
+
 - 初始进入 `loading`。
 - 恢复成功且 `storyline === null` 时进入 `empty`。
 - 恢复成功且 `storyline !== null` 时进入 `ready`。
@@ -555,6 +554,7 @@ const payload = {
 ```
 
 说明：
+
 - 前端不拼接历史消息。
 - 前端不把 `segments` 重新拼成正文传回服务端。
 - 前端不把 UI 分隔符传给服务端。
