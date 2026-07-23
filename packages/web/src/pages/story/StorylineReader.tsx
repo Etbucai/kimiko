@@ -93,6 +93,7 @@ export function StorylineReader({
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const pagePanelRefs = useRef<(HTMLDivElement | null)[]>([]);
   const lastPositionedPageIdentityRef = useRef<string | null>(null);
+  const previousTemporaryAppendVisibleRef = useRef(temporaryAppendVisible);
   const pages = useMemo(
     () =>
       buildReaderPages({
@@ -210,6 +211,21 @@ export function StorylineReader({
     requestAnimationFrame(() => {
       setCurrentPageIndex(targetIndex);
       scrollToPage(scrollerRef.current, targetIndex, "smooth");
+    });
+  }, [pages.length, temporaryAppendVisible]);
+
+  useEffect(() => {
+    const wasTemporaryAppendVisible = previousTemporaryAppendVisibleRef.current;
+    previousTemporaryAppendVisibleRef.current = temporaryAppendVisible;
+
+    if (!wasTemporaryAppendVisible || temporaryAppendVisible) {
+      return;
+    }
+
+    const targetIndex = getLastPageIndex(pages.length);
+    requestAnimationFrame(() => {
+      setCurrentPageIndex(targetIndex);
+      scrollToPage(scrollerRef.current, targetIndex, "auto");
     });
   }, [pages.length, temporaryAppendVisible]);
 
