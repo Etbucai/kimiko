@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import type { StoryGenerationPhase } from "@kimiko/schema";
 import { Env } from "../env";
 import { StoryService } from "../story/story.service";
 import type {
@@ -17,6 +18,7 @@ import { StorylineService } from "./storyline.service";
 import type {
   ContinueStorylineInput,
   HistoryScoreConfig,
+  StorylineGenerationOptions,
   StorylineStreamEvent,
 } from "./storyline.types";
 
@@ -35,8 +37,9 @@ export class StorylineGenerationService {
 
   async *streamContinueStoryline(
     input: ContinueStorylineInput,
-    options: Readonly<{ signal: AbortSignal }>,
+    options: StorylineGenerationOptions,
   ): AsyncIterable<StorylineStreamEvent> {
+    emitPhase(options, "preparing");
     this.logGenerationPhase({
       mode: input.payload.mode,
       phase: "request_received",
@@ -65,7 +68,7 @@ export class StorylineGenerationService {
 
   private async *streamCreateStoryline(
     input: ContinueStorylineInput,
-    options: Readonly<{ signal: AbortSignal }>,
+    options: StorylineGenerationOptions,
   ): AsyncIterable<StorylineStreamEvent> {
     if (input.payload.mode !== "create") {
       throw new StorylineNotFoundError("Expected create payload");
@@ -100,6 +103,7 @@ export class StorylineGenerationService {
       let chunkChars = 0;
       let chunkCount = 0;
 
+      emitPhase(options, "streaming");
       this.logGenerationPhase({
         elapsedMs: getElapsedMs(startedAt),
         mode: "create",
@@ -152,6 +156,7 @@ export class StorylineGenerationService {
           return;
         }
 
+        emitPhase(options, "updatingContext");
         this.logGenerationPhase({
           elapsedMs: getElapsedMs(startedAt),
           mode: "create",
@@ -196,6 +201,7 @@ export class StorylineGenerationService {
           storylineId: null,
         });
 
+        emitPhase(options, "saving");
         const storyline =
           await this.storylineService.saveCreatedStorylineWithContext({
             userId: input.userId,
@@ -230,7 +236,7 @@ export class StorylineGenerationService {
 
   private async *streamAppendStoryline(
     input: ContinueStorylineInput,
-    options: Readonly<{ signal: AbortSignal }>,
+    options: StorylineGenerationOptions,
   ): AsyncIterable<StorylineStreamEvent> {
     if (input.payload.mode !== "append") {
       throw new StorylineNotFoundError("Expected append payload");
@@ -300,6 +306,7 @@ export class StorylineGenerationService {
       let chunkChars = 0;
       let chunkCount = 0;
 
+      emitPhase(options, "streaming");
       this.logGenerationPhase({
         elapsedMs: getElapsedMs(startedAt),
         mode: "append",
@@ -352,6 +359,7 @@ export class StorylineGenerationService {
           return;
         }
 
+        emitPhase(options, "updatingContext");
         this.logGenerationPhase({
           elapsedMs: getElapsedMs(startedAt),
           mode: "append",
@@ -392,6 +400,7 @@ export class StorylineGenerationService {
           storylineId: storyline.externalId,
         });
 
+        emitPhase(options, "saving");
         const savedStoryline =
           await this.storylineService.saveAppendedSegmentWithContext({
             userId: input.userId,
@@ -427,7 +436,7 @@ export class StorylineGenerationService {
 
   private async *streamRewriteStoryline(
     input: ContinueStorylineInput,
-    options: Readonly<{ signal: AbortSignal }>,
+    options: StorylineGenerationOptions,
   ): AsyncIterable<StorylineStreamEvent> {
     if (input.payload.mode !== "rewrite") {
       throw new StorySegmentNotRewritableError("Expected rewrite payload");
@@ -509,6 +518,7 @@ export class StorylineGenerationService {
       let chunkChars = 0;
       let chunkCount = 0;
 
+      emitPhase(options, "streaming");
       this.logGenerationPhase({
         elapsedMs: getElapsedMs(startedAt),
         mode: "rewrite",
@@ -561,6 +571,7 @@ export class StorylineGenerationService {
           return;
         }
 
+        emitPhase(options, "updatingContext");
         this.logGenerationPhase({
           elapsedMs: getElapsedMs(startedAt),
           mode: "rewrite",
@@ -603,6 +614,7 @@ export class StorylineGenerationService {
           targetGenerationMode: context.targetGenerationMode,
         });
 
+        emitPhase(options, "saving");
         const savedStoryline =
           await this.storylineService.saveRewrittenSegmentWithContext({
             userId: input.userId,
@@ -640,7 +652,7 @@ export class StorylineGenerationService {
 
   private async *streamDialogueStoryline(
     input: ContinueStorylineInput,
-    options: Readonly<{ signal: AbortSignal }>,
+    options: StorylineGenerationOptions,
   ): AsyncIterable<StorylineStreamEvent> {
     if (input.payload.mode !== "dialogue") {
       throw new StorylineNotFoundError("Expected dialogue payload");
@@ -709,6 +721,7 @@ export class StorylineGenerationService {
       let chunkChars = 0;
       let chunkCount = 0;
 
+      emitPhase(options, "streaming");
       this.logGenerationPhase({
         elapsedMs: getElapsedMs(startedAt),
         mode: "dialogue",
@@ -757,6 +770,7 @@ export class StorylineGenerationService {
           storylineId: storyline.externalId,
         });
         if (isNoOpDialogueText(event.continuedStory)) {
+          emitPhase(options, "saving");
           const savedStoryline =
             await this.storylineService.saveDialogueSegmentWithoutContextUpdate(
               {
@@ -796,6 +810,7 @@ export class StorylineGenerationService {
           return;
         }
 
+        emitPhase(options, "updatingContext");
         this.logGenerationPhase({
           elapsedMs: getElapsedMs(startedAt),
           mode: "dialogue",
@@ -836,6 +851,7 @@ export class StorylineGenerationService {
           storylineId: storyline.externalId,
         });
 
+        emitPhase(options, "saving");
         const savedStoryline =
           await this.storylineService.saveDialogueSegmentWithContext({
             userId: input.userId,
@@ -971,4 +987,11 @@ function isNoOpDialogueText(value: string): boolean {
 
 function getElapsedMs(startedAt: number): number {
   return Math.max(0, Date.now() - startedAt);
+}
+
+function emitPhase(
+  options: StorylineGenerationOptions,
+  phase: StoryGenerationPhase,
+): void {
+  options.onPhaseChange?.({ phase });
 }

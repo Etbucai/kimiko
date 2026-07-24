@@ -4,6 +4,8 @@ import { useNavigate } from "react-router";
 import { toast } from "sonner";
 import type {
   StoryContinuePayload,
+  StoryGenerationPhase,
+  StoryGenerationTask,
   StorylineGenerationMetadata,
   StorylineSegmentId,
   StorylineId,
@@ -14,7 +16,12 @@ import type {
   StoryRealtimeGenerationHandle,
 } from "../../story/storyRealtimeApi";
 import { startStoryRealtimeGeneration } from "../../story/storyRealtimeApi";
-import { getRecentStoryline, getStoryline } from "../../story/storylineApi";
+import {
+  cancelStoryGeneration,
+  getRecentStoryline,
+  getStoryGenerationStatus,
+  getStoryline,
+} from "../../story/storylineApi";
 import { StoryInitialInput } from "./StoryInitialInput";
 import { StoryActionDrawer } from "./StoryActionDrawer";
 import { StoryActionFab } from "./StoryActionFab";
@@ -34,8 +41,10 @@ type StorylinePageStatus =
   | "empty"
   | "ready"
   | "connecting"
+  | "preparing"
   | "streaming"
   | "updatingContext"
+  | "saving"
   | "completed"
   | "cancelled"
   | "failed"
@@ -57,6 +66,7 @@ type PayloadValidationResult =
   | Readonly<{ success: false; fieldErrors: StorylineFieldErrors }>;
 
 type TemporaryTextStatus = "streaming" | "updatingContext" | null;
+type BackgroundGenerationTask = StoryGenerationTask;
 type GenerationIntent =
   | Readonly<{ type: "create" }>
   | Readonly<{ type: "append" }>
@@ -72,15 +82,21 @@ interface StoryPageProps {
 
 const generationFailureMessage = "生成失败，请稍后重试";
 const generationCancelledMessage = "已取消生成";
+const generationCompletedMessage = "生成已完成";
+const generationRefreshFailureMessage = "生成已完成，但刷新故事线失败，请重试";
+const backgroundStatusFailureMessage = "后台生成状态暂时不可用，稍后自动重试";
 const restoreFailureMessage = "恢复故事线失败，请稍后重试";
 const notFoundFailureTitle = "故事线不可用";
 const bottomScrollThresholdPx = 140;
+const backgroundPollIntervalMs = 2000;
 
 export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   const navigate = useNavigate();
   const generationHandleRef = useRef<StoryRealtimeGenerationHandle | null>(
     null,
   );
+  const backgroundPollTimerRef = useRef<number | null>(null);
+  const backgroundPollFailureNotifiedRef = useRef<boolean>(false);
   const isMountedRef = useRef(false);
   const restoreRequestIdRef = useRef(0);
   const shouldFollowScrollRef = useRef(true);
@@ -99,6 +115,8 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     useState<StoryActionKind | null>(null);
   const [activeGenerationIntent, setActiveGenerationIntent] =
     useState<GenerationIntent | null>(null);
+  const [backgroundTask, setBackgroundTask] =
+    useState<BackgroundGenerationTask | null>(null);
   const [temporaryAppendText, setTemporaryAppendText] = useState("");
   const [temporaryDialogueText, setTemporaryDialogueText] = useState("");
   const [temporaryRewrite, setTemporaryRewrite] =
@@ -114,8 +132,10 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
 
   const isGenerating =
     status === "connecting" ||
+    status === "preparing" ||
     status === "streaming" ||
-    status === "updatingContext";
+    status === "updatingContext" ||
+    status === "saving";
   const isComposerVisible =
     storyline === null && status !== "loading" && status !== "restoreFailed";
   const temporaryTextStatus = getTemporaryTextStatus(status);
@@ -131,12 +151,155 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     (isGenerating || readerViewport?.isViewingLatestPage === true);
   const mainBottomPaddingClassName = storyline === null ? "pb-64" : "pb-28";
 
+  const clearBackgroundPoll = useCallback((): void => {
+    if (backgroundPollTimerRef.current === null) {
+      return;
+    }
+
+    window.clearInterval(backgroundPollTimerRef.current);
+    backgroundPollTimerRef.current = null;
+  }, []);
+
+  const restoreStorylineSnapshot = useCallback(
+    async (targetStorylineId: StorylineId): Promise<boolean> => {
+      const result = await getStoryline(targetStorylineId);
+      if (!isMountedRef.current) {
+        return false;
+      }
+
+      if (result.status === "authRequired") {
+        void navigate("/login", { replace: true });
+        return false;
+      }
+
+      if (result.status === "notFound") {
+        setStoryline(null);
+        setRestoreErrorTitle(notFoundFailureTitle);
+        setRestoreErrorMessage(result.message);
+        setStatus("restoreFailed");
+        return false;
+      }
+
+      if (result.status === "failed") {
+        toast.error(result.message);
+        return false;
+      }
+
+      setStoryline(result.storyline);
+      return true;
+    },
+    [navigate],
+  );
+
+  const handleBackgroundTask = useCallback(
+    async (
+      task: BackgroundGenerationTask | null,
+      targetStorylineId: StorylineId,
+    ): Promise<void> => {
+      if (!isMountedRef.current) {
+        return;
+      }
+
+      if (task === null) {
+        clearBackgroundPoll();
+        setBackgroundTask(null);
+        setGenerationStatusMessage("");
+        setStatus("ready");
+        return;
+      }
+
+      if (task.status === "running") {
+        setBackgroundTask(task);
+        setTemporaryAppendText("");
+        setTemporaryDialogueText("");
+        setTemporaryRewrite(null);
+        setActiveGenerationIntent(null);
+        setGenerationStatusMessage(getBackgroundPhaseMessage(task.phase));
+        setStatus(getStatusFromGenerationPhase(task.phase));
+        return;
+      }
+
+      clearBackgroundPoll();
+
+      if (task.status === "completed") {
+        const wasRestored = await restoreStorylineSnapshot(targetStorylineId);
+        if (!isMountedRef.current) {
+          return;
+        }
+
+        if (wasRestored) {
+          setBackgroundTask(null);
+          setGenerationStatusMessage("");
+          setStatus("completed");
+          toast(generationCompletedMessage);
+          return;
+        }
+
+        setBackgroundTask(task);
+        setGenerationStatusMessage(generationRefreshFailureMessage);
+        toast.error(generationRefreshFailureMessage);
+        return;
+      }
+
+      setBackgroundTask(null);
+      setGenerationStatusMessage("");
+      if (task.status === "failed") {
+        toast.error(task.message ?? generationFailureMessage);
+        setStatus("failed");
+        return;
+      }
+
+      toast(generationCancelledMessage);
+      setStatus("cancelled");
+    },
+    [clearBackgroundPoll, restoreStorylineSnapshot],
+  );
+
+  const pollBackgroundTask = useCallback(
+    async (targetStorylineId: StorylineId): Promise<void> => {
+      const result = await getStoryGenerationStatus(targetStorylineId);
+      if (!isMountedRef.current) {
+        return;
+      }
+
+      if (result.status === "authRequired") {
+        clearBackgroundPoll();
+        void navigate("/login", { replace: true });
+        return;
+      }
+
+      if (result.status === "notFound") {
+        clearBackgroundPoll();
+        setStoryline(null);
+        setRestoreErrorTitle(notFoundFailureTitle);
+        setRestoreErrorMessage(result.message);
+        setStatus("restoreFailed");
+        return;
+      }
+
+      if (result.status === "failed") {
+        if (!backgroundPollFailureNotifiedRef.current) {
+          backgroundPollFailureNotifiedRef.current = true;
+          toast.error(backgroundStatusFailureMessage);
+        }
+        return;
+      }
+
+      backgroundPollFailureNotifiedRef.current = false;
+      await handleBackgroundTask(result.task, targetStorylineId);
+    },
+    [clearBackgroundPoll, handleBackgroundTask, navigate],
+  );
+
   const restoreStoryline = useCallback(async (): Promise<void> => {
     const requestId = restoreRequestIdRef.current + 1;
     restoreRequestIdRef.current = requestId;
 
+    clearBackgroundPoll();
+    backgroundPollFailureNotifiedRef.current = false;
     generationHandleRef.current?.close();
     generationHandleRef.current = null;
+    setBackgroundTask(null);
     setStatus("loading");
     setTemporaryAppendText("");
     setTemporaryDialogueText("");
@@ -203,8 +366,62 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     setRewriteInstruction("");
     setRewriteTargetSegmentId(null);
     setComposerMode("append");
-    setStatus(result.storyline === null ? "empty" : "ready");
-  }, [mode, navigate, storylineId]);
+    if (result.storyline === null) {
+      setStatus("empty");
+      return;
+    }
+
+    const statusResult = await getStoryGenerationStatus(result.storyline.id);
+    if (!isMountedRef.current || restoreRequestIdRef.current !== requestId) {
+      return;
+    }
+
+    if (statusResult.status === "authRequired") {
+      void navigate("/login", { replace: true });
+      return;
+    }
+
+    if (statusResult.status === "notFound") {
+      setStoryline(null);
+      setRestoreErrorTitle(notFoundFailureTitle);
+      setRestoreErrorMessage(statusResult.message);
+      setStatus("restoreFailed");
+      return;
+    }
+
+    if (statusResult.status === "failed") {
+      setStatus("ready");
+      toast.error(statusResult.message);
+      return;
+    }
+
+    await handleBackgroundTask(statusResult.task, result.storyline.id);
+  }, [clearBackgroundPoll, handleBackgroundTask, mode, navigate, storylineId]);
+
+  useEffect(() => {
+    const currentStorylineId = storyline?.id;
+    if (
+      backgroundTask?.status !== "running" ||
+      currentStorylineId === undefined
+    ) {
+      clearBackgroundPoll();
+      return undefined;
+    }
+
+    clearBackgroundPoll();
+    backgroundPollTimerRef.current = window.setInterval(() => {
+      void pollBackgroundTask(currentStorylineId);
+    }, backgroundPollIntervalMs);
+
+    return () => {
+      clearBackgroundPoll();
+    };
+  }, [
+    backgroundTask?.status,
+    clearBackgroundPoll,
+    pollBackgroundTask,
+    storyline?.id,
+  ]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -215,10 +432,11 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     return () => {
       window.clearTimeout(timeoutId);
       isMountedRef.current = false;
+      clearBackgroundPoll();
       generationHandleRef.current?.close();
       generationHandleRef.current = null;
     };
-  }, [restoreStoryline]);
+  }, [clearBackgroundPoll, restoreStoryline]);
 
   useEffect(() => {
     if (storyline !== null || !shouldFollowScrollRef.current) {
@@ -443,7 +661,48 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   }
 
   function handleCancel(): void {
-    generationHandleRef.current?.cancel();
+    if (generationHandleRef.current !== null) {
+      generationHandleRef.current.cancel();
+      return;
+    }
+
+    if (
+      storyline !== null &&
+      backgroundTask !== null &&
+      backgroundTask.status === "running"
+    ) {
+      void cancelBackgroundGeneration(storyline.id);
+    }
+  }
+
+  async function cancelBackgroundGeneration(
+    targetStorylineId: StorylineId,
+  ): Promise<void> {
+    const result = await cancelStoryGeneration(targetStorylineId);
+    if (!isMountedRef.current) {
+      return;
+    }
+
+    if (result.status === "authRequired") {
+      void navigate("/login", { replace: true });
+      return;
+    }
+
+    if (result.status === "notFound") {
+      clearBackgroundPoll();
+      setStoryline(null);
+      setRestoreErrorTitle(notFoundFailureTitle);
+      setRestoreErrorMessage(result.message);
+      setStatus("restoreFailed");
+      return;
+    }
+
+    if (result.status === "failed") {
+      toast.error(result.message);
+      return;
+    }
+
+    await handleBackgroundTask(result.task, targetStorylineId);
   }
 
   function handleCancelRewrite(): void {
@@ -462,14 +721,8 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
 
   function handleGoToStorylineList(): void {
     if (isGenerating) {
-      const shouldLeave = window.confirm(
-        "当前生成未完成，离开会取消本轮生成。确定返回故事列表吗？",
-      );
-      if (!shouldLeave) {
-        return;
-      }
-
-      generationHandleRef.current?.cancel();
+      generationHandleRef.current?.close();
+      generationHandleRef.current = null;
       void navigate("/storylines");
       return;
     }
@@ -499,14 +752,8 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     }
 
     if (isGenerating) {
-      const shouldLeave = window.confirm(
-        "当前生成未完成，离开会取消本轮生成。确定打开调试页面吗？",
-      );
-      if (!shouldLeave) {
-        return;
-      }
-
-      generationHandleRef.current?.cancel();
+      generationHandleRef.current?.close();
+      generationHandleRef.current = null;
       void navigate(`/storylines/${encodeURIComponent(storyline.id)}/context`);
       return;
     }
@@ -797,6 +1044,40 @@ function getTemporaryTextStatus(
   }
 }
 
+function getStatusFromGenerationPhase(
+  phase: StoryGenerationPhase | undefined,
+): StorylinePageStatus {
+  switch (phase) {
+    case "preparing":
+      return "preparing";
+    case "streaming":
+      return "streaming";
+    case "updatingContext":
+      return "updatingContext";
+    case "saving":
+      return "saving";
+    default:
+      return "preparing";
+  }
+}
+
+function getBackgroundPhaseMessage(
+  phase: StoryGenerationPhase | undefined,
+): string {
+  switch (phase) {
+    case "preparing":
+      return "准备后台生成中...";
+    case "streaming":
+      return "正在后台生成正文...";
+    case "updatingContext":
+      return "正在后台更新故事上下文...";
+    case "saving":
+      return "正在保存后台生成结果...";
+    default:
+      return "后台生成进行中...";
+  }
+}
+
 function removeFieldError(
   fieldErrors: StorylineFieldErrors,
   field: keyof StorylineFieldErrors,
@@ -998,7 +1279,11 @@ function GenerationStatusMessage({
 }: GenerationStatusMessageProps): JSX.Element {
   return (
     <p
-      className="m-0 rounded-2xl bg-[var(--danger-bg)] px-4 py-3 text-sm text-[var(--danger)]"
+      className={`m-0 rounded-2xl px-4 py-3 text-sm ${
+        isError
+          ? "bg-[var(--danger-bg)] text-[var(--danger)]"
+          : "border border-(--border) bg-(--panel-bg) text-(--text)"
+      }`}
       role={isError ? "alert" : "status"}
     >
       {message}

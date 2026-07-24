@@ -1,14 +1,18 @@
 import type {
+  CancelStoryGenerationResponse,
+  StoryGenerationStatusResponse,
   StoryContextSnapshot,
   StorylineListItem,
   StorylineId,
   StorylineSnapshot,
 } from "@kimiko/schema";
 import {
+  CancelStoryGenerationResponseSchema,
   GetStorylineContextResponseSchema,
   GetStorylineResponseSchema,
   GetRecentStorylineResponseSchema,
   ListStorylinesResponseSchema,
+  StoryGenerationStatusResponseSchema,
 } from "@kimiko/schema";
 import { clearAuthSession, getStoredAuthSession } from "../auth/authApi";
 
@@ -17,6 +21,8 @@ const defaultListErrorMessage = "加载故事列表失败，请稍后重试";
 const defaultRestoreErrorMessage = "恢复故事线失败，请稍后重试";
 const defaultNotFoundErrorMessage = "故事线不存在或已不可用";
 const defaultContextErrorMessage = "获取故事上下文失败，请稍后重试";
+const defaultGenerationStatusErrorMessage = "获取后台生成状态失败，请稍后重试";
+const defaultGenerationCancelErrorMessage = "取消后台生成失败，请稍后重试";
 
 export type ListStorylinesResult =
   | Readonly<{ status: "success"; storylines: readonly StorylineListItem[] }>
@@ -251,6 +257,144 @@ export async function getStorylineContext(
     return {
       status: "failed",
       message: defaultContextErrorMessage,
+    };
+  }
+}
+
+export type GetStoryGenerationStatusResult =
+  | Readonly<{
+      status: "success";
+      task: StoryGenerationStatusResponse["task"];
+    }>
+  | Readonly<{ status: "authRequired" }>
+  | Readonly<{ status: "notFound"; message: string }>
+  | Readonly<{ status: "failed"; message: string }>;
+
+export async function getStoryGenerationStatus(
+  storylineId: StorylineId,
+): Promise<GetStoryGenerationStatusResult> {
+  const authSession = getStoredAuthSession();
+  if (authSession === null) {
+    return { status: "authRequired" };
+  }
+
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/storylines/${encodeURIComponent(storylineId)}/generation/status`,
+      {
+        headers: {
+          Authorization: `Bearer ${authSession.session.accessToken}`,
+        },
+        method: "GET",
+      },
+    );
+
+    if (response.status === 401) {
+      clearAuthSession();
+      return { status: "authRequired" };
+    }
+
+    if (response.status === 404) {
+      return {
+        status: "notFound",
+        message: defaultNotFoundErrorMessage,
+      };
+    }
+
+    const responseBody = await readJsonResponse(response);
+    if (!response.ok) {
+      return {
+        status: "failed",
+        message: defaultGenerationStatusErrorMessage,
+      };
+    }
+
+    const result = StoryGenerationStatusResponseSchema.safeParse(responseBody);
+    if (!result.success) {
+      return {
+        status: "failed",
+        message: defaultGenerationStatusErrorMessage,
+      };
+    }
+
+    return {
+      status: "success",
+      task: result.data.task,
+    };
+  } catch {
+    return {
+      status: "failed",
+      message: defaultGenerationStatusErrorMessage,
+    };
+  }
+}
+
+export type CancelStoryGenerationResult =
+  | Readonly<{
+      status: "success";
+      cancelled: boolean;
+      task: CancelStoryGenerationResponse["task"];
+    }>
+  | Readonly<{ status: "authRequired" }>
+  | Readonly<{ status: "notFound"; message: string }>
+  | Readonly<{ status: "failed"; message: string }>;
+
+export async function cancelStoryGeneration(
+  storylineId: StorylineId,
+): Promise<CancelStoryGenerationResult> {
+  const authSession = getStoredAuthSession();
+  if (authSession === null) {
+    return { status: "authRequired" };
+  }
+
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/storylines/${encodeURIComponent(storylineId)}/generation/cancel`,
+      {
+        headers: {
+          Authorization: `Bearer ${authSession.session.accessToken}`,
+        },
+        method: "POST",
+      },
+    );
+
+    if (response.status === 401) {
+      clearAuthSession();
+      return { status: "authRequired" };
+    }
+
+    if (response.status === 404) {
+      return {
+        status: "notFound",
+        message: defaultNotFoundErrorMessage,
+      };
+    }
+
+    const responseBody = await readJsonResponse(response);
+    if (!response.ok) {
+      return {
+        status: "failed",
+        message: defaultGenerationCancelErrorMessage,
+      };
+    }
+
+    const result = CancelStoryGenerationResponseSchema.safeParse(responseBody);
+    if (!result.success) {
+      return {
+        status: "failed",
+        message: defaultGenerationCancelErrorMessage,
+      };
+    }
+
+    return {
+      status: "success",
+      cancelled: result.data.cancelled,
+      task: result.data.task,
+    };
+  } catch {
+    return {
+      status: "failed",
+      message: defaultGenerationCancelErrorMessage,
     };
   }
 }

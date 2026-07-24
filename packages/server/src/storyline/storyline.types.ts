@@ -3,6 +3,7 @@ import type {
   ContinueStoryUsage,
   StoryContextSnapshot,
   StoryContinuePayload,
+  StoryGenerationPhase,
   StorylineGenerationMode,
 } from "@kimiko/schema";
 import type {
@@ -124,4 +125,13 @@ export interface ContinueStorylineInput {
   readonly requestId?: string;
   readonly userId: string;
   readonly payload: StoryContinuePayload;
+}
+
+export interface StorylineGenerationPhaseEvent {
+  readonly phase: StoryGenerationPhase;
+}
+
+export interface StorylineGenerationOptions {
+  readonly onPhaseChange?: (event: StorylineGenerationPhaseEvent) => void;
+  readonly signal: AbortSignal;
 }

@@ -6,15 +6,18 @@ import type {
   LoginUserRequest,
   LoginUserResponse,
   RegisterUserRequest,
+  StoryGenerationStatusResponse,
   StoryCompletedServerEvent,
   StoryRealtimeServerEvent,
 } from "@kimiko/schema";
 import {
+  CancelStoryGenerationResponseSchema,
   GetStorylineContextResponseSchema,
   GetRecentStorylineResponseSchema,
   GetStorylineResponseSchema,
   LoginUserResponseSchema,
   ListStorylinesResponseSchema,
+  StoryGenerationStatusResponseSchema,
   StoryRealtimeServerEventSchema,
 } from "@kimiko/schema";
 import type { Server } from "node:http";
@@ -147,7 +150,7 @@ describe("RealtimeGateway (e2e)", () => {
       "雨停以后。",
     );
     expect(llmProvider.generateText.mock.calls[0]?.[0].systemPrompt).toContain(
-      "故事上下文维护器",
+      "故事上下文增量维护器",
     );
     expect(llmProvider.generateText.mock.calls[0]?.[0].userPrompt).toContain(
       "林夏走向钟楼。",
@@ -393,12 +396,298 @@ describe("RealtimeGateway (e2e)", () => {
 
     socket.close();
   });
+
+  it("continues an existing storyline generation after websocket disconnect and exposes status", async () => {
+    const controlledProvider = createControlledProvider();
+    app = await createApp(controlledProvider.provider);
+    const runningApp = app;
+    const accessToken = await registerAndLogin(app, "background_continue");
+    const socket = await connectWebSocket(
+      `${getRealtimeUrl(app)}?accessToken=${accessToken}`,
+    );
+    await waitOneTick();
+
+    const createdStoryline = await createStorylineOverSocket(socket, {
+      requestId: "request-create",
+      initialStoryText: "雨停以后。",
+      instruction: "继续调查。",
+    });
+    controlledProvider.resetForHangingStream({
+      contextText: createAppendContextPatchText(),
+    });
+
+    const eventsPromise = readEvents(socket, 2);
+    socket.send(
+      JSON.stringify({
+        type: "story.continue",
+        requestId: "request-append",
+        payload: {
+          mode: "append",
+          storylineId: createdStoryline.storyline.id,
+          instruction: "继续追踪。",
+        },
+      }),
+    );
+    await eventsPromise;
+    socket.close();
+    await waitOneTick();
+
+    const runningStatus = await getGenerationStatus(
+      runningApp,
+      accessToken,
+      createdStoryline.storyline.id,
+    );
+    expect(runningStatus.task).toMatchObject({
+      status: "running",
+      phase: "streaming",
+      mode: "append",
+      requestId: "request-append",
+      storylineId: createdStoryline.storyline.id,
+    });
+
+    controlledProvider.completeHangingStream();
+    await waitForCondition(async () => {
+      const status = await getGenerationStatus(
+        runningApp,
+        accessToken,
+        createdStoryline.storyline.id,
+      );
+      return status.task?.status === "completed";
+    });
+    const completedStatus = await getGenerationStatus(
+      runningApp,
+      accessToken,
+      createdStoryline.storyline.id,
+    );
+    expect(completedStatus.task).toMatchObject({
+      status: "completed",
+      generatedSegmentId: expect.stringMatching(/^[1-9]\d*$/) as string,
+    });
+
+    const detailResponse = await request(app.getHttpServer())
+      .get(`/storylines/${createdStoryline.storyline.id}`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect(200);
+    const detailResult = GetStorylineResponseSchema.parse(
+      detailResponse.body as unknown,
+    );
+    expect(detailResult.storyline.segments.at(-1)).toMatchObject({
+      type: "generated",
+      text: "林夏走向钟楼。",
+    });
+  });
+
+  it("cancels an existing storyline background generation through REST", async () => {
+    const controlledProvider = createControlledProvider();
+    app = await createApp(controlledProvider.provider);
+    const accessToken = await registerAndLogin(app, "background_cancel");
+    const socket = await connectWebSocket(
+      `${getRealtimeUrl(app)}?accessToken=${accessToken}`,
+    );
+    await waitOneTick();
+
+    const createdStoryline = await createStorylineOverSocket(socket, {
+      requestId: "request-create",
+      initialStoryText: "雨停以后。",
+      instruction: "继续调查。",
+    });
+    controlledProvider.resetForHangingStream({
+      contextText: createAppendContextPatchText(),
+    });
+
+    const eventsPromise = readEvents(socket, 2);
+    socket.send(
+      JSON.stringify({
+        type: "story.continue",
+        requestId: "request-append",
+        payload: {
+          mode: "append",
+          storylineId: createdStoryline.storyline.id,
+          instruction: "继续追踪。",
+        },
+      }),
+    );
+    await eventsPromise;
+    socket.close();
+    await waitOneTick();
+
+    const cancelResponse = await request(app.getHttpServer())
+      .post(`/storylines/${createdStoryline.storyline.id}/generation/cancel`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect(201);
+    const cancelResult = CancelStoryGenerationResponseSchema.parse(
+      cancelResponse.body as unknown,
+    );
+    expect(cancelResult).toMatchObject({
+      cancelled: true,
+      task: {
+        status: "cancelled",
+        mode: "append",
+        requestId: "request-append",
+        storylineId: createdStoryline.storyline.id,
+      },
+    });
+
+    const status = await getGenerationStatus(
+      app,
+      accessToken,
+      createdStoryline.storyline.id,
+    );
+    expect(status.task).toMatchObject({
+      status: "cancelled",
+    });
+  });
+
+  it("returns STORYLINE_BUSY when another connection starts the same storyline", async () => {
+    const controlledProvider = createControlledProvider();
+    app = await createApp(controlledProvider.provider);
+    const accessToken = await registerAndLogin(app, "background_busy");
+    const firstSocket = await connectWebSocket(
+      `${getRealtimeUrl(app)}?accessToken=${accessToken}`,
+    );
+    await waitOneTick();
+
+    const createdStoryline = await createStorylineOverSocket(firstSocket, {
+      requestId: "request-create",
+      initialStoryText: "雨停以后。",
+      instruction: "继续调查。",
+    });
+    controlledProvider.resetForHangingStream({
+      contextText: createAppendContextPatchText(),
+    });
+
+    const eventsPromise = readEvents(firstSocket, 2);
+    firstSocket.send(
+      JSON.stringify({
+        type: "story.continue",
+        requestId: "request-append",
+        payload: {
+          mode: "append",
+          storylineId: createdStoryline.storyline.id,
+          instruction: "继续追踪。",
+        },
+      }),
+    );
+    await eventsPromise;
+
+    const secondSocket = await connectWebSocket(
+      `${getRealtimeUrl(app)}?accessToken=${accessToken}`,
+    );
+    const busyEventPromise = readEvent(secondSocket);
+    secondSocket.send(
+      JSON.stringify({
+        type: "story.continue",
+        requestId: "request-second",
+        payload: {
+          mode: "append",
+          storylineId: createdStoryline.storyline.id,
+          instruction: "再次续写。",
+        },
+      }),
+    );
+    const busyEvent = await busyEventPromise;
+
+    expect(busyEvent).toEqual({
+      type: "story.error",
+      requestId: "request-second",
+      code: "STORYLINE_BUSY",
+      message: "当前故事线正在生成，请稍后重试",
+      retryable: true,
+    });
+    firstSocket.close();
+    secondSocket.close();
+  });
+
+  it("continues create generation after websocket disconnect without exposing storyline status", async () => {
+    const controlledProvider = createControlledProvider();
+    app = await createApp(controlledProvider.provider);
+    const runningApp = app;
+    const accessToken = await registerAndLogin(app, "background_create");
+    const socket = await connectWebSocket(
+      `${getRealtimeUrl(app)}?accessToken=${accessToken}`,
+    );
+    await waitOneTick();
+    controlledProvider.resetForHangingStream();
+
+    const eventsPromise = readEvents(socket, 2);
+    socket.send(
+      JSON.stringify({
+        type: "story.continue",
+        requestId: "request-create",
+        payload: {
+          mode: "create",
+          initialStoryText: "雨停以后。",
+          instruction: "继续调查。",
+        },
+      }),
+    );
+    await eventsPromise;
+    socket.close();
+    await waitOneTick();
+
+    controlledProvider.completeHangingStream();
+    await waitForCondition(async () => {
+      const recentResponse = await request(runningApp.getHttpServer())
+        .get("/storylines/recent")
+        .set("Authorization", `Bearer ${accessToken}`)
+        .expect(200);
+      const recent = GetRecentStorylineResponseSchema.parse(
+        recentResponse.body as unknown,
+      );
+      return recent.storyline !== null;
+    });
+
+    const recentResponse = await request(app.getHttpServer())
+      .get("/storylines/recent")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect(200);
+    const recent = GetRecentStorylineResponseSchema.parse(
+      recentResponse.body as unknown,
+    );
+    expect(recent.storyline).not.toBeNull();
+    const status = await getGenerationStatus(
+      app,
+      accessToken,
+      recent.storyline?.id ?? "",
+    );
+    expect(status.task).toBeNull();
+  });
 });
 
 async function waitOneTick(): Promise<void> {
   await new Promise<void>((resolve) => {
     setTimeout(resolve, 0);
   });
+}
+
+async function waitForCondition(
+  predicate: () => Promise<boolean>,
+): Promise<void> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 5000) {
+    if (await predicate()) {
+      return;
+    }
+
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 20);
+    });
+  }
+
+  throw new Error("Timed out waiting for condition");
+}
+
+async function getGenerationStatus(
+  app: INestApplication<App>,
+  accessToken: string,
+  storylineId: string,
+): Promise<StoryGenerationStatusResponse> {
+  const response = await request(app.getHttpServer())
+    .get(`/storylines/${storylineId}/generation/status`)
+    .set("Authorization", `Bearer ${accessToken}`)
+    .expect(200);
+
+  return StoryGenerationStatusResponseSchema.parse(response.body as unknown);
 }
 
 async function createStorylineOverSocket(
@@ -469,52 +758,98 @@ function createStreamingProvider(
     text:
       options.contextText ??
       JSON.stringify({
-        worldFacts: [
-          {
-            draftKey: "main_fact",
-            kind: "event",
-            text: "林夏走向钟楼。",
-            status: "active",
-            visibility: "observable",
-            sourceRefs: ["current"],
-          },
-        ],
-        characters: [
-          {
-            draftKey: "lin_xia",
-            name: "林夏",
-            aliases: [],
-            identity: "调查旧钟楼的记者",
-            traits: [],
-            relationships: [],
-            motivations: ["查清钟楼失踪案"],
-            currentStatus: "正在前往钟楼",
-            beliefs: [
-              {
-                text: "她正在前往钟楼。",
-                truthStatus: "true",
-                factRefs: ["main_fact"],
-                sourceRefs: ["current"],
-              },
-            ],
-            opinions: [],
-            actionTendencies: [],
-            sourceRefs: ["current"],
-          },
-        ],
+        defaultSourceRefs: ["current"],
+        worldFacts: {
+          add: [
+            {
+              draftKey: "main_fact",
+              kind: "event",
+              text: "林夏走向钟楼。",
+              status: "active",
+              visibility: "observable",
+            },
+          ],
+          update: [],
+          resolve: [],
+        },
+        characters: {
+          add: [
+            {
+              draftKey: "lin_xia",
+              name: "林夏",
+              aliases: [],
+              identity: "调查旧钟楼的记者",
+              traits: [],
+              relationshipsAdded: [],
+              motivations: ["查清钟楼失踪案"],
+              currentStatus: "正在前往钟楼",
+              beliefsAdded: [
+                {
+                  text: "她正在前往钟楼。",
+                  truthStatus: "true",
+                  factRefs: ["main_fact"],
+                },
+              ],
+              opinionsAdded: [],
+              actionTendenciesAdded: [],
+            },
+          ],
+          update: [],
+        },
         currentScene: {
           location: "钟楼附近",
           timeLabel: "雨后",
           presentCharacterRefs: ["lin_xia"],
           observableFactRefs: ["main_fact"],
           sceneStatus: "林夏走向钟楼。",
-          sourceRefs: ["current"],
         },
       }),
     model: "context-model",
   });
 
   return llmProvider;
+}
+
+function createAppendContextPatchText(): string {
+  return JSON.stringify({
+    defaultSourceRefs: ["current"],
+    worldFacts: {
+      add: [
+        {
+          draftKey: "main_fact",
+          kind: "event",
+          text: "林夏走向钟楼。",
+          status: "active",
+          visibility: "observable",
+        },
+      ],
+      update: [],
+      resolve: [],
+    },
+    characters: {
+      add: [],
+      update: [
+        {
+          existingId: "char_1",
+          currentStatus: "正在前往钟楼",
+          beliefsAdded: [
+            {
+              text: "她正在前往钟楼。",
+              truthStatus: "true",
+              factRefs: ["main_fact"],
+            },
+          ],
+        },
+      ],
+    },
+    currentScene: {
+      location: "钟楼附近",
+      timeLabel: "雨后",
+      presentCharacterRefs: ["char_1"],
+      observableFactRefs: ["main_fact"],
+      sceneStatus: "林夏走向钟楼。",
+    },
+  });
 }
 
 function createHangingProvider(): jest.Mocked<LlmProvider> {
@@ -524,6 +859,39 @@ function createHangingProvider(): jest.Mocked<LlmProvider> {
   );
 
   return llmProvider;
+}
+
+interface ControlledProvider {
+  readonly provider: jest.Mocked<LlmProvider>;
+  completeHangingStream: () => void;
+  resetForHangingStream: (options?: Readonly<{ contextText?: string }>) => void;
+}
+
+function createControlledProvider(): ControlledProvider {
+  const llmProvider = createStreamingProvider();
+  let completeStream: (() => void) | null = null;
+
+  return {
+    provider: llmProvider,
+    completeHangingStream() {
+      completeStream?.();
+      completeStream = null;
+    },
+    resetForHangingStream(options = {}) {
+      completeStream = null;
+      if (options.contextText !== undefined) {
+        llmProvider.generateText.mockResolvedValue({
+          text: options.contextText,
+          model: "context-model",
+        });
+      }
+      llmProvider.streamText.mockImplementation((_input, options) =>
+        createControlledStream(options.signal, (complete) => {
+          completeStream = complete;
+        }),
+      );
+    },
+  };
 }
 
 function createBaseProvider(): jest.Mocked<LlmProvider> {
@@ -563,6 +931,44 @@ async function* createHangingStream(
 
     signal.addEventListener("abort", () => resolve(), { once: true });
   });
+}
+
+async function* createControlledStream(
+  signal: AbortSignal,
+  onReady: (complete: () => void) => void,
+): AsyncIterable<LlmTextStreamEvent> {
+  yield {
+    type: "chunk",
+    delta: "林夏",
+  };
+
+  await new Promise<void>((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+
+    onReady(resolve);
+    signal.addEventListener("abort", () => resolve(), { once: true });
+  });
+
+  if (signal.aborted) {
+    return;
+  }
+
+  yield {
+    type: "chunk",
+    delta: "走向钟楼。",
+  };
+  yield {
+    type: "completed",
+    model: "story-model",
+    usage: {
+      inputTokens: 10,
+      outputTokens: 20,
+      totalTokens: 30,
+    },
+  };
 }
 
 async function createApp(

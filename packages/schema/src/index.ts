@@ -630,6 +630,71 @@ export type StoryRealtimeErrorCode = z.infer<
   typeof StoryRealtimeErrorCodeSchema
 >;
 
+export const StoryGenerationPhaseSchema = z.enum([
+  "preparing",
+  "streaming",
+  "updatingContext",
+  "saving",
+]);
+
+export type StoryGenerationPhase = z.infer<typeof StoryGenerationPhaseSchema>;
+
+export const StoryGenerationTaskStatusSchema = z.enum([
+  "running",
+  "completed",
+  "failed",
+  "cancelled",
+]);
+
+export type StoryGenerationTaskStatus = z.infer<
+  typeof StoryGenerationTaskStatusSchema
+>;
+
+export const StoryGenerationModeSchema = z.enum([
+  "create",
+  "append",
+  "rewrite",
+  "dialogue",
+]);
+
+export type StoryGenerationMode = z.infer<typeof StoryGenerationModeSchema>;
+
+export const StoryGenerationTaskSchema = z
+  .object({
+    status: StoryGenerationTaskStatusSchema,
+    phase: StoryGenerationPhaseSchema.optional(),
+    mode: StoryGenerationModeSchema,
+    requestId: StoryRealtimeRequestIdSchema,
+    storylineId: StorylineIdSchema.optional(),
+    generatedSegmentId: StorylineSegmentIdSchema.optional(),
+    errorCode: StoryRealtimeErrorCodeSchema.optional(),
+    message: z.string().min(1).optional(),
+  })
+  .strict();
+
+export type StoryGenerationTask = z.infer<typeof StoryGenerationTaskSchema>;
+
+export const StoryGenerationStatusResponseSchema = z
+  .object({
+    task: StoryGenerationTaskSchema.nullable(),
+  })
+  .strict();
+
+export type StoryGenerationStatusResponse = z.infer<
+  typeof StoryGenerationStatusResponseSchema
+>;
+
+export const CancelStoryGenerationResponseSchema = z
+  .object({
+    cancelled: z.boolean(),
+    task: StoryGenerationTaskSchema.nullable(),
+  })
+  .strict();
+
+export type CancelStoryGenerationResponse = z.infer<
+  typeof CancelStoryGenerationResponseSchema
+>;
+
 export const StoryErrorServerEventSchema = z
   .object({
     type: z.literal("story.error"),
