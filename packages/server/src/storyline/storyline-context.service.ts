@@ -21,6 +21,14 @@ export const STORY_CONTEXT_SYSTEM_PROMPT = [
   "输出必须符合 StoryContextDraftSnapshot JSON schema。",
 ].join("\n");
 
+export const STORY_CONTEXT_REPAIR_SYSTEM_PROMPT = [
+  "你是 StoryAgent 的故事上下文 JSON 修复器。",
+  "你只负责修复一份已经生成的 StoryContextDraftSnapshot JSON。",
+  "你必须只输出修复后的 JSON，不输出解释、Markdown 或额外文本。",
+  "你不得新增、删除或改写故事事实；只能做满足 JSON 格式和 schema 的最小修复。",
+  "如果字段取值无法确定，使用 schema 允许的保守值。",
+].join("\n");
+
 @Injectable()
 export class StorylineContextService {
   constructor(private readonly llmService: LlmService) {}
@@ -36,7 +44,22 @@ export class StorylineContextService {
         options,
       );
       assertNotAborted(options.signal);
-      return parseStoryContextDraftResponse(response.text);
+      try {
+        return parseStoryContextDraftResponse(response.text);
+      } catch (error: unknown) {
+        if (!(error instanceof StoryContextFailedError)) {
+          throw error;
+        }
+
+        return await this.repairStoryContextDraft(
+          {
+            errorMessage: error.message,
+            input,
+            invalidResponse: response.text,
+          },
+          options,
+        );
+      }
     } catch (error: unknown) {
       if (options.signal.aborted) {
         throw error;
@@ -49,6 +72,23 @@ export class StorylineContextService {
       throw new StoryContextFailedError(toErrorMessage(error));
     }
   }
+
+  private async repairStoryContextDraft(
+    input: Readonly<{
+      errorMessage: string;
+      input: GenerateStoryContextInput;
+      invalidResponse: string;
+    }>,
+    options: Readonly<{ signal: AbortSignal }>,
+  ): Promise<StoryContextDraftSnapshot> {
+    assertNotAborted(options.signal);
+    const response = await this.llmService.generateTextFromParsedRequest(
+      buildStoryContextRepairLlmRequest(input),
+      options,
+    );
+    assertNotAborted(options.signal);
+    return parseStoryContextDraftResponse(response.text);
+  }
 }
 
 export function buildStoryContextLlmRequest(
@@ -57,6 +97,19 @@ export function buildStoryContextLlmRequest(
   return {
     systemPrompt: STORY_CONTEXT_SYSTEM_PROMPT,
     userPrompt: buildStoryContextUserPrompt(input),
+  };
+}
+
+export function buildStoryContextRepairLlmRequest(
+  input: Readonly<{
+    errorMessage: string;
+    input: GenerateStoryContextInput;
+    invalidResponse: string;
+  }>,
+): GenerateLlmTextRequest {
+  return {
+    systemPrompt: STORY_CONTEXT_REPAIR_SYSTEM_PROMPT,
+    userPrompt: buildStoryContextRepairUserPrompt(input),
   };
 }
 
@@ -154,6 +207,41 @@ function buildStoryContextUserPrompt(input: GenerateStoryContextInput): string {
   );
 
   return promptParts.join("\n");
+}
+
+function buildStoryContextRepairUserPrompt(
+  input: Readonly<{
+    errorMessage: string;
+    input: GenerateStoryContextInput;
+    invalidResponse: string;
+  }>,
+): string {
+  return [
+    "请修复以下 StoryContextDraftSnapshot JSON，使它通过 schema 校验。",
+    "",
+    "校验失败原因：",
+    input.errorMessage,
+    "",
+    "输出 JSON schema 说明：",
+    getDraftSchemaDescription(),
+    "",
+    "数量上限：",
+    stringifyPromptJson(STORY_CONTEXT_LIMITS),
+    "",
+    "合法 sourceRefs：",
+    ...input.input.sourceRefMappings.map((source) => `- ${source.ref}`),
+    "",
+    "修复规则：",
+    "- 只输出 JSON。",
+    "- 保留原 JSON 中不冲突的事实、角色、关系、认知和场景信息。",
+    "- 不要新增输入中没有依据的新事实。",
+    '- truthStatus 只能是 "true"、"false" 或 "unknown"；无法判断时使用 "unknown"。',
+    "- sourceRefs 只能使用上方列出的合法 sourceRefs。",
+    "- draftKey 与 refs 必须能互相对应。",
+    "",
+    "待修复的 JSON：",
+    input.invalidResponse,
+  ].join("\n");
 }
 
 function getDraftSchemaDescription(): string {

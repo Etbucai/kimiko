@@ -12,3 +12,5 @@ packages/server/data/
 *.log
 *.tsbuildinfo
 .DS_Store
+
+log/
