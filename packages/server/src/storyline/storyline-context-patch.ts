@@ -575,7 +575,9 @@ function normalizeBeliefs(
   return beliefs.map((belief) => ({
     text: belief.text,
     truthStatus: belief.truthStatus,
-    factIds: resolveRefs(belief.factRefs ?? [], factRefToId, "fact"),
+    // Belief fact refs are optional grounding metadata. Keep the known facts and
+    // drop dangling refs so one bad model token does not fail the whole patch.
+    factIds: resolveKnownRefs(belief.factRefs ?? [], factRefToId),
     sourceSegmentIds: mapSourceRefs(
       resolvePatchSourceRefs(belief.sourceRefs, defaultSourceRefs),
       sourceRefToSegmentId,
@@ -652,6 +654,16 @@ function resolveRefs<T extends string>(
   label: string,
 ): T[] {
   return uniqueStrings(refs).map((ref) => resolveRef(ref, mappings, label));
+}
+
+function resolveKnownRefs<T extends string>(
+  refs: readonly string[],
+  mappings: ReadonlyMap<string, T>,
+): T[] {
+  return uniqueStrings(refs).flatMap((ref) => {
+    const value = mappings.get(ref);
+    return value === undefined ? [] : [value];
+  });
 }
 
 function resolveRef<T extends string>(

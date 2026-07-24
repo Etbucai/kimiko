@@ -1,6 +1,9 @@
 import type { GenerateLlmTextResponse } from "@kimiko/schema";
 import type { LlmService } from "../llm/llm.service";
-import { StorylineContextService } from "./storyline-context.service";
+import {
+  buildStoryContextRepairLlmRequest,
+  StorylineContextService,
+} from "./storyline-context.service";
 import type {
   GenerateStoryContextPatchInput,
   StoryContextPatchDraft,
@@ -105,7 +108,58 @@ describe("StorylineContextService", () => {
     expect(call[0].userPrompt).toContain(
       '"currentScene":{"location":"","timeLabel":"","presentCharacterIds":[]',
     );
+    expect(call[0].userPrompt).toContain(
+      '"targetCharacterRefs":["char_N 或 draftKey"]',
+    );
+    expect(call[0].userPrompt).toContain(
+      '"truthStatus":"true | false | unknown"',
+    );
+    expect(call[0].userPrompt).toContain('"target":"评价对象"');
+    expect(call[0].userPrompt).toContain(
+      "relationshipsAdded 的每一项都必须是对象",
+    );
+    expect(call[0].userPrompt).toContain(
+      "beliefsAdded 的 factRefs 只能引用事实 ref",
+    );
     expect(call[0].userPrompt).not.toContain('\n  "worldFacts"');
+  });
+
+  it("builds repair prompt with explicit nested object rules", () => {
+    const request = buildStoryContextRepairLlmRequest({
+      errorMessage: "Invalid input: expected array, received undefined",
+      input: createContextInput(),
+      invalidResponse: JSON.stringify({
+        characters: {
+          add: [
+            {
+              relationshipsAdded: [
+                {
+                  targetRef: "char_2",
+                  kind: "朋友",
+                  description: "关系描述",
+                },
+              ],
+              beliefsAdded: ["她知道门已经打开"],
+              opinionsAdded: ["她觉得对方很紧张"],
+            },
+          ],
+        },
+      }),
+    });
+
+    expect(request.userPrompt).toContain(
+      "relationshipsAdded 的每一项都必须包含 targetCharacterRefs:string[] 和 text:string。",
+    );
+    expect(request.userPrompt).toContain(
+      "beliefsAdded 和 opinionsAdded 的每一项都必须是对象，不能输出字符串数组。",
+    );
+    expect(request.userPrompt).toContain(
+      "beliefsAdded 的 factRefs 只能保留事实 ref，不能输出 char_N 或角色 draftKey。",
+    );
+    expect(request.userPrompt).toContain(
+      '"targetCharacterRefs":["char_N 或 draftKey"]',
+    );
+    expect(request.userPrompt).toContain('"target":"评价对象"');
   });
 });
 

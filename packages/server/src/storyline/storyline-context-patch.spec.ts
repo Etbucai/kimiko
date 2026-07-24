@@ -102,6 +102,44 @@ describe("applyStoryContextPatch", () => {
     expect(context.characters[0]?.id).toBe("char_1");
     expect(context.characters[0]?.beliefs).toHaveLength(2);
   });
+
+  it("drops invalid belief fact refs instead of failing the whole patch", () => {
+    const context = applyStoryContextPatch({
+      previousContext: createPreviousContext(),
+      patch: {
+        defaultSourceRefs: ["current"],
+        worldFacts: {
+          add: [],
+          update: [],
+          resolve: [],
+        },
+        characters: {
+          add: [],
+          update: [
+            {
+              existingId: "char_1",
+              beliefsAdded: [
+                {
+                  text: "林夏误把角色引用塞进了 factRefs。",
+                  truthStatus: "true",
+                  factRefs: ["char_1", "fact_1"],
+                },
+              ],
+            },
+          ],
+        },
+        currentScene: {},
+      },
+      sourceRefToSegmentId: new Map([["current", "3"]]),
+    });
+
+    expect(context.characters[0]?.beliefs.at(-1)).toEqual({
+      text: "林夏误把角色引用塞进了 factRefs。",
+      truthStatus: "true",
+      factIds: ["fact_1"],
+      sourceSegmentIds: ["3"],
+    });
+  });
 });
 
 function createPreviousContext(): StoryContextSnapshot {
