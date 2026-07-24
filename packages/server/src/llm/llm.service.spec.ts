@@ -3,10 +3,14 @@ import type {
   GenerateLlmTextRequest,
   GenerateLlmTextResponse,
 } from "@kimiko/schema";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { LlmProvider, LlmTextStreamEvent } from "./llm.provider";
 import { LlmService } from "./llm.service";
 
 describe("LlmService", () => {
+  const originalLlmCallLogDir = process.env.KIMIKO_LLM_CALL_LOG_DIR;
   let llmProvider: jest.Mocked<LlmProvider>;
   let llmService: LlmService;
 
@@ -26,6 +30,7 @@ describe("LlmService", () => {
 
   afterEach(() => {
     jest.restoreAllMocks();
+    restoreLlmCallLogDir(originalLlmCallLogDir);
   });
 
   it("normalizes prompts and forwards the request to the provider", async () => {
@@ -194,6 +199,122 @@ describe("LlmService", () => {
     );
   });
 
+  it("writes non-stream LLM call details to a per-call file", async () => {
+    const directory = await createTemporaryLogDirectory();
+    process.env.KIMIKO_LLM_CALL_LOG_DIR = directory;
+    jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
+    llmProvider.generateText.mockResolvedValue({
+      text: "answer",
+      model: "default-model",
+      finishReason: "stop",
+      usage: {
+        inputTokens: 10,
+        outputTokens: 5,
+        totalTokens: 15,
+      },
+    });
+
+    try {
+      await llmService.generateText({
+        userPrompt: "  hello world  ",
+        systemPrompt: "  be concise  ",
+      });
+
+      const record = await readSingleLogRecord(directory);
+      expect(record).toEqual(
+        expect.objectContaining({
+          callType: "text",
+          error: null,
+          request: {
+            systemPrompt: "be concise",
+            userPrompt: "hello world",
+          },
+          requestMeta: {
+            systemPromptChars: 10,
+            userPromptChars: 11,
+          },
+          response: expect.objectContaining({
+            finishReason: "stop",
+            model: "default-model",
+            text: "answer",
+            textChars: 6,
+            usage: {
+              inputTokens: 10,
+              outputTokens: 5,
+              totalTokens: 15,
+            },
+          }),
+          schemaVersion: 1,
+          status: "completed",
+        }),
+      );
+      expect(record.callId).toEqual(expect.any(String));
+      expect(record.elapsedMs).toEqual(expect.any(Number));
+      expect(record.startedAt).toEqual(expect.any(String));
+      expect(record.completedAt).toEqual(expect.any(String));
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("writes stream LLM input and accumulated output to a per-call file", async () => {
+    const directory = await createTemporaryLogDirectory();
+    process.env.KIMIKO_LLM_CALL_LOG_DIR = directory;
+    jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
+    llmProvider.streamText.mockReturnValue(
+      createLlmStream([
+        { type: "chunk", delta: "hello " },
+        { type: "chunk", delta: "world" },
+        {
+          type: "completed",
+          model: "default-model",
+          usage: {
+            inputTokens: 7,
+            outputTokens: 3,
+            totalTokens: 10,
+          },
+        },
+      ]),
+    );
+
+    try {
+      await collectAsyncIterable(
+        llmService.streamTextFromParsedRequest(
+          {
+            userPrompt: " hello ",
+          },
+          { signal: new AbortController().signal },
+        ),
+      );
+
+      const record = await readSingleLogRecord(directory);
+      expect(record).toEqual(
+        expect.objectContaining({
+          callType: "stream",
+          error: null,
+          request: {
+            userPrompt: "hello",
+          },
+          response: expect.objectContaining({
+            finishReason: null,
+            model: "default-model",
+            text: "hello world",
+            textChars: 11,
+            usage: {
+              inputTokens: 7,
+              outputTokens: 3,
+              totalTokens: 10,
+            },
+          }),
+          schemaVersion: 1,
+          status: "completed",
+        }),
+      );
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+
   it("rejects empty and oversized prompts", async () => {
     await expect(
       llmService.generateText({
@@ -252,4 +373,40 @@ function parseLoggedJson(value: unknown): Record<string, unknown> {
   }
 
   return parsedValue as Record<string, unknown>;
+}
+
+async function createTemporaryLogDirectory(): Promise<string> {
+  return mkdtemp(join(tmpdir(), "kimiko-llm-log-"));
+}
+
+async function readSingleLogRecord(
+  directory: string,
+): Promise<Record<string, unknown>> {
+  const files = await readdir(directory);
+  expect(files).toHaveLength(1);
+  const fileName = files[0];
+  if (fileName === undefined) {
+    throw new Error("Expected one LLM call log file");
+  }
+
+  const fileContent = await readFile(join(directory, fileName), "utf8");
+  const parsedValue: unknown = JSON.parse(fileContent);
+  if (
+    typeof parsedValue !== "object" ||
+    parsedValue === null ||
+    Array.isArray(parsedValue)
+  ) {
+    throw new Error("Expected LLM call log file to contain a JSON object");
+  }
+
+  return parsedValue as Record<string, unknown>;
+}
+
+function restoreLlmCallLogDir(value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env.KIMIKO_LLM_CALL_LOG_DIR;
+    return;
+  }
+
+  process.env.KIMIKO_LLM_CALL_LOG_DIR = value;
 }
