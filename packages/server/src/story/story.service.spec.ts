@@ -355,13 +355,13 @@ describe("StoryService", () => {
 
   it("builds dialogue prompts with current scene and short interaction rules", () => {
     const request = buildDialogueStoryLlmRequestFromContext({
-      input: "大凡朝厨房喊，让馥冰帮他拿奶茶。",
+      input: "方源朝厨房喊，让程溪帮他拿奶茶。",
       currentSceneText: [
         "章节正文：",
-        "大凡靠在沙发上，馥冰在厨房里翻冰箱。",
+        "方源靠在沙发上，程溪在厨房里翻冰箱。",
         "",
         "互动：",
-        "馥冰回头看了他一眼。",
+        "程溪回头看了他一眼。",
       ].join("\n"),
       contextBundle: createContextBundle({
         recentHistoryRounds: [
@@ -369,8 +369,8 @@ describe("StoryService", () => {
             segmentId: "3",
             roundIndex: 1,
             generationMode: "dialogue",
-            instruction: "大凡让馥冰拿奶茶。",
-            generatedText: "馥冰没好气地瞪了他一眼。",
+            instruction: "方源让程溪拿奶茶。",
+            generatedText: "程溪没好气地瞪了他一眼。",
           },
         ],
       }),
@@ -384,7 +384,7 @@ describe("StoryService", () => {
     expect(request.systemPrompt).toContain("不要只输出另一角色的回应");
     expect(request.userPrompt).toContain("当前场景：");
     expect(request.userPrompt).toContain("本轮互动输入：");
-    expect(request.userPrompt).toContain("大凡朝厨房喊");
+    expect(request.userPrompt).toContain("方源朝厨房喊");
     expect(request.userPrompt).toContain(
       "本轮互动正文必须先呈现用户输入的润色版本，再呈现另一个角色的反应。",
     );
@@ -399,9 +399,9 @@ describe("StoryService", () => {
   it("builds dialogue rewrite prompts from original input and text", () => {
     const request = buildRewriteDialogueLlmRequestFromContext({
       rewriteInstruction: "语气更嫌弃一点。",
-      originalInput: "大凡让馥冰拿奶茶。",
-      originalGeneratedText: "馥冰叹了口气，还是走向厨房。",
-      currentSceneText: "章节正文：\n大凡靠在沙发上，馥冰站在厨房门口。",
+      originalInput: "方源让程溪拿奶茶。",
+      originalGeneratedText: "程溪叹了口气，还是走向厨房。",
+      currentSceneText: "章节正文：\n方源靠在沙发上，程溪站在厨房门口。",
       contextBundle: createContextBundle({
         recentHistoryRounds: [
           {
@@ -417,7 +417,7 @@ describe("StoryService", () => {
 
     expect(request.systemPrompt).toBe(STORY_DIALOGUE_SYSTEM_PROMPT);
     expect(request.userPrompt).toContain("原互动输入：");
-    expect(request.userPrompt).toContain("大凡让馥冰拿奶茶。");
+    expect(request.userPrompt).toContain("方源让程溪拿奶茶。");
     expect(request.userPrompt).toContain("原互动正文：");
     expect(request.userPrompt).toContain("重写要求：");
     expect(request.userPrompt).toContain("语气更嫌弃一点。");
@@ -470,7 +470,7 @@ function createContextBundle(
         {
           id: "char_1",
           name: "林夏",
-          aliases: ["馥冰"],
+          aliases: ["程溪"],
           identity: "调查旧钟楼的记者",
           traits: ["谨慎"],
           relationships: [],
@@ -512,7 +512,7 @@ function createContextBundle(
       {
         id: "char_1",
         name: "林夏",
-        aliases: ["馥冰"],
+        aliases: ["程溪"],
         identity: "调查旧钟楼的记者",
         traits: ["谨慎"],
         relationships: [],

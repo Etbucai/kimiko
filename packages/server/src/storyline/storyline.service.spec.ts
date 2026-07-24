@@ -140,9 +140,9 @@ describe("StorylineService", () => {
   it("saves no-op dialogue without updating context and keeps chapter count stable", async () => {
     const created = await storylineService.saveCreatedStorylineWithContext({
       userId: "1",
-      initialStoryText: "大凡窝在沙发上。",
-      instruction: "让馥冰登场。",
-      generatedText: "馥冰站在厨房门口，皱眉看着他。",
+      initialStoryText: "方源窝在沙发上。",
+      instruction: "让程溪登场。",
+      generatedText: "程溪站在厨房门口，皱眉看着他。",
       model: "story-model",
       elapsedMs: 10,
       usage: {
@@ -151,8 +151,8 @@ describe("StorylineService", () => {
         totalTokens: 3,
       },
       contextPatch: createContextPatch({
-        characterName: "馥冰",
-        factText: "馥冰站在厨房门口。",
+        characterName: "程溪",
+        factText: "程溪站在厨房门口。",
       }),
     });
     const previousContext = await storylineService.getStoryContextForUser(
@@ -167,7 +167,7 @@ describe("StorylineService", () => {
       await storylineService.saveDialogueSegmentWithoutContextUpdate({
         userId: "1",
         storylineId: created.id,
-        input: "大凡看向门外。",
+        input: "方源看向门外。",
         generatedText: "无事发生",
         model: "dialogue-model",
         elapsedMs: 5,

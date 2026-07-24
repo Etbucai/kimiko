@@ -318,14 +318,14 @@ describe("StorylineGenerationService", () => {
     const abortController = new AbortController();
     const previousContext = createContextSnapshot();
     const writerContext = {
-      input: "大凡让馥冰拿奶茶。",
-      currentSceneText: "章节正文：\n馥冰站在厨房门口。",
+      input: "方源让程溪拿奶茶。",
+      currentSceneText: "章节正文：\n程溪站在厨房门口。",
       contextBundle: createContextBundle(previousContext),
     };
     const contextPatch = createContextDraft();
     const completedStoryline = createCompletedStoryline({
       latestGenerationMode: "dialogue",
-      latestText: '馥冰白了他一眼，"你自己没长手啊。"',
+      latestText: '程溪白了他一眼，"你自己没长手啊。"',
     });
 
     storylineService.getStorylineForUser.mockResolvedValue({
@@ -342,18 +342,18 @@ describe("StorylineGenerationService", () => {
       previousContext,
       writerContext,
       contextHistoryRounds: [],
-      initialStoryText: "大凡窝在沙发上。",
+      initialStoryText: "方源窝在沙发上。",
     });
     storyService.streamDialogueStoryFromContext.mockReturnValue(
       createStoryStream([
         {
           type: "chunk",
-          delta: "馥冰",
+          delta: "程溪",
           sequence: 1,
         },
         {
           type: "completed",
-          continuedStory: '馥冰白了他一眼，"你自己没长手啊。"',
+          continuedStory: '程溪白了他一眼，"你自己没长手啊。"',
           model: "dialogue-model",
           elapsedMs: 18,
           usage: {
@@ -376,7 +376,7 @@ describe("StorylineGenerationService", () => {
           payload: {
             mode: "dialogue",
             storylineId: "10",
-            input: "大凡让馥冰拿奶茶。",
+            input: "方源让程溪拿奶茶。",
           },
         },
         { signal: abortController.signal },
@@ -386,7 +386,7 @@ describe("StorylineGenerationService", () => {
     expect(events).toEqual([
       {
         type: "chunk",
-        delta: "馥冰",
+        delta: "程溪",
         sequence: 1,
       },
       { type: "contextStarted" },
@@ -400,8 +400,8 @@ describe("StorylineGenerationService", () => {
       expect.objectContaining({
         operation: "dialogue",
         previousContext,
-        currentInstruction: "大凡让馥冰拿奶茶。",
-        generatedText: '馥冰白了他一眼，"你自己没长手啊。"',
+        currentInstruction: "方源让程溪拿奶茶。",
+        generatedText: '程溪白了他一眼，"你自己没长手啊。"',
       }),
       { signal: abortController.signal },
     );
@@ -410,8 +410,8 @@ describe("StorylineGenerationService", () => {
     ).toHaveBeenCalledWith({
       userId: "1",
       storylineId: "10",
-      input: "大凡让馥冰拿奶茶。",
-      generatedText: '馥冰白了他一眼，"你自己没长手啊。"',
+      input: "方源让程溪拿奶茶。",
+      generatedText: '程溪白了他一眼，"你自己没长手啊。"',
       model: "dialogue-model",
       elapsedMs: 18,
       usage: {
@@ -428,7 +428,7 @@ describe("StorylineGenerationService", () => {
   it("saves no-op dialogue without updating context", async () => {
     const previousContext = createContextSnapshot();
     const writerContext = {
-      input: "大凡看向门外。",
+      input: "方源看向门外。",
       currentSceneText: "章节正文：\n客厅里空荡荡的。",
       contextBundle: createContextBundle(previousContext),
     };
@@ -483,7 +483,7 @@ describe("StorylineGenerationService", () => {
           payload: {
             mode: "dialogue",
             storylineId: "10",
-            input: "大凡看向门外。",
+            input: "方源看向门外。",
           },
         },
         { signal: new AbortController().signal },
@@ -508,7 +508,7 @@ describe("StorylineGenerationService", () => {
     ).toHaveBeenCalledWith({
       userId: "1",
       storylineId: "10",
-      input: "大凡看向门外。",
+      input: "方源看向门外。",
       generatedText: "无事发生",
       model: "dialogue-model",
       elapsedMs: 5,

@@ -51,7 +51,7 @@ const actionCopy: Record<
     title: "互动对话",
     label: "互动输入",
     placeholder:
-      "写一句角色台词或动作，例如：大凡朝厨房喊了一声，让馥冰帮他拿奶茶",
+      "写一句角色台词或动作，例如：方源朝厨房喊了一声，让程溪帮他拿奶茶",
     submitText: "生成互动",
     maxLength: 1_000,
   },
