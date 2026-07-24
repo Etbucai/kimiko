@@ -1,5 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
-import type { StoryGenerationPhase } from "@kimiko/schema";
+import type { StoryGenerationPhase, StoryTargetLength } from "@kimiko/schema";
 import { Env } from "../env";
 import { StoryService } from "../story/story.service";
 import type {
@@ -46,6 +46,7 @@ export class StorylineGenerationService {
       requestId: input.requestId,
       requestUserId: input.userId,
       storylineId: getStorylineIdFromPayload(input.payload),
+      targetLength: getTargetLengthFromPayload(input.payload),
     });
 
     if (input.payload.mode === "create") {
@@ -242,6 +243,7 @@ export class StorylineGenerationService {
       throw new StorylineNotFoundError("Expected append payload");
     }
 
+    const appendTargetLength = input.payload.targetLength;
     const startedAt = Date.now();
     this.logGenerationPhase({
       elapsedMs: getElapsedMs(startedAt),
@@ -250,6 +252,7 @@ export class StorylineGenerationService {
       requestId: input.requestId,
       requestUserId: input.userId,
       storylineId: input.payload.storylineId,
+      targetLength: appendTargetLength,
     });
     const storyline = await this.storylineService.getStorylineForUser(
       input.userId,
@@ -265,6 +268,7 @@ export class StorylineGenerationService {
       requestId: input.requestId,
       requestUserId: input.userId,
       storylineId: storyline.externalId,
+      targetLength: appendTargetLength,
     });
 
     const releaseLock = this.storylineLockService.acquireStorylineLock(
@@ -277,6 +281,7 @@ export class StorylineGenerationService {
       requestId: input.requestId,
       requestUserId: input.userId,
       storylineId: storyline.externalId,
+      targetLength: appendTargetLength,
     });
 
     try {
@@ -287,11 +292,13 @@ export class StorylineGenerationService {
         requestId: input.requestId,
         requestUserId: input.userId,
         storylineId: storyline.externalId,
+        targetLength: appendTargetLength,
       });
       const context = await this.storylineService.buildLlmContext({
         userId: input.userId,
         storylineId: storyline.externalId,
         currentInstruction: input.payload.instruction,
+        targetLength: appendTargetLength,
         historyScoreConfig: getHistoryScoreConfig(),
       });
       const previousContext = context.contextBundle.storyContext;
@@ -302,6 +309,7 @@ export class StorylineGenerationService {
         requestId: input.requestId,
         requestUserId: input.userId,
         storylineId: storyline.externalId,
+        targetLength: appendTargetLength,
       });
       let chunkChars = 0;
       let chunkCount = 0;
@@ -314,6 +322,7 @@ export class StorylineGenerationService {
         requestId: input.requestId,
         requestUserId: input.userId,
         storylineId: storyline.externalId,
+        targetLength: appendTargetLength,
       });
 
       for await (const event of this.storyService.streamContinueStoryFromContext(
@@ -337,6 +346,7 @@ export class StorylineGenerationService {
               requestId: input.requestId,
               requestUserId: input.userId,
               storylineId: storyline.externalId,
+              targetLength: appendTargetLength,
             });
           }
           yield event;
@@ -353,6 +363,7 @@ export class StorylineGenerationService {
           requestId: input.requestId,
           requestUserId: input.userId,
           storylineId: storyline.externalId,
+          targetLength: appendTargetLength,
         });
         yield { type: "contextStarted" };
         if (options.signal.aborted) {
@@ -367,6 +378,7 @@ export class StorylineGenerationService {
           requestId: input.requestId,
           requestUserId: input.userId,
           storylineId: storyline.externalId,
+          targetLength: appendTargetLength,
         });
         const contextPatch =
           await this.storylineContextService.generateStoryContextPatch(
@@ -398,6 +410,7 @@ export class StorylineGenerationService {
           requestId: input.requestId,
           requestUserId: input.userId,
           storylineId: storyline.externalId,
+          targetLength: appendTargetLength,
         });
 
         emitPhase(options, "saving");
@@ -406,6 +419,7 @@ export class StorylineGenerationService {
             userId: input.userId,
             storylineId: storyline.externalId,
             instruction: input.payload.instruction,
+            targetLength: appendTargetLength,
             generatedText: event.continuedStory,
             model: event.model,
             elapsedMs: event.elapsedMs,
@@ -421,6 +435,7 @@ export class StorylineGenerationService {
           requestId: input.requestId,
           requestUserId: input.userId,
           storylineId: storyline.externalId,
+          targetLength: appendTargetLength,
         });
 
         yield {
@@ -495,6 +510,10 @@ export class StorylineGenerationService {
         rewriteInstruction: input.payload.instruction,
         historyScoreConfig: getHistoryScoreConfig(),
       });
+      const rewriteTargetLength =
+        context.targetGenerationMode === "append"
+          ? context.writerContext.targetLength
+          : undefined;
       this.logGenerationPhase({
         elapsedMs: getElapsedMs(startedAt),
         mode: "rewrite",
@@ -502,6 +521,7 @@ export class StorylineGenerationService {
         requestId: input.requestId,
         requestUserId: input.userId,
         storylineId: storyline.externalId,
+        targetLength: rewriteTargetLength,
         targetGenerationMode: context.targetGenerationMode,
       });
 
@@ -526,6 +546,7 @@ export class StorylineGenerationService {
         requestId: input.requestId,
         requestUserId: input.userId,
         storylineId: storyline.externalId,
+        targetLength: rewriteTargetLength,
         targetGenerationMode: context.targetGenerationMode,
       });
 
@@ -547,6 +568,7 @@ export class StorylineGenerationService {
               requestId: input.requestId,
               requestUserId: input.userId,
               storylineId: storyline.externalId,
+              targetLength: rewriteTargetLength,
               targetGenerationMode: context.targetGenerationMode,
             });
           }
@@ -564,6 +586,7 @@ export class StorylineGenerationService {
           requestId: input.requestId,
           requestUserId: input.userId,
           storylineId: storyline.externalId,
+          targetLength: rewriteTargetLength,
           targetGenerationMode: context.targetGenerationMode,
         });
         yield { type: "contextStarted" };
@@ -579,6 +602,7 @@ export class StorylineGenerationService {
           requestId: input.requestId,
           requestUserId: input.userId,
           storylineId: storyline.externalId,
+          targetLength: rewriteTargetLength,
           targetGenerationMode: context.targetGenerationMode,
         });
         const contextPatch =
@@ -611,6 +635,7 @@ export class StorylineGenerationService {
           requestId: input.requestId,
           requestUserId: input.userId,
           storylineId: storyline.externalId,
+          targetLength: rewriteTargetLength,
           targetGenerationMode: context.targetGenerationMode,
         });
 
@@ -636,6 +661,7 @@ export class StorylineGenerationService {
           requestId: input.requestId,
           requestUserId: input.userId,
           storylineId: storyline.externalId,
+          targetLength: rewriteTargetLength,
           targetGenerationMode: context.targetGenerationMode,
         });
 
@@ -910,6 +936,7 @@ export class StorylineGenerationService {
       requestId?: string | undefined;
       requestUserId: string;
       storylineId: string | null;
+      targetLength?: StoryTargetLength | undefined;
       targetGenerationMode?: string | undefined;
     }>,
   ): void {
@@ -925,6 +952,7 @@ export class StorylineGenerationService {
         phase: input.phase,
         requestId: input.requestId,
         storylineId: input.storylineId,
+        targetLength: input.targetLength,
         targetGenerationMode: input.targetGenerationMode,
         userId: input.requestUserId,
       }),
@@ -979,6 +1007,12 @@ function getStorylineIdFromPayload(
   payload: ContinueStorylineInput["payload"],
 ): string | null {
   return payload.mode === "create" ? null : payload.storylineId;
+}
+
+function getTargetLengthFromPayload(
+  payload: ContinueStorylineInput["payload"],
+): StoryTargetLength | undefined {
+  return payload.mode === "append" ? payload.targetLength : undefined;
 }
 
 function isNoOpDialogueText(value: string): boolean {

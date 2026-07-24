@@ -86,6 +86,7 @@ describe("StorylineService", () => {
       userId: "1",
       storylineId: created.id,
       instruction: "进入钟楼。",
+      targetLength: 750,
       generatedText: "林夏推开钟楼木门。",
       model: "story-model",
       elapsedMs: 20,
@@ -109,6 +110,7 @@ describe("StorylineService", () => {
 
     expect(segments).toHaveLength(3);
     expect(segments[0]?.previousContextJson).toBeNull();
+    expect(segments[1]?.targetLength).toBeNull();
     expect(parseJson(segments[1]?.previousContextJson)).toEqual({
       worldFacts: [],
       characters: [],
@@ -121,6 +123,7 @@ describe("StorylineService", () => {
         sourceSegmentIds: [],
       },
     });
+    expect(segments[2]?.targetLength).toBe(750);
     expect(parseJson(segments[2]?.previousContextJson)).toEqual(createdContext);
 
     const finalContext = await storylineService.getStoryContextForUser(
@@ -221,6 +224,7 @@ describe("StorylineService", () => {
       userId: "1",
       storylineId: created.id,
       instruction: "进入钟楼。",
+      targetLength: 250,
       generatedText: "林夏推开钟楼木门。",
       model: "story-model",
       elapsedMs: 20,
@@ -245,6 +249,11 @@ describe("StorylineService", () => {
     });
 
     expect(context.previousContext).toEqual(createdContext);
+    expect(context.targetGenerationMode).toBe("append");
+    if (context.targetGenerationMode !== "append") {
+      throw new Error("Expected append rewrite context");
+    }
+    expect(context.writerContext.targetLength).toBe(250);
     expect(context.contextHistoryRounds).toEqual([
       {
         segmentId: "2",
@@ -279,6 +288,16 @@ describe("StorylineService", () => {
       appended.latestGeneration.segmentId,
     );
     expect(rewritten.segments.at(-1)?.text).toBe("林夏轻快地推开钟楼木门。");
+    const segments = await databaseService.db
+      .select()
+      .from(storylineSegments)
+      .where(eq(storylineSegments.storylineId, Number(created.id)))
+      .orderBy(storylineSegments.orderIndex);
+    expect(
+      segments.find(
+        (segment) => String(segment.id) === appended.latestGeneration.segmentId,
+      )?.targetLength,
+    ).toBe(250);
   });
 });
 

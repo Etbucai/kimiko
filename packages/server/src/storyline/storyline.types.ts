@@ -4,6 +4,7 @@ import type {
   StoryContextSnapshot,
   StoryContinuePayload,
   StoryGenerationPhase,
+  StoryTargetLength,
   StorylineGenerationMode,
 } from "@kimiko/schema";
 import type {
@@ -38,6 +39,7 @@ export interface SaveAppendedSegmentInput {
   readonly userId: string;
   readonly storylineId: string;
   readonly instruction: string;
+  readonly targetLength: StoryTargetLength;
   readonly generatedText: string;
   readonly model: string;
   readonly elapsedMs: number;

@@ -248,6 +248,7 @@ function createAppendPayload(storylineId: string): StoryContinuePayload {
     mode: "append",
     storylineId,
     instruction: "继续。",
+    targetLength: 1000,
   };
 }
 

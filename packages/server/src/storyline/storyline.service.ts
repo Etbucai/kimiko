@@ -9,6 +9,7 @@ import type {
   ListStorylinesResponse,
   StoryCharacterContext,
   StoryContextSnapshot,
+  StoryTargetLength,
   StorylineGenerationMetadata,
   StorylineGenerationMode,
   StorylineListItem,
@@ -172,6 +173,7 @@ export class StorylineService {
     readonly userId: string;
     readonly storylineId: string;
     readonly currentInstruction: string;
+    readonly targetLength: StoryTargetLength;
     readonly historyScoreConfig: HistoryScoreConfig;
   }): Promise<StoryLlmContext> {
     const storyline = await this.getRequiredStorylineForUser(
@@ -192,6 +194,7 @@ export class StorylineService {
 
     return {
       currentInstruction: input.currentInstruction,
+      targetLength: input.targetLength,
       ...(selectedHistory.wasTrimmed
         ? {}
         : { initialStoryText: initialSegment.text }),
@@ -282,6 +285,7 @@ export class StorylineService {
       };
     }
 
+    const rewriteTargetLength = getOptionalTargetLength(targetSegment.targetLength);
     const writerContext: StoryRewriteLlmContext = {
       rewriteInstruction: input.rewriteInstruction,
       originalInstruction: getRequiredString(
@@ -289,6 +293,9 @@ export class StorylineService {
         "instruction",
       ),
       originalGeneratedText: targetSegment.text,
+      ...(rewriteTargetLength === undefined
+        ? {}
+        : { targetLength: rewriteTargetLength }),
       ...(selectedHistory.wasTrimmed
         ? {}
         : { initialStoryText: initialSegment.text }),
@@ -513,6 +520,7 @@ export class StorylineService {
             inputTokens: input.usage.inputTokens,
             outputTokens: input.usage.outputTokens,
             totalTokens: input.usage.totalTokens,
+            targetLength: input.targetLength,
             previousContextJson: serializeStoryContext(input.previousContext),
             createdAt: now,
           })
@@ -1314,6 +1322,21 @@ function getRequiredNumber(value: number | null, field: string): number {
     throw new InternalServerErrorException(
       `Storyline generated segment is missing ${field}`,
     );
+  }
+
+  return value;
+}
+
+function getOptionalTargetLength(
+  value: number | null,
+): StoryTargetLength | undefined {
+  if (
+    value === null ||
+    !Number.isInteger(value) ||
+    value < 100 ||
+    value > 1_200
+  ) {
+    return undefined;
   }
 
   return value;

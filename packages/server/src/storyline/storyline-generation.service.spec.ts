@@ -16,8 +16,10 @@ describe("StorylineGenerationService", () => {
     Pick<
       StorylineService,
       | "getStorylineForUser"
+      | "buildLlmContext"
       | "buildDialogueLlmContext"
       | "buildRewriteLlmContext"
+      | "saveAppendedSegmentWithContext"
       | "saveDialogueSegmentWithContext"
       | "saveDialogueSegmentWithoutContextUpdate"
       | "saveRewrittenSegmentWithContext"
@@ -26,6 +28,7 @@ describe("StorylineGenerationService", () => {
   let storyService: jest.Mocked<
     Pick<
       StoryService,
+      | "streamContinueStoryFromContext"
       | "streamDialogueStoryFromContext"
       | "streamRewriteDialogueFromContext"
       | "streamRewriteStoryFromContext"
@@ -43,13 +46,16 @@ describe("StorylineGenerationService", () => {
   beforeEach(() => {
     storylineService = {
       getStorylineForUser: jest.fn(),
+      buildLlmContext: jest.fn(),
       buildDialogueLlmContext: jest.fn(),
       buildRewriteLlmContext: jest.fn(),
+      saveAppendedSegmentWithContext: jest.fn(),
       saveDialogueSegmentWithContext: jest.fn(),
       saveDialogueSegmentWithoutContextUpdate: jest.fn(),
       saveRewrittenSegmentWithContext: jest.fn(),
     };
     storyService = {
+      streamContinueStoryFromContext: jest.fn(),
       streamDialogueStoryFromContext: jest.fn(),
       streamRewriteDialogueFromContext: jest.fn(),
       streamRewriteStoryFromContext: jest.fn(),
@@ -67,6 +73,121 @@ describe("StorylineGenerationService", () => {
       lockService as unknown as StorylineLockService,
       contextService as unknown as StorylineContextService,
     );
+  });
+
+  it("streams append chunks, forwards target length and saves the appended segment", async () => {
+    const abortController = new AbortController();
+    const previousContext = createContextSnapshot();
+    const writerContext = {
+      currentInstruction: "进入钟楼。",
+      targetLength: 750,
+      initialStoryText: "雨停以后。",
+      contextBundle: createContextBundle(previousContext),
+    };
+    const contextPatch = createContextDraft();
+    const completedStoryline = createCompletedStoryline({
+      latestText: "林夏推开钟楼木门。",
+    });
+
+    storylineService.getStorylineForUser.mockResolvedValue({
+      id: 10,
+      externalId: "10",
+      userId: 1,
+    });
+    storylineService.buildLlmContext.mockResolvedValue(writerContext);
+    storyService.streamContinueStoryFromContext.mockReturnValue(
+      createStoryStream([
+        {
+          type: "chunk",
+          delta: "林夏",
+          sequence: 1,
+        },
+        {
+          type: "completed",
+          continuedStory: "林夏推开钟楼木门。",
+          model: "append-model",
+          elapsedMs: 24,
+          usage: {
+            inputTokens: 5,
+            outputTokens: 6,
+            totalTokens: 11,
+          },
+        },
+      ]),
+    );
+    contextService.generateStoryContextPatch.mockResolvedValue(contextPatch);
+    storylineService.saveAppendedSegmentWithContext.mockResolvedValue(
+      completedStoryline,
+    );
+
+    const events = await collectAsyncIterable(
+      generationService.streamContinueStoryline(
+        {
+          userId: "1",
+          payload: {
+            mode: "append",
+            storylineId: "10",
+            instruction: "进入钟楼。",
+            targetLength: 750,
+          },
+        },
+        { signal: abortController.signal },
+      ),
+    );
+
+    expect(events).toEqual([
+      {
+        type: "chunk",
+        delta: "林夏",
+        sequence: 1,
+      },
+      { type: "contextStarted" },
+      {
+        type: "completed",
+        storyline: completedStoryline,
+        generatedSegmentId: "3",
+      },
+    ]);
+    expect(storylineService.buildLlmContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: "1",
+        storylineId: "10",
+        currentInstruction: "进入钟楼。",
+        targetLength: 750,
+      }),
+    );
+    expect(storyService.streamContinueStoryFromContext).toHaveBeenCalledWith(
+      writerContext,
+      { signal: abortController.signal },
+    );
+    expect(contextService.generateStoryContextPatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: "append",
+        previousContext,
+        currentInstruction: "进入钟楼。",
+        generatedText: "林夏推开钟楼木门。",
+      }),
+      { signal: abortController.signal },
+    );
+    expect(
+      storylineService.saveAppendedSegmentWithContext,
+    ).toHaveBeenCalledWith({
+      userId: "1",
+      storylineId: "10",
+      instruction: "进入钟楼。",
+      targetLength: 750,
+      generatedText: "林夏推开钟楼木门。",
+      model: "append-model",
+      elapsedMs: 24,
+      usage: {
+        inputTokens: 5,
+        outputTokens: 6,
+        totalTokens: 11,
+      },
+      previousContext,
+      contextPatch,
+    });
+    expect(releaseLock).toHaveBeenCalledTimes(1);
   });
 
   it("streams rewrite chunks, updates context and saves in place", async () => {

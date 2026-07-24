@@ -15,6 +15,7 @@ import {
   buildRewriteStoryLlmRequestFromContext,
   buildRewriteDialogueLlmRequestFromContext,
   buildStoryLlmRequestFromContext,
+  buildStorySystemPrompt,
   STORY_DIALOGUE_SYSTEM_PROMPT,
   STORY_SYSTEM_PROMPT,
   StoryService,
@@ -299,12 +300,26 @@ describe("StoryService", () => {
     expect(request.userPrompt).toContain("调查旧钟楼的记者");
   });
 
+  it("builds append prompts with a custom target length", () => {
+    const request = buildStoryLlmRequestFromContext({
+      currentInstruction: "让林夏继续调查。",
+      targetLength: 500,
+      contextBundle: createContextBundle(),
+    });
+
+    expect(request.systemPrompt).toBe(buildStorySystemPrompt(500));
+    expect(request.systemPrompt).toContain(
+      "输出目标长度约 500 字，允许合理浮动。",
+    );
+  });
+
   it("builds rewrite prompts from prior context and original generation", () => {
     const request = buildRewriteStoryLlmRequestFromContext({
       rewriteInstruction: "文风更加轻快，增加气味描写。",
       originalInstruction: "前往钟楼。",
       originalGeneratedText: "林夏走向钟楼。",
       initialStoryText: "雨停以后。",
+      targetLength: 250,
       contextBundle: createContextBundle({
         recentHistoryRounds: [
           {
@@ -318,7 +333,7 @@ describe("StoryService", () => {
       }),
     });
 
-    expect(request.systemPrompt).toBe(STORY_SYSTEM_PROMPT);
+    expect(request.systemPrompt).toBe(buildStorySystemPrompt(250));
     expect(request.userPrompt).toContain("当前可观察世界事实：");
     expect(request.userPrompt).toContain("故事正文：");
     expect(request.userPrompt).toContain("目标段之前的近期生成轨迹");

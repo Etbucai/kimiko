@@ -15,6 +15,7 @@ import type {
   StoryRealtimeGenerationError,
   StoryRealtimeGenerationHandle,
 } from "../../story/storyRealtimeApi";
+import { getStoredAuthSession } from "../../auth/authApi";
 import { startStoryRealtimeGeneration } from "../../story/storyRealtimeApi";
 import {
   cancelStoryGeneration,
@@ -26,6 +27,12 @@ import { StoryInitialInput } from "./StoryInitialInput";
 import { StoryActionDrawer } from "./StoryActionDrawer";
 import { StoryActionFab } from "./StoryActionFab";
 import type { StoryActionKind } from "./StoryActionFab";
+import {
+  APPEND_TARGET_LENGTH_OPTIONS,
+  readAppendTargetLengthPreference,
+  writeAppendTargetLengthPreference,
+  type AppendTargetLength,
+} from "./append-target-length-preference";
 import { StorylineComposer } from "./StorylineComposer";
 import type { StorylineComposerMode } from "./StorylineComposer";
 import { StorylineReader } from "./StorylineReader";
@@ -105,6 +112,10 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   const [storyline, setStoryline] = useState<StorylineSnapshot | null>(null);
   const [initialStoryText, setInitialStoryText] = useState("");
   const [appendInstruction, setAppendInstruction] = useState("");
+  const [appendTargetLength, setAppendTargetLength] =
+    useState<AppendTargetLength>(() =>
+      readAppendTargetLengthPreference(getCurrentStoryUserId()),
+    );
   const [dialogueInput, setDialogueInput] = useState("");
   const [rewriteInstruction, setRewriteInstruction] = useState("");
   const [rewriteTargetSegmentId, setRewriteTargetSegmentId] =
@@ -467,6 +478,11 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     );
   }
 
+  function handleAppendTargetLengthChange(value: AppendTargetLength): void {
+    setAppendTargetLength(value);
+    writeAppendTargetLengthPreference(getCurrentStoryUserId(), value);
+  }
+
   function handleDialogueInputChange(value: string): void {
     setDialogueInput(value);
     setFieldErrors((previousFieldErrors) =>
@@ -520,6 +536,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     const validationResult = validatePayload({
       actionMode: activeDrawerMode,
       appendInstruction,
+      appendTargetLength,
       composerMode,
       dialogueInput,
       initialStoryText,
@@ -878,6 +895,15 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
 
       {activeDrawerMode !== null ? (
         <StoryActionDrawer
+          appendLengthSelector={
+            activeDrawerMode === "append"
+              ? {
+                  value: appendTargetLength,
+                  options: APPEND_TARGET_LENGTH_OPTIONS,
+                  onChange: handleAppendTargetLengthChange,
+                }
+              : undefined
+          }
           error={getDrawerError(fieldErrors, activeDrawerMode)}
           mode={activeDrawerMode}
           onChange={(value) => {
@@ -914,6 +940,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
 interface ValidatePayloadInput {
   actionMode: StoryActionKind | null;
   appendInstruction: string;
+  appendTargetLength: AppendTargetLength;
   composerMode: StorylineComposerMode;
   dialogueInput: string;
   initialStoryText: string;
@@ -1020,9 +1047,14 @@ function validatePayload(input: ValidatePayloadInput): PayloadValidationResult {
       mode: "append",
       storylineId: input.storyline.id,
       instruction,
+      targetLength: input.appendTargetLength,
     },
     intent: { type: "append" },
   };
+}
+
+function getCurrentStoryUserId(): string | null {
+  return getStoredAuthSession()?.me.userId ?? null;
 }
 
 function isNearBottom(): boolean {

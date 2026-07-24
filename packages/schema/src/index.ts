@@ -181,6 +181,10 @@ export const StorylineSegmentIdSchema = z.string().trim().min(1);
 
 export type StorylineSegmentId = z.infer<typeof StorylineSegmentIdSchema>;
 
+export const StoryTargetLengthSchema = z.number().int().min(100).max(1_200);
+
+export type StoryTargetLength = z.infer<typeof StoryTargetLengthSchema>;
+
 export const StorylineGenerationModeSchema = z.enum(["append", "dialogue"]);
 
 export type StorylineGenerationMode = z.infer<
@@ -467,6 +471,7 @@ export const StoryContinueAppendPayloadSchema = z
     mode: z.literal("append"),
     storylineId: StorylineIdSchema,
     instruction: z.string().trim().min(1).max(8_000),
+    targetLength: StoryTargetLengthSchema,
   })
   .strict();
 

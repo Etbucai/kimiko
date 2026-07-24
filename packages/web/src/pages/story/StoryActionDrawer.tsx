@@ -2,8 +2,19 @@ import type { JSX } from "react";
 import { useEffect, useRef } from "react";
 import { X } from "lucide-react";
 import type { StoryActionKind } from "./StoryActionFab";
+import type {
+  AppendTargetLength,
+  AppendTargetLengthOption,
+} from "./append-target-length-preference";
+
+interface StoryActionDrawerAppendLengthSelector {
+  readonly value: AppendTargetLength;
+  readonly options: readonly AppendTargetLengthOption[];
+  readonly onChange: (value: AppendTargetLength) => void;
+}
 
 interface StoryActionDrawerProps {
+  appendLengthSelector?: StoryActionDrawerAppendLengthSelector | undefined;
   error?: string | undefined;
   mode: StoryActionKind;
   onChange: (value: string) => void;
@@ -47,6 +58,7 @@ const actionCopy: Record<
 };
 
 export function StoryActionDrawer({
+  appendLengthSelector,
   error,
   mode,
   onChange,
@@ -109,6 +121,39 @@ export function StoryActionDrawer({
               <X aria-hidden size={20} strokeWidth={2.3} />
             </button>
           </div>
+
+          {mode === "append" && appendLengthSelector !== undefined ? (
+            <fieldset className="m-0 flex flex-col gap-2 border-0 p-0">
+              <legend className="px-0 text-sm font-semibold text-(--text-h)">
+                续写长度
+              </legend>
+              <div className="grid grid-cols-4 gap-2">
+                {appendLengthSelector.options.map((option) => {
+                  const isSelected =
+                    option.value === appendLengthSelector.value;
+
+                  return (
+                    <button
+                      aria-pressed={isSelected}
+                      className={`min-h-11 rounded-2xl border px-3 py-2 text-sm font-bold transition-[background-color,border-color,box-shadow,transform] duration-200 focus-visible:shadow-[0_0_0_3px_var(--accent-bg)] focus-visible:outline-none ${
+                        isSelected
+                          ? "border-(--accent) bg-(--accent-bg) text-(--accent)"
+                          : "border-(--border) bg-(--input-bg) text-(--text-h) hover:-translate-y-px hover:border-(--accent-border)"
+                      }`}
+                      key={option.value}
+                      onClick={() =>
+                        appendLengthSelector.onChange(option.value)
+                      }
+                      type="button"
+                    >
+                      <span aria-hidden="true">{option.label}</span>
+                      <span className="sr-only">{option.assistiveText}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </fieldset>
+          ) : null}
 
           <label className="flex flex-col gap-2 text-sm font-semibold text-(--text-h)">
             {copy.label}

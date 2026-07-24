@@ -4,6 +4,7 @@ import type { OnGatewayDisconnect, OnGatewayInit } from "@nestjs/websockets";
 import type {
   StoryCancelClientMessage,
   StoryContinueClientMessage,
+  StoryTargetLength,
   StoryRealtimeClientMessage,
   StoryRealtimeServerEvent,
 } from "@kimiko/schema";
@@ -129,6 +130,10 @@ export class RealtimeGateway
           parsedMessage.message.type === "story.continue"
             ? getStorylineIdFromPayload(parsedMessage.message.payload)
             : undefined,
+        targetLength:
+          parsedMessage.message.type === "story.continue"
+            ? getTargetLengthFromPayload(parsedMessage.message.payload)
+            : undefined,
       }),
     );
 
@@ -218,6 +223,7 @@ export class RealtimeGateway
         payloadMode,
         requestId: message.requestId,
         storylineId,
+        targetLength: getTargetLengthFromPayload(message.payload),
         userId: clientState.user.sub,
       }),
     );
@@ -393,6 +399,12 @@ function getStorylineIdFromPayload(
   payload: StoryContinueClientMessage["payload"],
 ): string | null {
   return payload.mode === "create" ? null : payload.storylineId;
+}
+
+function getTargetLengthFromPayload(
+  payload: StoryContinueClientMessage["payload"],
+): StoryTargetLength | undefined {
+  return payload.mode === "append" ? payload.targetLength : undefined;
 }
 
 function parseClientMessage(rawMessage: unknown):

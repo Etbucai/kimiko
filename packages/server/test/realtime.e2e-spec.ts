@@ -425,6 +425,7 @@ describe("RealtimeGateway (e2e)", () => {
           mode: "append",
           storylineId: createdStoryline.storyline.id,
           instruction: "继续追踪。",
+          targetLength: 750,
         },
       }),
     );
@@ -504,6 +505,7 @@ describe("RealtimeGateway (e2e)", () => {
           mode: "append",
           storylineId: createdStoryline.storyline.id,
           instruction: "继续追踪。",
+          targetLength: 750,
         },
       }),
     );
@@ -565,6 +567,7 @@ describe("RealtimeGateway (e2e)", () => {
           mode: "append",
           storylineId: createdStoryline.storyline.id,
           instruction: "继续追踪。",
+          targetLength: 750,
         },
       }),
     );
@@ -582,6 +585,7 @@ describe("RealtimeGateway (e2e)", () => {
           mode: "append",
           storylineId: createdStoryline.storyline.id,
           instruction: "再次续写。",
+          targetLength: 500,
         },
       }),
     );
