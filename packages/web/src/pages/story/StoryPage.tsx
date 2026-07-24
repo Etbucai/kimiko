@@ -496,14 +496,56 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     void navigate("/storylines");
   }
 
+  function handleOpenContextDebug(): void {
+    if (storyline === null) {
+      return;
+    }
+
+    if (isGenerating) {
+      const shouldLeave = window.confirm(
+        "当前生成未完成，离开会取消本轮生成。确定打开调试页面吗？",
+      );
+      if (!shouldLeave) {
+        return;
+      }
+
+      generationHandleRef.current?.cancel();
+      void navigate(`/storylines/${encodeURIComponent(storyline.id)}/context`);
+      return;
+    }
+
+    if (
+      hasUnsavedDraft(
+        initialStoryText,
+        appendInstruction,
+        rewriteInstruction,
+        dialogueInput,
+      )
+    ) {
+      const shouldLeave = window.confirm(
+        "当前输入尚未提交，离开会丢失。确定打开调试页面吗？",
+      );
+      if (!shouldLeave) {
+        return;
+      }
+    }
+
+    void navigate(`/storylines/${encodeURIComponent(storyline.id)}/context`);
+  }
+
   const latestGeneration = storyline?.latestGeneration ?? null;
+  const contextDebugStorylineId = storyline?.id ?? null;
 
   return (
     <main
       aria-label="StoryAgent"
       className={`min-h-svh px-4 pt-[calc(6rem+env(safe-area-inset-top))] ${mainBottomPaddingClassName} [background:radial-gradient(circle_at_top_left,var(--accent-bg),transparent_28rem),var(--bg)] md:px-6 md:pt-[calc(6.5rem+env(safe-area-inset-top))]`}
     >
-      <StoryPageHeader onBackToList={handleGoToStorylineList} />
+      <StoryPageHeader
+        contextDebugStorylineId={contextDebugStorylineId}
+        onBackToList={handleGoToStorylineList}
+        onOpenContextDebug={handleOpenContextDebug}
+      />
       <section className="mx-auto flex w-full max-w-3xl flex-col gap-5">
         {status === "loading" ? <StorylineLoading /> : null}
 
@@ -851,10 +893,16 @@ function getGenerationErrorMessage(
 }
 
 interface StoryPageHeaderProps {
+  contextDebugStorylineId: StorylineId | null;
   onBackToList: () => void;
+  onOpenContextDebug: () => void;
 }
 
-function StoryPageHeader({ onBackToList }: StoryPageHeaderProps): JSX.Element {
+function StoryPageHeader({
+  contextDebugStorylineId,
+  onBackToList,
+  onOpenContextDebug,
+}: StoryPageHeaderProps): JSX.Element {
   return (
     <header className="fixed inset-x-0 top-0 z-10 border-b border-[var(--border)] bg-[var(--panel-bg)] px-4 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3 shadow-[0_10px_24px_rgba(0,0,0,0.08)] backdrop-blur md:px-6">
       <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-3">
@@ -866,13 +914,24 @@ function StoryPageHeader({ onBackToList }: StoryPageHeaderProps): JSX.Element {
             故事工作台
           </h1>
         </div>
-        <button
-          className="min-h-10 shrink-0 rounded-full border border-[var(--border)] bg-transparent px-4 py-2 text-sm font-bold text-[var(--text-h)] transition-[border-color,transform] duration-200 hover:-translate-y-px hover:border-[var(--accent-border)]"
-          onClick={onBackToList}
-          type="button"
-        >
-          返回列表
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          {contextDebugStorylineId !== null ? (
+            <button
+              className="min-h-10 rounded-full border border-(--border) bg-transparent px-3 py-2 text-sm font-bold text-(--text-h) transition-[border-color,transform] duration-200 hover:-translate-y-px hover:border-(--accent-border)"
+              onClick={onOpenContextDebug}
+              type="button"
+            >
+              调试
+            </button>
+          ) : null}
+          <button
+            className="min-h-10 rounded-full border border-(--border) bg-transparent px-4 py-2 text-sm font-bold text-(--text-h) transition-[border-color,transform] duration-200 hover:-translate-y-px hover:border-(--accent-border)"
+            onClick={onBackToList}
+            type="button"
+          >
+            返回列表
+          </button>
+        </div>
       </div>
     </header>
   );
