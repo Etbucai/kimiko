@@ -78,10 +78,6 @@ function resolveLlmCallLogDirectory(): string | null {
       : resolve(findProjectRoot(process.cwd()), configuredDirectory);
   }
 
-  if (process.env.NODE_ENV === "test") {
-    return null;
-  }
-
   return join(findProjectRoot(process.cwd()), "log");
 }
 

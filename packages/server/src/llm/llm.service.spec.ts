@@ -161,27 +161,33 @@ describe("LlmService", () => {
       ]),
     );
 
-    const events = await collectAsyncIterable(
-      llmService.streamTextFromParsedRequest(
-        {
-          userPrompt: "hello",
-        },
+    const iterator = llmService
+      .streamTextFromParsedRequest(
+        { userPrompt: "hello" },
         { signal: new AbortController().signal },
-      ),
-    );
+      )
+      [Symbol.asyncIterator]();
 
-    expect(events).toEqual([
-      { type: "chunk", delta: "hello" },
-      {
-        type: "completed",
-        model: "default-model",
-        usage: {
-          inputTokens: 7,
-          outputTokens: 3,
-          totalTokens: 10,
+    await expect(iterator.next()).resolves.toEqual({
+      done: false,
+      value: { type: "chunk", delta: "hello" },
+    });
+    expect(logSpy).not.toHaveBeenCalled();
+
+    await expect(iterator.next()).resolves.toEqual(
+      expect.objectContaining({
+        done: false,
+        value: {
+          type: "completed",
+          model: "default-model",
+          usage: {
+            inputTokens: 7,
+            outputTokens: 3,
+            totalTokens: 10,
+          },
         },
-      },
-    ]);
+      }),
+    );
     expect(logSpy).toHaveBeenCalledTimes(1);
     const payload = parseLoggedJson(logSpy.mock.calls[0]?.[0]);
     expect(payload).toEqual(
@@ -197,6 +203,11 @@ describe("LlmService", () => {
         },
       }),
     );
+
+    await expect(iterator.next()).resolves.toEqual({
+      done: true,
+      value: undefined,
+    });
   });
 
   it("writes non-stream LLM call details to a per-call file", async () => {

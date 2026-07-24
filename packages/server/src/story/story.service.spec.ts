@@ -1,6 +1,7 @@
 import {
   BadGatewayException,
   BadRequestException,
+  Logger,
   ServiceUnavailableException,
 } from "@nestjs/common";
 import type {
@@ -103,6 +104,7 @@ describe("StoryService", () => {
   });
 
   it("streams story chunks and completes with accumulated metadata", async () => {
+    jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
     jest
       .spyOn(Date, "now")
       .mockReturnValueOnce(2_000)

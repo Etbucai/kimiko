@@ -160,7 +160,6 @@ export class LlmService {
               usage,
             }),
           );
-          yield event;
           this.logLlmCallCompleted({
             callId,
             callType: "stream",
@@ -169,6 +168,7 @@ export class LlmService {
             model: event.model,
             usage,
           });
+          yield event;
           continue;
         }
 
