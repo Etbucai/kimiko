@@ -10,10 +10,10 @@ import type {
   StoryRealtimeServerEvent,
 } from "@kimiko/schema";
 import {
+  GetStorylineContextResponseSchema,
   GetRecentStorylineResponseSchema,
   GetStorylineResponseSchema,
   LoginUserResponseSchema,
-  GetStorylineSummaryResponseSchema,
   ListStorylinesResponseSchema,
   StoryRealtimeServerEventSchema,
 } from "@kimiko/schema";
@@ -105,7 +105,7 @@ describe("RealtimeGateway (e2e)", () => {
         delta: "走向钟楼。",
       },
       {
-        type: "story.summary.started",
+        type: "story.context.started",
         requestId: "request-1",
       },
     ]);
@@ -147,7 +147,7 @@ describe("RealtimeGateway (e2e)", () => {
       "雨停以后。",
     );
     expect(llmProvider.generateText.mock.calls[0]?.[0].systemPrompt).toContain(
-      "角色摘要维护器",
+      "故事上下文维护器",
     );
     expect(llmProvider.generateText.mock.calls[0]?.[0].userPrompt).toContain(
       "林夏走向钟楼。",
@@ -178,25 +178,18 @@ describe("RealtimeGateway (e2e)", () => {
 
     const createdStorylineId = recentStoryline.storyline?.id;
     expect(createdStorylineId).toEqual(expect.stringMatching(/^[1-9]\d*$/));
-    const summaryResponse = await request(app.getHttpServer())
-      .get(`/storylines/${createdStorylineId}/summary`)
+    const contextResponse = await request(app.getHttpServer())
+      .get(`/storylines/${createdStorylineId}/context`)
       .set("Authorization", `Bearer ${accessToken}`)
       .expect(200);
-    const summaryResult = GetStorylineSummaryResponseSchema.parse(
-      summaryResponse.body as unknown,
+    const contextResult = GetStorylineContextResponseSchema.parse(
+      contextResponse.body as unknown,
     );
 
-    expect(summaryResult.summary).toEqual({
-      characters: [
-        {
-          name: "林夏",
-          aliases: [],
-          identity: "调查旧钟楼的记者",
-          relationships: [],
-          motivation: "查清钟楼失踪案",
-          currentStatus: "正在前往钟楼",
-        },
-      ],
+    expect(contextResult.context?.characters[0]).toMatchObject({
+      id: "char_1",
+      name: "林夏",
+      identity: "调查旧钟楼的记者",
     });
 
     socket.close();
@@ -283,17 +276,17 @@ describe("RealtimeGateway (e2e)", () => {
       .expect(404);
 
     await request(app.getHttpServer())
-      .get("/storylines/999999/summary")
+      .get("/storylines/999999/context")
       .set("Authorization", `Bearer ${accessToken}`)
       .expect(404);
   });
 
-  it("returns STORY_SUMMARY_FAILED and does not save the generated story when summary generation fails", async () => {
+  it("returns STORY_CONTEXT_FAILED and does not save the generated story when context generation fails", async () => {
     const llmProvider = createStreamingProvider({
-      summaryText: "not json",
+      contextText: "not json",
     });
     app = await createApp(llmProvider);
-    const accessToken = await registerAndLogin(app, "summary_failure");
+    const accessToken = await registerAndLogin(app, "context_failure");
     const socket = await connectWebSocket(
       `${getRealtimeUrl(app)}?accessToken=${accessToken}`,
     );
@@ -316,13 +309,13 @@ describe("RealtimeGateway (e2e)", () => {
     const events = await eventsPromise;
 
     expect(events[3]).toEqual({
-      type: "story.summary.started",
+      type: "story.context.started",
       requestId: "request-1",
     });
     expect(events[4]).toEqual({
       type: "story.error",
       requestId: "request-1",
-      code: "STORY_SUMMARY_FAILED",
+      code: "STORY_CONTEXT_FAILED",
       message: "生成失败，请稍后重试",
       retryable: true,
     });
@@ -448,7 +441,7 @@ function getCompletedEvent(
 }
 
 function createStreamingProvider(
-  options: Readonly<{ summaryText?: string }> = {},
+  options: Readonly<{ contextText?: string }> = {},
 ): jest.Mocked<LlmProvider> {
   const llmProvider = createBaseProvider();
   llmProvider.streamText.mockImplementation(() =>
@@ -474,20 +467,51 @@ function createStreamingProvider(
   );
   llmProvider.generateText.mockResolvedValue({
     text:
-      options.summaryText ??
+      options.contextText ??
       JSON.stringify({
+        worldFacts: [
+          {
+            draftKey: "main_fact",
+            kind: "event",
+            text: "林夏走向钟楼。",
+            status: "active",
+            visibility: "observable",
+            sourceRefs: ["current"],
+          },
+        ],
         characters: [
           {
+            draftKey: "lin_xia",
             name: "林夏",
             aliases: [],
             identity: "调查旧钟楼的记者",
+            traits: [],
             relationships: [],
-            motivation: "查清钟楼失踪案",
+            motivations: ["查清钟楼失踪案"],
             currentStatus: "正在前往钟楼",
+            beliefs: [
+              {
+                text: "她正在前往钟楼。",
+                truthStatus: "true",
+                factRefs: ["main_fact"],
+                sourceRefs: ["current"],
+              },
+            ],
+            opinions: [],
+            actionTendencies: [],
+            sourceRefs: ["current"],
           },
         ],
+        currentScene: {
+          location: "钟楼附近",
+          timeLabel: "雨后",
+          presentCharacterRefs: ["lin_xia"],
+          observableFactRefs: ["main_fact"],
+          sceneStatus: "林夏走向钟楼。",
+          sourceRefs: ["current"],
+        },
       }),
-    model: "summary-model",
+    model: "context-model",
   });
 
   return llmProvider;

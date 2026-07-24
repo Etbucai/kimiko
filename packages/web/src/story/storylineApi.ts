@@ -1,13 +1,13 @@
 import type {
+  StoryContextSnapshot,
   StorylineListItem,
-  StoryCharacterSummarySnapshot,
   StorylineId,
   StorylineSnapshot,
 } from "@kimiko/schema";
 import {
+  GetStorylineContextResponseSchema,
   GetStorylineResponseSchema,
   GetRecentStorylineResponseSchema,
-  GetStorylineSummaryResponseSchema,
   ListStorylinesResponseSchema,
 } from "@kimiko/schema";
 import { clearAuthSession, getStoredAuthSession } from "../auth/authApi";
@@ -16,7 +16,7 @@ const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
 const defaultListErrorMessage = "加载故事列表失败，请稍后重试";
 const defaultRestoreErrorMessage = "恢复故事线失败，请稍后重试";
 const defaultNotFoundErrorMessage = "故事线不存在或已不可用";
-const defaultSummaryErrorMessage = "获取角色摘要失败，请稍后重试";
+const defaultContextErrorMessage = "获取故事上下文失败，请稍后重试";
 
 export type ListStorylinesResult =
   | Readonly<{ status: "success"; storylines: readonly StorylineListItem[] }>
@@ -187,17 +187,18 @@ export async function getStoryline(
   }
 }
 
-export type GetStorylineSummaryResult =
+export type GetStorylineContextResult =
   | Readonly<{
       status: "success";
-      summary: StoryCharacterSummarySnapshot | null;
+      context: StoryContextSnapshot | null;
     }>
   | Readonly<{ status: "authRequired" }>
+  | Readonly<{ status: "notFound"; message: string }>
   | Readonly<{ status: "failed"; message: string }>;
 
-export async function getStorylineSummary(
+export async function getStorylineContext(
   storylineId: StorylineId,
-): Promise<GetStorylineSummaryResult> {
+): Promise<GetStorylineContextResult> {
   const authSession = getStoredAuthSession();
   if (authSession === null) {
     return { status: "authRequired" };
@@ -205,7 +206,7 @@ export async function getStorylineSummary(
 
   try {
     const response = await fetch(
-      `${API_BASE_URL}/storylines/${encodeURIComponent(storylineId)}/summary`,
+      `${API_BASE_URL}/storylines/${encodeURIComponent(storylineId)}/context`,
       {
         headers: {
           Authorization: `Bearer ${authSession.session.accessToken}`,
@@ -219,30 +220,37 @@ export async function getStorylineSummary(
       return { status: "authRequired" };
     }
 
+    if (response.status === 404) {
+      return {
+        status: "notFound",
+        message: defaultNotFoundErrorMessage,
+      };
+    }
+
     const responseBody = await readJsonResponse(response);
     if (!response.ok) {
       return {
         status: "failed",
-        message: defaultSummaryErrorMessage,
+        message: defaultContextErrorMessage,
       };
     }
 
-    const result = GetStorylineSummaryResponseSchema.safeParse(responseBody);
+    const result = GetStorylineContextResponseSchema.safeParse(responseBody);
     if (!result.success) {
       return {
         status: "failed",
-        message: defaultSummaryErrorMessage,
+        message: defaultContextErrorMessage,
       };
     }
 
     return {
       status: "success",
-      summary: result.data.summary,
+      context: result.data.context,
     };
   } catch {
     return {
       status: "failed",
-      message: defaultSummaryErrorMessage,
+      message: defaultContextErrorMessage,
     };
   }
 }

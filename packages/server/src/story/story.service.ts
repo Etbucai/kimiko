@@ -8,11 +8,13 @@ import type {
   ContinueStoryUsage,
   GenerateLlmTextRequest,
   GenerateLlmTextUsage,
+  StoryCharacterContext,
+  StoryContextSnapshot,
+  StoryWorldFact,
   StorylineGenerationMode,
 } from "@kimiko/schema";
 import { ContinueStoryRequestSchema } from "@kimiko/schema";
 import { LlmService } from "../llm/llm.service";
-import type { StoryCharacterSummarySnapshot } from "../storyline/storyline-summary.types";
 
 type SchemaParseResult<T> =
   | Readonly<{ success: true; data: T }>
@@ -65,18 +67,26 @@ export type StoryStreamEvent =
     }>;
 
 export interface StoryHistoryRound {
+  readonly segmentId: string;
   readonly roundIndex: number;
   readonly generationMode: StorylineGenerationMode;
   readonly instruction: string;
   readonly generatedText: string;
 }
 
+export interface StoryWriterContextBundle {
+  readonly storyContext: StoryContextSnapshot;
+  readonly observableFacts: readonly StoryWorldFact[];
+  readonly activeCharacters: readonly StoryCharacterContext[];
+  readonly recentHistoryRounds: readonly StoryHistoryRound[];
+  readonly historyWasTrimmed: boolean;
+  readonly contextWasMissing: boolean;
+}
+
 export interface StoryLlmContext {
   readonly currentInstruction: string;
   readonly initialStoryText?: string;
-  readonly characterSummary?: StoryCharacterSummarySnapshot;
-  readonly historyRounds: readonly StoryHistoryRound[];
-  readonly historyWasTrimmed: boolean;
+  readonly contextBundle: StoryWriterContextBundle;
 }
 
 export interface StoryRewriteLlmContext {
@@ -84,17 +94,13 @@ export interface StoryRewriteLlmContext {
   readonly originalInstruction: string;
   readonly originalGeneratedText: string;
   readonly initialStoryText?: string;
-  readonly characterSummary?: StoryCharacterSummarySnapshot;
-  readonly historyRoundsBeforeTarget: readonly StoryHistoryRound[];
-  readonly historyWasTrimmed: boolean;
+  readonly contextBundle: StoryWriterContextBundle;
 }
 
 export interface StoryDialogueLlmContext {
   readonly input: string;
   readonly currentSceneText: string;
-  readonly characterSummary?: StoryCharacterSummarySnapshot;
-  readonly recentHistoryRounds: readonly StoryHistoryRound[];
-  readonly historyWasTrimmed: boolean;
+  readonly contextBundle: StoryWriterContextBundle;
 }
 
 export interface StoryDialogueRewriteLlmContext {
@@ -102,9 +108,7 @@ export interface StoryDialogueRewriteLlmContext {
   readonly originalInput: string;
   readonly originalGeneratedText: string;
   readonly currentSceneText: string;
-  readonly characterSummary?: StoryCharacterSummarySnapshot;
-  readonly recentHistoryRoundsBeforeTarget: readonly StoryHistoryRound[];
-  readonly historyWasTrimmed: boolean;
+  readonly contextBundle: StoryWriterContextBundle;
 }
 
 @Injectable()
@@ -262,48 +266,23 @@ export function buildRewriteDialogueLlmRequestFromContext(
 
 function buildStoryUserPromptFromContext(context: StoryLlmContext): string {
   const promptParts: string[] = [];
-  const characterSummaryText = formatCharacterSummary(context.characterSummary);
   const initialStoryText = context.initialStoryText?.trim();
 
-  if (characterSummaryText !== undefined) {
-    promptParts.push("角色摘要：", characterSummaryText, "");
-  }
+  appendStoryContextPrompt(promptParts, context.contextBundle);
 
   if (initialStoryText !== undefined && initialStoryText.length > 0) {
     promptParts.push("故事正文：", initialStoryText, "");
   }
 
-  if (context.historyRounds.length > 0) {
-    promptParts.push(
-      context.historyWasTrimmed ? "近期故事正文片段：" : "近期生成轨迹：",
-    );
-
-    for (const round of context.historyRounds) {
-      if (context.historyWasTrimmed) {
-        promptParts.push(formatRoundTextLabel(round), round.generatedText, "");
-      } else {
-        promptParts.push(
-          formatRoundInstructionLabel(round),
-          round.instruction,
-          "",
-          formatRoundTextLabel(round),
-          round.generatedText,
-          "",
-        );
-      }
-    }
-
-    if (context.historyWasTrimmed) {
-      promptParts.push("近期生成指令轨迹：");
-      for (const round of context.historyRounds) {
-        promptParts.push(
-          formatRoundInstructionLabel(round),
-          round.instruction,
-          "",
-        );
-      }
-    }
-  }
+  appendRecentHistoryPrompt({
+    historyLabel: context.contextBundle.historyWasTrimmed
+      ? "近期故事正文片段（只作叙事承接参考，不代表任何角色知道其中全部信息）："
+      : "近期生成轨迹（只作叙事承接参考，不代表任何角色知道其中全部信息）：",
+    historyWasTrimmed: context.contextBundle.historyWasTrimmed,
+    promptParts,
+    rounds: context.contextBundle.recentHistoryRounds,
+    trimmedInstructionLabel: "近期生成指令轨迹：",
+  });
 
   promptParts.push("当前续写指令：", context.currentInstruction);
 
@@ -314,50 +293,23 @@ function buildRewriteStoryUserPromptFromContext(
   context: StoryRewriteLlmContext,
 ): string {
   const promptParts: string[] = [];
-  const characterSummaryText = formatCharacterSummary(context.characterSummary);
   const initialStoryText = context.initialStoryText?.trim();
 
-  if (characterSummaryText !== undefined) {
-    promptParts.push("角色摘要：", characterSummaryText, "");
-  }
+  appendStoryContextPrompt(promptParts, context.contextBundle);
 
   if (initialStoryText !== undefined && initialStoryText.length > 0) {
     promptParts.push("故事正文：", initialStoryText, "");
   }
 
-  if (context.historyRoundsBeforeTarget.length > 0) {
-    promptParts.push(
-      context.historyWasTrimmed
-        ? "目标段之前的近期故事正文片段："
-        : "目标段之前的近期生成轨迹：",
-    );
-
-    for (const round of context.historyRoundsBeforeTarget) {
-      if (context.historyWasTrimmed) {
-        promptParts.push(formatRoundTextLabel(round), round.generatedText, "");
-      } else {
-        promptParts.push(
-          formatRoundInstructionLabel(round),
-          round.instruction,
-          "",
-          formatRoundTextLabel(round),
-          round.generatedText,
-          "",
-        );
-      }
-    }
-
-    if (context.historyWasTrimmed) {
-      promptParts.push("目标段之前的近期生成指令轨迹：");
-      for (const round of context.historyRoundsBeforeTarget) {
-        promptParts.push(
-          formatRoundInstructionLabel(round),
-          round.instruction,
-          "",
-        );
-      }
-    }
-  }
+  appendRecentHistoryPrompt({
+    historyLabel: context.contextBundle.historyWasTrimmed
+      ? "目标段之前的近期故事正文片段（只作叙事承接参考，不代表任何角色知道其中全部信息）："
+      : "目标段之前的近期生成轨迹（只作叙事承接参考，不代表任何角色知道其中全部信息）：",
+    historyWasTrimmed: context.contextBundle.historyWasTrimmed,
+    promptParts,
+    rounds: context.contextBundle.recentHistoryRounds,
+    trimmedInstructionLabel: "目标段之前的近期生成指令轨迹：",
+  });
 
   promptParts.push(
     "原续写指令：",
@@ -383,21 +335,18 @@ function buildDialogueStoryUserPromptFromContext(
   context: StoryDialogueLlmContext,
 ): string {
   const promptParts: string[] = [];
-  const characterSummaryText = formatCharacterSummary(context.characterSummary);
 
-  if (characterSummaryText !== undefined) {
-    promptParts.push("角色摘要：", characterSummaryText, "");
-  }
+  appendStoryContextPrompt(promptParts, context.contextBundle);
 
   promptParts.push("当前场景：", context.currentSceneText, "");
 
   appendRecentHistoryPrompt({
-    historyLabel: context.historyWasTrimmed
-      ? "近期故事正文片段："
-      : "近期生成轨迹：",
-    historyWasTrimmed: context.historyWasTrimmed,
+    historyLabel: context.contextBundle.historyWasTrimmed
+      ? "近期故事正文片段（只作叙事承接参考，不代表任何角色知道其中全部信息）："
+      : "近期生成轨迹（只作叙事承接参考，不代表任何角色知道其中全部信息）：",
+    historyWasTrimmed: context.contextBundle.historyWasTrimmed,
     promptParts,
-    rounds: context.recentHistoryRounds,
+    rounds: context.contextBundle.recentHistoryRounds,
     trimmedInstructionLabel: "近期生成指令轨迹：",
   });
 
@@ -418,21 +367,18 @@ function buildRewriteDialogueUserPromptFromContext(
   context: StoryDialogueRewriteLlmContext,
 ): string {
   const promptParts: string[] = [];
-  const characterSummaryText = formatCharacterSummary(context.characterSummary);
 
-  if (characterSummaryText !== undefined) {
-    promptParts.push("角色摘要：", characterSummaryText, "");
-  }
+  appendStoryContextPrompt(promptParts, context.contextBundle);
 
   promptParts.push("当前场景：", context.currentSceneText, "");
 
   appendRecentHistoryPrompt({
-    historyLabel: context.historyWasTrimmed
-      ? "目标互动之前的近期故事正文片段："
-      : "目标互动之前的近期生成轨迹：",
-    historyWasTrimmed: context.historyWasTrimmed,
+    historyLabel: context.contextBundle.historyWasTrimmed
+      ? "目标互动之前的近期故事正文片段（只作叙事承接参考，不代表任何角色知道其中全部信息）："
+      : "目标互动之前的近期生成轨迹（只作叙事承接参考，不代表任何角色知道其中全部信息）：",
+    historyWasTrimmed: context.contextBundle.historyWasTrimmed,
     promptParts,
-    rounds: context.recentHistoryRoundsBeforeTarget,
+    rounds: context.contextBundle.recentHistoryRounds,
     trimmedInstructionLabel: "目标互动之前的近期生成指令轨迹：",
   });
 
@@ -454,6 +400,106 @@ function buildRewriteDialogueUserPromptFromContext(
   );
 
   return promptParts.join("\n");
+}
+
+function appendStoryContextPrompt(
+  promptParts: string[],
+  contextBundle: StoryWriterContextBundle,
+): void {
+  if (contextBundle.contextWasMissing) {
+    promptParts.push(
+      "故事上下文：",
+      "当前没有可用的结构化故事上下文。请优先承接初始正文和近期正文轨迹。",
+      "",
+    );
+    return;
+  }
+
+  promptParts.push(
+    "当前可观察世界事实：",
+    contextBundle.observableFacts.length === 0
+      ? "无明确可观察事实。"
+      : contextBundle.observableFacts
+          .map(
+            (fact, index) =>
+              `${index + 1}. [${fact.id}][${fact.kind}][${fact.visibility}][${fact.status}] ${fact.text}`,
+          )
+          .join("\n"),
+    "",
+  );
+
+  promptParts.push("活跃角色认知：");
+  if (contextBundle.activeCharacters.length === 0) {
+    promptParts.push("无明确活跃角色认知。", "");
+  } else {
+    for (const character of contextBundle.activeCharacters) {
+      promptParts.push(formatCharacterContext(character), "");
+    }
+  }
+
+  promptParts.push(
+    "角色行动约束：",
+    "写某个角色的行动、台词和心理时，只能使用该角色自己的认知，以及当前可观察世界事实。",
+    "不要让角色使用其它角色独有的认知。",
+    "不要让角色使用未出现在“当前可观察世界事实”中的隐藏事实。",
+    "近期正文轨迹只用于承接语气和动作，不代表所有角色都知道其中信息。",
+    "如果角色认知与世界事实冲突，角色可以按错误认知行动，但环境反馈按世界事实成立。",
+    "",
+  );
+}
+
+function formatCharacterContext(character: StoryCharacterContext): string {
+  const lines = [
+    `角色 [${character.id}] ${character.name}`,
+    character.aliases.length > 0
+      ? `- 别名：${character.aliases.join("、")}`
+      : undefined,
+    character.identity.length > 0 ? `- 身份：${character.identity}` : undefined,
+    character.currentStatus.length > 0
+      ? `- 当前状态：${character.currentStatus}`
+      : undefined,
+    character.traits.length > 0
+      ? `- 特征：${character.traits.join("；")}`
+      : undefined,
+    character.motivations.length > 0
+      ? `- 动机：${character.motivations.join("；")}`
+      : undefined,
+    character.relationships.length > 0
+      ? [
+          "- 关系：",
+          ...character.relationships.map(
+            (relationship) =>
+              `  - 对 ${relationship.targetCharacterId}：${relationship.text}`,
+          ),
+        ].join("\n")
+      : undefined,
+    character.beliefs.length > 0
+      ? [
+          "- 已知/相信：",
+          ...character.beliefs.map((belief) =>
+            [
+              `  - [${belief.truthStatus}] ${belief.text}`,
+              belief.factIds.length > 0
+                ? `（关联事实：${belief.factIds.join("、")}）`
+                : "",
+            ].join(""),
+          ),
+        ].join("\n")
+      : undefined,
+    character.opinions.length > 0
+      ? [
+          "- 主观意见：",
+          ...character.opinions.map(
+            (opinion) => `  - 对 ${opinion.target}：${opinion.text}`,
+          ),
+        ].join("\n")
+      : undefined,
+    character.actionTendencies.length > 0
+      ? `- 行动倾向：${character.actionTendencies.join("；")}`
+      : undefined,
+  ];
+
+  return lines.filter((line): line is string => line !== undefined).join("\n");
 }
 
 function appendRecentHistoryPrompt(input: {
@@ -513,19 +559,6 @@ function formatRoundTextLabel(round: StoryHistoryRound): string {
   return round.generationMode === "dialogue"
     ? `第 ${round.roundIndex} 轮互动正文：`
     : `第 ${round.roundIndex} 轮续写正文：`;
-}
-
-function formatCharacterSummary(
-  characterSummary: StoryCharacterSummarySnapshot | undefined,
-): string | undefined {
-  if (
-    characterSummary === undefined ||
-    characterSummary.characters.length === 0
-  ) {
-    return undefined;
-  }
-
-  return JSON.stringify(characterSummary, null, 2);
 }
 
 function normalizeGeneratedStory(value: string): string {

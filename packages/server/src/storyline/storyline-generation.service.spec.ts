@@ -1,8 +1,14 @@
 import type { CompletedStorylineSnapshot } from "@kimiko/schema";
-import type { StoryService, StoryStreamEvent } from "../story/story.service";
+import type {
+  StoryService,
+  StoryStreamEvent,
+  StoryWriterContextBundle,
+} from "../story/story.service";
+import type { StorylineContextService } from "./storyline-context.service";
+import type { StoryContextDraftSnapshot } from "./storyline-context.types";
+import { emptyStoryContextSnapshot } from "./storyline-context.types";
 import type { StorylineLockService } from "./storyline-lock.service";
 import type { StorylineService } from "./storyline.service";
-import type { StorylineSummaryService } from "./storyline-summary.service";
 import { StorylineGenerationService } from "./storyline-generation.service";
 
 describe("StorylineGenerationService", () => {
@@ -12,9 +18,9 @@ describe("StorylineGenerationService", () => {
       | "getStorylineForUser"
       | "buildDialogueLlmContext"
       | "buildRewriteLlmContext"
-      | "saveDialogueSegmentWithSummary"
-      | "saveDialogueSegmentWithoutSummaryUpdate"
-      | "saveRewrittenSegmentWithSummary"
+      | "saveDialogueSegmentWithContext"
+      | "saveDialogueSegmentWithoutContextUpdate"
+      | "saveRewrittenSegmentWithContext"
     >
   >;
   let storyService: jest.Mocked<
@@ -28,8 +34,8 @@ describe("StorylineGenerationService", () => {
   let lockService: jest.Mocked<
     Pick<StorylineLockService, "acquireStorylineLock">
   >;
-  let summaryService: jest.Mocked<
-    Pick<StorylineSummaryService, "generateCharacterSummary">
+  let contextService: jest.Mocked<
+    Pick<StorylineContextService, "generateStoryContextDraft">
   >;
   let releaseLock: jest.Mock;
   let generationService: StorylineGenerationService;
@@ -39,9 +45,9 @@ describe("StorylineGenerationService", () => {
       getStorylineForUser: jest.fn(),
       buildDialogueLlmContext: jest.fn(),
       buildRewriteLlmContext: jest.fn(),
-      saveDialogueSegmentWithSummary: jest.fn(),
-      saveDialogueSegmentWithoutSummaryUpdate: jest.fn(),
-      saveRewrittenSegmentWithSummary: jest.fn(),
+      saveDialogueSegmentWithContext: jest.fn(),
+      saveDialogueSegmentWithoutContextUpdate: jest.fn(),
+      saveRewrittenSegmentWithContext: jest.fn(),
     };
     storyService = {
       streamDialogueStoryFromContext: jest.fn(),
@@ -52,87 +58,31 @@ describe("StorylineGenerationService", () => {
     lockService = {
       acquireStorylineLock: jest.fn((_storylineId: string) => releaseLock),
     };
-    summaryService = {
-      generateCharacterSummary: jest.fn(),
+    contextService = {
+      generateStoryContextDraft: jest.fn(),
     };
     generationService = new StorylineGenerationService(
       storylineService as unknown as StorylineService,
       storyService as unknown as StoryService,
       lockService as unknown as StorylineLockService,
-      summaryService as unknown as StorylineSummaryService,
+      contextService as unknown as StorylineContextService,
     );
   });
 
-  it("streams rewrite chunks, summarizes with previous summary and saves in place", async () => {
+  it("streams rewrite chunks, updates context and saves in place", async () => {
     const abortController = new AbortController();
-    const previousSummary = {
-      characters: [
-        {
-          name: "林夏",
-          aliases: [],
-          identity: "记者",
-          relationships: [],
-          motivation: "调查钟楼",
-          currentStatus: "正在前往钟楼",
-        },
-      ],
-    };
+    const previousContext = createContextSnapshot();
     const writerContext = {
       rewriteInstruction: "文风更加轻快。",
       originalInstruction: "进入钟楼。",
       originalGeneratedText: "林夏推开钟楼木门。",
       initialStoryText: "雨停以后。",
-      historyRoundsBeforeTarget: [
-        {
-          roundIndex: 1,
-          generationMode: "append" as const,
-          instruction: "前往钟楼。",
-          generatedText: "林夏走向钟楼。",
-        },
-      ],
-      historyWasTrimmed: false,
+      contextBundle: createContextBundle(previousContext),
     };
-    const rewrittenSummary = {
-      characters: [
-        {
-          name: "林夏",
-          aliases: [],
-          identity: "记者",
-          relationships: [],
-          motivation: "调查钟楼",
-          currentStatus: "正在钟楼门口观察",
-        },
-      ],
-    };
-    const completedStoryline: CompletedStorylineSnapshot = {
-      id: "10",
-      segments: [
-        { id: "1", type: "initial", text: "雨停以后。" },
-        {
-          id: "2",
-          type: "generated",
-          generationMode: "append",
-          text: "林夏走向钟楼。",
-        },
-        {
-          id: "3",
-          type: "generated",
-          generationMode: "append",
-          text: "林夏轻快地推开钟楼木门。",
-        },
-      ],
-      latestGeneration: {
-        segmentId: "3",
-        model: "rewrite-model",
-        elapsedMs: 42,
-        usage: {
-          inputTokens: 7,
-          outputTokens: 8,
-          totalTokens: 15,
-        },
-      },
-      updatedAt: "2026-07-22T00:00:00.000Z",
-    };
+    const contextDraft = createContextDraft();
+    const completedStoryline = createCompletedStoryline({
+      latestText: "林夏轻快地推开钟楼木门。",
+    });
 
     storylineService.getStorylineForUser.mockResolvedValue({
       id: 10,
@@ -147,9 +97,17 @@ describe("StorylineGenerationService", () => {
       },
       targetSegmentId: "3",
       targetGenerationMode: "append",
-      previousSummary,
+      previousContext,
       writerContext,
-      summaryHistoryRounds: writerContext.historyRoundsBeforeTarget,
+      contextHistoryRounds: [
+        {
+          segmentId: "2",
+          roundIndex: 1,
+          generationMode: "append",
+          instruction: "前往钟楼。",
+          generatedText: "林夏走向钟楼。",
+        },
+      ],
       initialStoryText: writerContext.initialStoryText,
     });
     storyService.streamRewriteStoryFromContext.mockReturnValue(
@@ -172,8 +130,8 @@ describe("StorylineGenerationService", () => {
         },
       ]),
     );
-    summaryService.generateCharacterSummary.mockResolvedValue(rewrittenSummary);
-    storylineService.saveRewrittenSegmentWithSummary.mockResolvedValue(
+    contextService.generateStoryContextDraft.mockResolvedValue(contextDraft);
+    storylineService.saveRewrittenSegmentWithContext.mockResolvedValue(
       completedStoryline,
     );
 
@@ -198,31 +156,24 @@ describe("StorylineGenerationService", () => {
         delta: "林夏",
         sequence: 1,
       },
-      { type: "summaryStarted" },
+      { type: "contextStarted" },
       {
         type: "completed",
         storyline: completedStoryline,
         generatedSegmentId: "3",
       },
     ]);
-    expect(lockService.acquireStorylineLock).toHaveBeenCalledWith("10");
-    expect(storyService.streamRewriteStoryFromContext).toHaveBeenCalledWith(
-      writerContext,
-      { signal: abortController.signal },
-    );
-    expect(summaryService.generateCharacterSummary).toHaveBeenCalledWith(
-      {
+    expect(contextService.generateStoryContextDraft).toHaveBeenCalledWith(
+      expect.objectContaining({
         operation: "rewrite",
-        previousSummary,
-        initialStoryText: "雨停以后。",
-        recentHistoryRounds: writerContext.historyRoundsBeforeTarget,
+        previousContext,
         currentInstruction: "文风更加轻快。",
         generatedText: "林夏轻快地推开钟楼木门。",
-      },
+      }),
       { signal: abortController.signal },
     );
     expect(
-      storylineService.saveRewrittenSegmentWithSummary,
+      storylineService.saveRewrittenSegmentWithContext,
     ).toHaveBeenCalledWith({
       userId: "1",
       storylineId: "10",
@@ -236,72 +187,25 @@ describe("StorylineGenerationService", () => {
         outputTokens: 8,
         totalTokens: 15,
       },
-      characterSummary: rewrittenSummary,
+      previousContext,
+      contextDraft,
     });
     expect(releaseLock).toHaveBeenCalledTimes(1);
   });
 
-  it("streams dialogue chunks, summarizes and saves a dialogue segment", async () => {
+  it("streams dialogue chunks, updates context and saves a dialogue segment", async () => {
     const abortController = new AbortController();
-    const previousSummary = {
-      characters: [
-        {
-          name: "馥冰",
-          aliases: [],
-          identity: "住在同一屋檐下的少女",
-          relationships: ["经常和大凡拌嘴"],
-          motivation: "",
-          currentStatus: "站在厨房门口",
-        },
-      ],
-    };
+    const previousContext = createContextSnapshot();
     const writerContext = {
       input: "大凡让馥冰拿奶茶。",
       currentSceneText: "章节正文：\n馥冰站在厨房门口。",
-      recentHistoryRounds: [],
-      historyWasTrimmed: false,
+      contextBundle: createContextBundle(previousContext),
     };
-    const completedStoryline: CompletedStorylineSnapshot = {
-      id: "10",
-      segments: [
-        { id: "1", type: "initial", text: "大凡窝在沙发上。" },
-        {
-          id: "2",
-          type: "generated",
-          generationMode: "append",
-          text: "馥冰站在厨房门口。",
-        },
-        {
-          id: "3",
-          type: "generated",
-          generationMode: "dialogue",
-          text: '馥冰白了他一眼，"你自己没长手啊。"',
-        },
-      ],
-      latestGeneration: {
-        segmentId: "3",
-        model: "dialogue-model",
-        elapsedMs: 18,
-        usage: {
-          inputTokens: 4,
-          outputTokens: 5,
-          totalTokens: 9,
-        },
-      },
-      updatedAt: "2026-07-22T00:00:00.000Z",
-    };
-    const characterSummary = {
-      characters: [
-        {
-          name: "馥冰",
-          aliases: [],
-          identity: "住在同一屋檐下的少女",
-          relationships: ["经常和大凡拌嘴"],
-          motivation: "",
-          currentStatus: "正嫌弃地回应大凡",
-        },
-      ],
-    };
+    const contextDraft = createContextDraft();
+    const completedStoryline = createCompletedStoryline({
+      latestGenerationMode: "dialogue",
+      latestText: '馥冰白了他一眼，"你自己没长手啊。"',
+    });
 
     storylineService.getStorylineForUser.mockResolvedValue({
       id: 10,
@@ -314,9 +218,9 @@ describe("StorylineGenerationService", () => {
         externalId: "10",
         userId: 1,
       },
-      previousSummary,
+      previousContext,
       writerContext,
-      summaryHistoryRounds: [],
+      contextHistoryRounds: [],
       initialStoryText: "大凡窝在沙发上。",
     });
     storyService.streamDialogueStoryFromContext.mockReturnValue(
@@ -339,8 +243,8 @@ describe("StorylineGenerationService", () => {
         },
       ]),
     );
-    summaryService.generateCharacterSummary.mockResolvedValue(characterSummary);
-    storylineService.saveDialogueSegmentWithSummary.mockResolvedValue(
+    contextService.generateStoryContextDraft.mockResolvedValue(contextDraft);
+    storylineService.saveDialogueSegmentWithContext.mockResolvedValue(
       completedStoryline,
     );
 
@@ -364,30 +268,24 @@ describe("StorylineGenerationService", () => {
         delta: "馥冰",
         sequence: 1,
       },
-      { type: "summaryStarted" },
+      { type: "contextStarted" },
       {
         type: "completed",
         storyline: completedStoryline,
         generatedSegmentId: "3",
       },
     ]);
-    expect(storyService.streamDialogueStoryFromContext).toHaveBeenCalledWith(
-      writerContext,
-      { signal: abortController.signal },
-    );
-    expect(summaryService.generateCharacterSummary).toHaveBeenCalledWith(
-      {
+    expect(contextService.generateStoryContextDraft).toHaveBeenCalledWith(
+      expect.objectContaining({
         operation: "dialogue",
-        previousSummary,
-        initialStoryText: "大凡窝在沙发上。",
-        recentHistoryRounds: [],
+        previousContext,
         currentInstruction: "大凡让馥冰拿奶茶。",
         generatedText: '馥冰白了他一眼，"你自己没长手啊。"',
-      },
+      }),
       { signal: abortController.signal },
     );
     expect(
-      storylineService.saveDialogueSegmentWithSummary,
+      storylineService.saveDialogueSegmentWithContext,
     ).toHaveBeenCalledWith({
       userId: "1",
       storylineId: "10",
@@ -400,43 +298,23 @@ describe("StorylineGenerationService", () => {
         outputTokens: 5,
         totalTokens: 9,
       },
-      previousSummary,
-      characterSummary,
+      previousContext,
+      contextDraft,
     });
     expect(releaseLock).toHaveBeenCalledTimes(1);
   });
 
-  it("saves no-op dialogue without summarizing", async () => {
-    const previousSummary = { characters: [] };
+  it("saves no-op dialogue without updating context", async () => {
+    const previousContext = createContextSnapshot();
     const writerContext = {
       input: "大凡看向门外。",
       currentSceneText: "章节正文：\n客厅里空荡荡的。",
-      recentHistoryRounds: [],
-      historyWasTrimmed: false,
+      contextBundle: createContextBundle(previousContext),
     };
-    const completedStoryline: CompletedStorylineSnapshot = {
-      id: "10",
-      segments: [
-        { id: "1", type: "initial", text: "客厅里空荡荡的。" },
-        {
-          id: "2",
-          type: "generated",
-          generationMode: "dialogue",
-          text: "无事发生",
-        },
-      ],
-      latestGeneration: {
-        segmentId: "2",
-        model: "dialogue-model",
-        elapsedMs: 5,
-        usage: {
-          inputTokens: 1,
-          outputTokens: 1,
-          totalTokens: 2,
-        },
-      },
-      updatedAt: "2026-07-22T00:00:00.000Z",
-    };
+    const completedStoryline = createCompletedStoryline({
+      latestGenerationMode: "dialogue",
+      latestText: "无事发生",
+    });
 
     storylineService.getStorylineForUser.mockResolvedValue({
       id: 10,
@@ -449,9 +327,9 @@ describe("StorylineGenerationService", () => {
         externalId: "10",
         userId: 1,
       },
-      previousSummary,
+      previousContext,
       writerContext,
-      summaryHistoryRounds: [],
+      contextHistoryRounds: [],
     });
     storyService.streamDialogueStoryFromContext.mockReturnValue(
       createStoryStream([
@@ -473,7 +351,7 @@ describe("StorylineGenerationService", () => {
         },
       ]),
     );
-    storylineService.saveDialogueSegmentWithoutSummaryUpdate.mockResolvedValue(
+    storylineService.saveDialogueSegmentWithoutContextUpdate.mockResolvedValue(
       completedStoryline,
     );
 
@@ -500,12 +378,12 @@ describe("StorylineGenerationService", () => {
       {
         type: "completed",
         storyline: completedStoryline,
-        generatedSegmentId: "2",
+        generatedSegmentId: "3",
       },
     ]);
-    expect(summaryService.generateCharacterSummary).not.toHaveBeenCalled();
+    expect(contextService.generateStoryContextDraft).not.toHaveBeenCalled();
     expect(
-      storylineService.saveDialogueSegmentWithoutSummaryUpdate,
+      storylineService.saveDialogueSegmentWithoutContextUpdate,
     ).toHaveBeenCalledWith({
       userId: "1",
       storylineId: "10",
@@ -518,7 +396,7 @@ describe("StorylineGenerationService", () => {
         outputTokens: 1,
         totalTokens: 2,
       },
-      previousSummary,
+      previousContext,
     });
   });
 });
@@ -540,4 +418,71 @@ async function* createStoryStream(
   for (const event of events) {
     yield event;
   }
+}
+
+function createCompletedStoryline(input: {
+  readonly latestText: string;
+  readonly latestGenerationMode?: "append" | "dialogue";
+}): CompletedStorylineSnapshot {
+  return {
+    id: "10",
+    segments: [
+      { id: "1", type: "initial", text: "雨停以后。" },
+      {
+        id: "2",
+        type: "generated",
+        generationMode: "append",
+        text: "林夏走向钟楼。",
+      },
+      {
+        id: "3",
+        type: "generated",
+        generationMode: input.latestGenerationMode ?? "append",
+        text: input.latestText,
+      },
+    ],
+    latestGeneration: {
+      segmentId: "3",
+      model: "model",
+      elapsedMs: 42,
+      usage: {
+        inputTokens: 7,
+        outputTokens: 8,
+        totalTokens: 15,
+      },
+    },
+    updatedAt: "2026-07-22T00:00:00.000Z",
+  };
+}
+
+function createContextSnapshot() {
+  return emptyStoryContextSnapshot;
+}
+
+function createContextDraft(): StoryContextDraftSnapshot {
+  return {
+    worldFacts: [],
+    characters: [],
+    currentScene: {
+      location: "",
+      timeLabel: "",
+      presentCharacterRefs: [],
+      observableFactRefs: [],
+      sceneStatus: "",
+      sourceRefs: [],
+    },
+  };
+}
+
+function createContextBundle(
+  storyContext = emptyStoryContextSnapshot,
+): StoryWriterContextBundle {
+  return {
+    storyContext,
+    observableFacts: [],
+    activeCharacters: [],
+    recentHistoryRounds: [],
+    historyWasTrimmed: false,
+    contextWasMissing: false,
+  };
 }

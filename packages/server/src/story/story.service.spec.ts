@@ -17,6 +17,8 @@ import {
   STORY_DIALOGUE_SYSTEM_PROMPT,
   STORY_SYSTEM_PROMPT,
   StoryService,
+  type StoryHistoryRound,
+  type StoryWriterContextBundle,
 } from "./story.service";
 
 describe("StoryService", () => {
@@ -233,27 +235,32 @@ describe("StoryService", () => {
   });
 
   it("builds trimmed storyline prompts without initial story text", () => {
+    const historyRounds = [
+      {
+        segmentId: "4",
+        roundIndex: 4,
+        generationMode: "append" as const,
+        instruction: "调查旧书店。",
+        generatedText: "林夏回到旧书店。",
+      },
+      {
+        segmentId: "5",
+        roundIndex: 5,
+        generationMode: "append" as const,
+        instruction: "前往钟楼。",
+        generatedText: "林夏走向钟楼。",
+      },
+    ];
     const request = buildStoryLlmRequestFromContext({
       currentInstruction: "继续追查钟楼。",
-      historyRounds: [
-        {
-          roundIndex: 4,
-          generationMode: "append",
-          instruction: "调查旧书店。",
-          generatedText: "林夏回到旧书店。",
-        },
-        {
-          roundIndex: 5,
-          generationMode: "append",
-          instruction: "前往钟楼。",
-          generatedText: "林夏走向钟楼。",
-        },
-      ],
-      historyWasTrimmed: true,
+      contextBundle: createContextBundle({
+        recentHistoryRounds: historyRounds,
+        historyWasTrimmed: true,
+      }),
     });
 
     expect(request.systemPrompt).toBe(STORY_SYSTEM_PROMPT);
-    expect(request.userPrompt).toContain("近期故事正文片段：");
+    expect(request.userPrompt).toContain("近期故事正文片段");
     expect(request.userPrompt).toContain("第 4 轮续写正文：");
     expect(request.userPrompt).toContain("林夏回到旧书店。");
     expect(request.userPrompt).toContain("近期生成指令轨迹：");
@@ -262,41 +269,31 @@ describe("StoryService", () => {
     expect(request.userPrompt).not.toContain("故事正文：\n");
   });
 
-  it("injects character summaries before recent history", () => {
+  it("injects story context before recent history", () => {
     const request = buildStoryLlmRequestFromContext({
       currentInstruction: "让林夏继续调查。",
-      characterSummary: {
-        characters: [
+      initialStoryText: "雨停以后。",
+      contextBundle: createContextBundle({
+        recentHistoryRounds: [
           {
-            name: "林夏",
-            aliases: [],
-            identity: "调查旧钟楼的记者",
-            relationships: ["与周岚是旧识"],
-            motivation: "查清钟楼失踪案",
-            currentStatus: "正在前往钟楼",
+            segmentId: "2",
+            roundIndex: 1,
+            generationMode: "append",
+            instruction: "前往钟楼。",
+            generatedText: "林夏走向钟楼。",
           },
         ],
-      },
-      initialStoryText: "雨停以后。",
-      historyRounds: [
-        {
-          roundIndex: 1,
-          generationMode: "append",
-          instruction: "前往钟楼。",
-          generatedText: "林夏走向钟楼。",
-        },
-      ],
-      historyWasTrimmed: false,
+      }),
     });
 
-    const summaryIndex = request.userPrompt.indexOf("角色摘要：");
+    const contextIndex = request.userPrompt.indexOf("当前可观察世界事实：");
     const storyIndex = request.userPrompt.indexOf("故事正文：");
-    const historyIndex = request.userPrompt.indexOf("近期生成轨迹：");
+    const historyIndex = request.userPrompt.indexOf("近期生成轨迹");
 
-    expect(summaryIndex).toBeGreaterThanOrEqual(0);
-    expect(storyIndex).toBeGreaterThan(summaryIndex);
+    expect(contextIndex).toBeGreaterThanOrEqual(0);
+    expect(storyIndex).toBeGreaterThan(contextIndex);
     expect(historyIndex).toBeGreaterThan(storyIndex);
-    expect(request.userPrompt).toContain('"name": "林夏"');
+    expect(request.userPrompt).toContain("角色 [char_1] 林夏");
     expect(request.userPrompt).toContain("调查旧钟楼的记者");
   });
 
@@ -305,34 +302,24 @@ describe("StoryService", () => {
       rewriteInstruction: "文风更加轻快，增加气味描写。",
       originalInstruction: "前往钟楼。",
       originalGeneratedText: "林夏走向钟楼。",
-      characterSummary: {
-        characters: [
+      initialStoryText: "雨停以后。",
+      contextBundle: createContextBundle({
+        recentHistoryRounds: [
           {
-            name: "林夏",
-            aliases: [],
-            identity: "调查旧钟楼的记者",
-            relationships: ["与周岚是旧识"],
-            motivation: "查清钟楼失踪案",
-            currentStatus: "正在前往钟楼",
+            segmentId: "2",
+            roundIndex: 1,
+            generationMode: "append",
+            instruction: "调查旧书店。",
+            generatedText: "林夏回到旧书店。",
           },
         ],
-      },
-      initialStoryText: "雨停以后。",
-      historyRoundsBeforeTarget: [
-        {
-          roundIndex: 1,
-          generationMode: "append",
-          instruction: "调查旧书店。",
-          generatedText: "林夏回到旧书店。",
-        },
-      ],
-      historyWasTrimmed: false,
+      }),
     });
 
     expect(request.systemPrompt).toBe(STORY_SYSTEM_PROMPT);
-    expect(request.userPrompt).toContain("角色摘要：");
+    expect(request.userPrompt).toContain("当前可观察世界事实：");
     expect(request.userPrompt).toContain("故事正文：");
-    expect(request.userPrompt).toContain("目标段之前的近期生成轨迹：");
+    expect(request.userPrompt).toContain("目标段之前的近期生成轨迹");
     expect(request.userPrompt).toContain("原续写指令：");
     expect(request.userPrompt).toContain("前往钟楼。");
     expect(request.userPrompt).toContain("原生成正文：");
@@ -359,27 +346,17 @@ describe("StoryService", () => {
         "互动：",
         "馥冰回头看了他一眼。",
       ].join("\n"),
-      characterSummary: {
-        characters: [
+      contextBundle: createContextBundle({
+        recentHistoryRounds: [
           {
-            name: "馥冰",
-            aliases: [],
-            identity: "住在同一屋檐下的少女",
-            relationships: ["和大凡经常拌嘴"],
-            motivation: "",
-            currentStatus: "正在厨房",
+            segmentId: "3",
+            roundIndex: 1,
+            generationMode: "dialogue",
+            instruction: "大凡让馥冰拿奶茶。",
+            generatedText: "馥冰没好气地瞪了他一眼。",
           },
         ],
-      },
-      recentHistoryRounds: [
-        {
-          roundIndex: 1,
-          generationMode: "dialogue",
-          instruction: "大凡让馥冰拿奶茶。",
-          generatedText: "馥冰没好气地瞪了他一眼。",
-        },
-      ],
-      historyWasTrimmed: false,
+      }),
     });
 
     expect(request.systemPrompt).toBe(STORY_DIALOGUE_SYSTEM_PROMPT);
@@ -408,15 +385,17 @@ describe("StoryService", () => {
       originalInput: "大凡让馥冰拿奶茶。",
       originalGeneratedText: "馥冰叹了口气，还是走向厨房。",
       currentSceneText: "章节正文：\n大凡靠在沙发上，馥冰站在厨房门口。",
-      recentHistoryRoundsBeforeTarget: [
-        {
-          roundIndex: 1,
-          generationMode: "append",
-          instruction: "进入客厅。",
-          generatedText: "两人在客厅里拌嘴。",
-        },
-      ],
-      historyWasTrimmed: false,
+      contextBundle: createContextBundle({
+        recentHistoryRounds: [
+          {
+            segmentId: "2",
+            roundIndex: 1,
+            generationMode: "append",
+            instruction: "进入客厅。",
+            generatedText: "两人在客厅里拌嘴。",
+          },
+        ],
+      }),
     });
 
     expect(request.systemPrompt).toBe(STORY_DIALOGUE_SYSTEM_PROMPT);
@@ -450,6 +429,95 @@ async function collectAsyncIterable<T>(
   }
 
   return events;
+}
+
+function createContextBundle(
+  options: Readonly<{
+    recentHistoryRounds?: readonly StoryHistoryRound[];
+    historyWasTrimmed?: boolean;
+  }> = {},
+): StoryWriterContextBundle {
+  return {
+    storyContext: {
+      worldFacts: [
+        {
+          id: "fact_1",
+          kind: "environment",
+          text: "旧钟楼的门从里面锁住了。",
+          status: "active",
+          visibility: "observable",
+          sourceSegmentIds: ["1"],
+        },
+      ],
+      characters: [
+        {
+          id: "char_1",
+          name: "林夏",
+          aliases: ["馥冰"],
+          identity: "调查旧钟楼的记者",
+          traits: ["谨慎"],
+          relationships: [],
+          motivations: ["查清钟楼失踪案"],
+          currentStatus: "正在前往钟楼",
+          beliefs: [
+            {
+              text: "她知道旧钟楼的门锁住了。",
+              truthStatus: "true",
+              factIds: ["fact_1"],
+              sourceSegmentIds: ["1"],
+            },
+          ],
+          opinions: [],
+          actionTendencies: ["先观察再行动"],
+          sourceSegmentIds: ["1"],
+        },
+      ],
+      currentScene: {
+        location: "旧钟楼门口",
+        timeLabel: "雨后",
+        presentCharacterIds: ["char_1"],
+        observableFactIds: ["fact_1"],
+        sceneStatus: "林夏正在调查钟楼。",
+        sourceSegmentIds: ["1"],
+      },
+    },
+    observableFacts: [
+      {
+        id: "fact_1",
+        kind: "environment",
+        text: "旧钟楼的门从里面锁住了。",
+        status: "active",
+        visibility: "observable",
+        sourceSegmentIds: ["1"],
+      },
+    ],
+    activeCharacters: [
+      {
+        id: "char_1",
+        name: "林夏",
+        aliases: ["馥冰"],
+        identity: "调查旧钟楼的记者",
+        traits: ["谨慎"],
+        relationships: [],
+        motivations: ["查清钟楼失踪案"],
+        currentStatus: "正在前往钟楼",
+        beliefs: [
+          {
+            text: "她知道旧钟楼的门锁住了。",
+            truthStatus: "true",
+            factIds: ["fact_1"],
+            sourceSegmentIds: ["1"],
+          },
+        ],
+        opinions: [],
+        actionTendencies: ["先观察再行动"],
+        sourceSegmentIds: ["1"],
+      },
+    ],
+    recentHistoryRounds: options.recentHistoryRounds ?? [],
+    historyWasTrimmed: options.historyWasTrimmed ?? false,
+    contextWasMissing: false,
+  };
 }
 
 function createFailingStream(error: Error): AsyncIterable<never> {

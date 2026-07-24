@@ -26,9 +26,9 @@ export class StorySegmentNotRewritableError extends Error {
   }
 }
 
-export class StorySummaryFailedError extends Error {
-  constructor(message = "Failed to generate story summary") {
+export class StoryContextFailedError extends Error {
+  constructor(message = "Failed to generate story context") {
     super(message);
-    this.name = "StorySummaryFailedError";
+    this.name = "StoryContextFailedError";
   }
 }

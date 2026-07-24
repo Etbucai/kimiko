@@ -12,11 +12,11 @@ import type { IncomingMessage } from "node:http";
 import WebSocket, { WebSocketServer } from "ws";
 import { verifyAccessToken } from "../auth/jwt-auth.utils";
 import {
+  StoryContextFailedError,
   StorySegmentNotRewritableError,
   StorylineBusyError,
   StorylineNotFoundError,
   StorylineSaveFailedError,
-  StorySummaryFailedError,
 } from "../storyline/storyline.errors";
 import { StorylineGenerationService } from "../storyline/storyline-generation.service";
 import type { StorylineStreamEvent } from "../storyline/storyline.types";
@@ -40,7 +40,7 @@ const errorMessages: Record<RealtimeErrorCode, string> = {
   STORYLINE_NOT_FOUND: "故事线不存在",
   STORYLINE_BUSY: "当前故事线正在生成，请稍后重试",
   STORYLINE_SAVE_FAILED: "保存失败，请稍后重试",
-  STORY_SUMMARY_FAILED: "生成失败，请稍后重试",
+  STORY_CONTEXT_FAILED: "生成失败，请稍后重试",
   STORY_SEGMENT_NOT_REWRITABLE: "当前段落不可重写",
 };
 
@@ -215,9 +215,9 @@ export class RealtimeGateway
       return;
     }
 
-    if (event.type === "summaryStarted") {
+    if (event.type === "contextStarted") {
       sendEvent(client, {
-        type: "story.summary.started",
+        type: "story.context.started",
         requestId,
       });
       return;
@@ -364,8 +364,8 @@ function mapStreamErrorCode(error: unknown): RealtimeErrorCode {
     return "STORY_SEGMENT_NOT_REWRITABLE";
   }
 
-  if (error instanceof StorySummaryFailedError) {
-    return "STORY_SUMMARY_FAILED";
+  if (error instanceof StoryContextFailedError) {
+    return "STORY_CONTEXT_FAILED";
   }
 
   if (error instanceof BadGatewayException) {

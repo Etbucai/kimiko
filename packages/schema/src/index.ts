@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export { z };
+
 export const HealthStatusSchema = z.object({
   status: z.enum(["ok", "degraded"]),
   timestamp: z.string().datetime(),
@@ -313,6 +315,129 @@ export type StoryCharacterSummarySnapshot = z.infer<
   typeof StoryCharacterSummarySnapshotSchema
 >;
 
+export const StoryContextCharacterIdSchema = z
+  .string()
+  .trim()
+  .regex(/^char_[1-9]\d*$/);
+
+export type StoryContextCharacterId = z.infer<
+  typeof StoryContextCharacterIdSchema
+>;
+
+export const StoryContextFactIdSchema = z
+  .string()
+  .trim()
+  .regex(/^fact_[1-9]\d*$/);
+
+export type StoryContextFactId = z.infer<typeof StoryContextFactIdSchema>;
+
+export const StoryWorldFactKindSchema = z.enum([
+  "event",
+  "setting",
+  "environment",
+  "relationship",
+  "status",
+  "term",
+]);
+
+export type StoryWorldFactKind = z.infer<typeof StoryWorldFactKindSchema>;
+
+export const StoryWorldFactSchema = z
+  .object({
+    id: StoryContextFactIdSchema,
+    kind: StoryWorldFactKindSchema,
+    text: z.string().trim().min(1).max(360),
+    status: z.enum(["active", "resolved"]),
+    visibility: z.enum(["observable", "public", "hidden"]),
+    sourceSegmentIds: z.array(StorylineSegmentIdSchema).min(1).max(12),
+  })
+  .strict();
+
+export type StoryWorldFact = z.infer<typeof StoryWorldFactSchema>;
+
+export const StoryCharacterBeliefSchema = z
+  .object({
+    text: z.string().trim().min(1).max(360),
+    truthStatus: z.enum(["true", "false", "unknown"]),
+    factIds: z.array(StoryContextFactIdSchema).max(8),
+    sourceSegmentIds: z.array(StorylineSegmentIdSchema).min(1).max(12),
+  })
+  .strict();
+
+export type StoryCharacterBelief = z.infer<
+  typeof StoryCharacterBeliefSchema
+>;
+
+export const StoryCharacterOpinionSchema = z
+  .object({
+    target: z.string().trim().min(1).max(120),
+    text: z.string().trim().min(1).max(360),
+    sourceSegmentIds: z.array(StorylineSegmentIdSchema).min(1).max(12),
+  })
+  .strict();
+
+export type StoryCharacterOpinion = z.infer<
+  typeof StoryCharacterOpinionSchema
+>;
+
+export const StoryCharacterRelationshipSchema = z
+  .object({
+    targetCharacterId: StoryContextCharacterIdSchema,
+    text: z.string().trim().min(1).max(360),
+    sourceSegmentIds: z.array(StorylineSegmentIdSchema).min(1).max(12),
+  })
+  .strict();
+
+export type StoryCharacterRelationship = z.infer<
+  typeof StoryCharacterRelationshipSchema
+>;
+
+export const StoryCharacterContextSchema = z
+  .object({
+    id: StoryContextCharacterIdSchema,
+    name: z.string().trim().min(1).max(80),
+    aliases: z.array(z.string().trim().min(1).max(80)).max(10),
+    identity: z.string().trim().max(360),
+    traits: z.array(z.string().trim().min(1).max(120)).max(20),
+    relationships: z.array(StoryCharacterRelationshipSchema).max(30),
+    motivations: z.array(z.string().trim().min(1).max(180)).max(20),
+    currentStatus: z.string().trim().max(360),
+    beliefs: z.array(StoryCharacterBeliefSchema).max(30),
+    opinions: z.array(StoryCharacterOpinionSchema).max(20),
+    actionTendencies: z.array(z.string().trim().min(1).max(180)).max(12),
+    sourceSegmentIds: z.array(StorylineSegmentIdSchema).min(1).max(20),
+  })
+  .strict();
+
+export type StoryCharacterContext = z.infer<
+  typeof StoryCharacterContextSchema
+>;
+
+export const StoryCurrentSceneSchema = z
+  .object({
+    location: z.string().trim().max(160),
+    timeLabel: z.string().trim().max(160),
+    presentCharacterIds: z.array(StoryContextCharacterIdSchema).max(20),
+    observableFactIds: z.array(StoryContextFactIdSchema).max(40),
+    sceneStatus: z.string().trim().max(600),
+    sourceSegmentIds: z.array(StorylineSegmentIdSchema).max(12),
+  })
+  .strict();
+
+export type StoryCurrentScene = z.infer<typeof StoryCurrentSceneSchema>;
+
+export const StoryContextSnapshotSchema = z
+  .object({
+    worldFacts: z.array(StoryWorldFactSchema).max(80),
+    characters: z.array(StoryCharacterContextSchema).max(20),
+    currentScene: StoryCurrentSceneSchema,
+  })
+  .strict();
+
+export type StoryContextSnapshot = z.infer<
+  typeof StoryContextSnapshotSchema
+>;
+
 export const GetStorylineSummaryResponseSchema = z
   .object({
     summary: StoryCharacterSummarySnapshotSchema.nullable(),
@@ -321,6 +446,16 @@ export const GetStorylineSummaryResponseSchema = z
 
 export type GetStorylineSummaryResponse = z.infer<
   typeof GetStorylineSummaryResponseSchema
+>;
+
+export const GetStorylineContextResponseSchema = z
+  .object({
+    context: StoryContextSnapshotSchema.nullable(),
+  })
+  .strict();
+
+export type GetStorylineContextResponse = z.infer<
+  typeof GetStorylineContextResponseSchema
 >;
 
 export const StoryContinueCreatePayloadSchema = z
@@ -448,6 +583,17 @@ export type StorySummaryStartedServerEvent = z.infer<
   typeof StorySummaryStartedServerEventSchema
 >;
 
+export const StoryContextStartedServerEventSchema = z
+  .object({
+    type: z.literal("story.context.started"),
+    requestId: StoryRealtimeRequestIdSchema,
+  })
+  .strict();
+
+export type StoryContextStartedServerEvent = z.infer<
+  typeof StoryContextStartedServerEventSchema
+>;
+
 export const StoryCompletedServerEventSchema = z
   .object({
     type: z.literal("story.completed"),
@@ -484,6 +630,7 @@ export const StoryRealtimeErrorCodeSchema = z.enum([
   "STORYLINE_BUSY",
   "STORYLINE_SAVE_FAILED",
   "STORY_SUMMARY_FAILED",
+  "STORY_CONTEXT_FAILED",
   "STORY_SEGMENT_NOT_REWRITABLE",
 ]);
 
@@ -507,6 +654,7 @@ export const StoryRealtimeServerEventSchema = z.discriminatedUnion("type", [
   StoryStartedServerEventSchema,
   StoryChunkServerEventSchema,
   StorySummaryStartedServerEventSchema,
+  StoryContextStartedServerEventSchema,
   StoryCompletedServerEventSchema,
   StoryCancelledServerEventSchema,
   StoryErrorServerEventSchema,

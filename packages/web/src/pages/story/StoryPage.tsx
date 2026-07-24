@@ -3,7 +3,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
 import type {
-  StoryCharacterSummarySnapshot,
   StoryContinuePayload,
   StorylineGenerationMetadata,
   StorylineSegmentId,
@@ -18,7 +17,6 @@ import { startStoryRealtimeGeneration } from "../../story/storyRealtimeApi";
 import {
   getRecentStoryline,
   getStoryline,
-  getStorylineSummary,
 } from "../../story/storylineApi";
 import { StoryInitialInput } from "./StoryInitialInput";
 import { StoryActionDrawer } from "./StoryActionDrawer";
@@ -32,7 +30,6 @@ import type {
   StorylineReaderViewportState,
 } from "./StorylineReader";
 import { StorylineRestoreError } from "./StorylineRestoreError";
-import { StorySummaryDrawer } from "./StorySummaryDrawer";
 import { getLatestGeneratedSegmentId } from "./storylineSegmentUtils";
 
 type StorylinePageStatus =
@@ -41,7 +38,7 @@ type StorylinePageStatus =
   | "ready"
   | "connecting"
   | "streaming"
-  | "summarizing"
+  | "updatingContext"
   | "completed"
   | "cancelled"
   | "failed"
@@ -62,8 +59,7 @@ type PayloadValidationResult =
     }>
   | Readonly<{ success: false; fieldErrors: StorylineFieldErrors }>;
 
-type TemporaryTextStatus = "streaming" | "summarizing" | null;
-type SummaryDrawerStatus = "idle" | "loading" | "success" | "failed";
+type TemporaryTextStatus = "streaming" | "updatingContext" | null;
 type GenerationIntent =
   | Readonly<{ type: "create" }>
   | Readonly<{ type: "append" }>
@@ -81,7 +77,6 @@ const generationFailureMessage = "生成失败，请稍后重试";
 const generationCancelledMessage = "已取消生成";
 const restoreFailureMessage = "恢复故事线失败，请稍后重试";
 const notFoundFailureTitle = "故事线不可用";
-const summaryFailureMessage = "获取角色摘要失败，请稍后重试";
 const bottomScrollThresholdPx = 140;
 
 export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
@@ -119,19 +114,11 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     restoreFailureMessage,
   );
   const [generationStatusMessage, setGenerationStatusMessage] = useState("");
-  const [isSummaryDrawerOpen, setIsSummaryDrawerOpen] = useState(false);
-  const [summaryDrawerStatus, setSummaryDrawerStatus] =
-    useState<SummaryDrawerStatus>("idle");
-  const [characterSummary, setCharacterSummary] =
-    useState<StoryCharacterSummarySnapshot | null>(null);
-  const [summaryErrorMessage, setSummaryErrorMessage] = useState(
-    summaryFailureMessage,
-  );
 
   const isGenerating =
     status === "connecting" ||
     status === "streaming" ||
-    status === "summarizing";
+    status === "updatingContext";
   const isComposerVisible =
     storyline === null && status !== "loading" && status !== "restoreFailed";
   const temporaryTextStatus = getTemporaryTextStatus(status);
@@ -163,10 +150,6 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     setRestoreErrorTitle("故事线恢复失败");
     setRestoreErrorMessage(restoreFailureMessage);
     setGenerationStatusMessage("");
-    setIsSummaryDrawerOpen(false);
-    setSummaryDrawerStatus("idle");
-    setCharacterSummary(null);
-    setSummaryErrorMessage(summaryFailureMessage);
 
     if (mode === "new") {
       setStoryline(null);
@@ -378,10 +361,10 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
           shouldFollowScrollRef.current = isNearBottom();
           setTemporaryAppendText((previousText) => `${previousText}${delta}`);
         },
-        onSummaryStarted() {
+        onContextStarted() {
           shouldFollowScrollRef.current =
             intent.type !== "rewrite" && isNearBottom();
-          setStatus("summarizing");
+          setStatus("updatingContext");
         },
         onCompleted(event) {
           generationHandleRef.current = null;
@@ -513,47 +496,6 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     void navigate("/storylines");
   }
 
-  function handleOpenSummary(): void {
-    if (storyline === null) {
-      return;
-    }
-
-    setIsSummaryDrawerOpen(true);
-    void loadSummary(storyline.id);
-  }
-
-  function handleRetrySummary(): void {
-    if (storyline === null) {
-      return;
-    }
-
-    void loadSummary(storyline.id);
-  }
-
-  async function loadSummary(storylineId: string): Promise<void> {
-    setSummaryDrawerStatus("loading");
-    setSummaryErrorMessage(summaryFailureMessage);
-
-    const result = await getStorylineSummary(storylineId);
-    if (!isMountedRef.current) {
-      return;
-    }
-
-    if (result.status === "authRequired") {
-      void navigate("/login", { replace: true });
-      return;
-    }
-
-    if (result.status === "failed") {
-      setSummaryErrorMessage(result.message);
-      setSummaryDrawerStatus("failed");
-      return;
-    }
-
-    setCharacterSummary(result.summary);
-    setSummaryDrawerStatus("success");
-  }
-
   const latestGeneration = storyline?.latestGeneration ?? null;
 
   return (
@@ -610,10 +552,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
             )}
 
             {latestGeneration !== null ? (
-              <LatestGenerationMetadata
-                metadata={latestGeneration}
-                onOpenSummary={handleOpenSummary}
-              />
+              <LatestGenerationMetadata metadata={latestGeneration} />
             ) : null}
 
             {generationStatusMessage.length > 0 ? (
@@ -683,14 +622,6 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
         onSelectAction={handleSelectStoryAction}
       />
 
-      <StorySummaryDrawer
-        errorMessage={summaryErrorMessage}
-        isOpen={isSummaryDrawerOpen}
-        onClose={() => setIsSummaryDrawerOpen(false)}
-        onRetry={handleRetrySummary}
-        status={summaryDrawerStatus}
-        summary={characterSummary}
-      />
     </main>
   );
 }
@@ -821,8 +752,8 @@ function getTemporaryTextStatus(
   switch (status) {
     case "streaming":
       return "streaming";
-    case "summarizing":
-      return "summarizing";
+    case "updatingContext":
+      return "updatingContext";
     default:
       return null;
   }
@@ -977,7 +908,7 @@ function TemporaryGeneratedText({
       </p>
       {status !== null ? (
         <p className="mt-4 mb-0 text-xs text-[var(--text)]" role="status">
-          {status === "streaming" ? "正在生成..." : "正在记录角色摘要..."}
+          {status === "streaming" ? "正在生成..." : "正在更新故事上下文..."}
         </p>
       ) : null}
     </article>
@@ -986,26 +917,17 @@ function TemporaryGeneratedText({
 
 interface LatestGenerationMetadataProps {
   metadata: StorylineGenerationMetadata;
-  onOpenSummary: () => void;
 }
 
 function LatestGenerationMetadata({
   metadata,
-  onOpenSummary,
 }: LatestGenerationMetadataProps): JSX.Element {
   return (
-    <div className="flex flex-col gap-2 rounded-2xl border border-[var(--border)] bg-[var(--panel-bg)] px-4 py-3 text-xs leading-5 text-[var(--text)] md:flex-row md:items-center md:justify-between">
+    <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-bg)] px-4 py-3 text-xs leading-5 text-[var(--text)]">
       <p className="m-0">
         模型：{metadata.model} / 耗时：{metadata.elapsedMs}ms / Token：
         {metadata.usage.totalTokens}
       </p>
-      <button
-        className="self-start rounded-full border border-[var(--border)] bg-transparent px-3 py-1 font-semibold text-[var(--text-h)] md:self-auto"
-        onClick={onOpenSummary}
-        type="button"
-      >
-        查看角色摘要
-      </button>
     </div>
   );
 }

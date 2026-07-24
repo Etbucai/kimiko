@@ -2,8 +2,8 @@ import { Controller, Get, NotFoundException, UseGuards } from "@nestjs/common";
 import { Param } from "@nestjs/common";
 import type {
   GetRecentStorylineResponse,
+  GetStorylineContextResponse,
   GetStorylineResponse,
-  GetStorylineSummaryResponse,
   ListStorylinesResponse,
 } from "@kimiko/schema";
 import type { AuthenticatedUser } from "../auth/auth.types";
@@ -50,19 +50,19 @@ export class StorylineController {
     return { storyline };
   }
 
-  @Get(":storylineId/summary")
+  @Get(":storylineId/context")
   @UseGuards(JwtAuthGuard)
-  async getSummary(
+  async getContext(
     @CurrentUser() user: AuthenticatedUser,
     @Param("storylineId") storylineId: string,
-  ): Promise<GetStorylineSummaryResponse> {
+  ): Promise<GetStorylineContextResponse> {
     try {
-      const summary = await this.storylineService.getCharacterSummaryForUser(
+      const context = await this.storylineService.getStoryContextForUser(
         user.userId,
         storylineId,
       );
 
-      return { summary };
+      return { context };
     } catch (error: unknown) {
       throw mapStorylineHttpError(error);
     }

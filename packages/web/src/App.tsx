@@ -10,6 +10,7 @@ import { Toaster } from "sonner";
 import { RequireAuth } from "./auth/RequireAuth";
 import { LoginPage } from "./pages/auth/LoginPage";
 import { RegisterPage } from "./pages/auth/RegisterPage";
+import { StoryContextDebugPage } from "./pages/story/StoryContextDebugPage";
 import { StorylineListPage } from "./pages/story/StorylineListPage";
 import { StoryPage } from "./pages/story/StoryPage";
 
@@ -42,6 +43,14 @@ function App(): JSX.Element {
           }
         />
         <Route
+          path="/storylines/:storylineId/context"
+          element={
+            <RequireAuth>
+              <StorylineContextRoute />
+            </RequireAuth>
+          }
+        />
+        <Route
           path="/storylines/:storylineId"
           element={
             <RequireAuth>
@@ -65,6 +74,15 @@ function StorylineDetailRoute(): JSX.Element {
   }
 
   return <StoryPage mode="detail" storylineId={storylineId} />;
+}
+
+function StorylineContextRoute(): JSX.Element {
+  const { storylineId } = useParams<"storylineId">();
+  if (storylineId === undefined || storylineId.length === 0) {
+    return <Navigate to="/storylines" replace />;
+  }
+
+  return <StoryContextDebugPage storylineId={storylineId} />;
 }
 
 export default App;

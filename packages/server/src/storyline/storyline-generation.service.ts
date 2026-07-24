@@ -1,14 +1,16 @@
 import { Injectable } from "@nestjs/common";
 import { Env } from "../env";
 import { StoryService } from "../story/story.service";
+import type { StoryHistoryRound, StoryLlmContext } from "../story/story.service";
 import {
   StorySegmentNotRewritableError,
   StorylineNotFoundError,
 } from "./storyline.errors";
+import { StorylineContextService } from "./storyline-context.service";
+import { emptyStoryContextSnapshot } from "./storyline-context.types";
+import type { StoryContextSourceRefMapping } from "./storyline-context.types";
 import { StorylineLockService } from "./storyline-lock.service";
 import { StorylineService } from "./storyline.service";
-import { StorylineSummaryService } from "./storyline-summary.service";
-import { emptyCharacterSummarySnapshot } from "./storyline-summary.types";
 import type {
   ContinueStorylineInput,
   HistoryScoreConfig,
@@ -23,7 +25,7 @@ export class StorylineGenerationService {
     private readonly storylineService: StorylineService,
     private readonly storyService: StoryService,
     private readonly storylineLockService: StorylineLockService,
-    private readonly storylineSummaryService: StorylineSummaryService,
+    private readonly storylineContextService: StorylineContextService,
   ) {}
 
   async *streamContinueStoryline(
@@ -61,13 +63,21 @@ export class StorylineGenerationService {
     );
 
     try {
-      for await (const event of this.storyService.streamContinueStoryFromContext(
-        {
-          currentInstruction: input.payload.instruction,
-          initialStoryText: input.payload.initialStoryText,
-          historyRounds: [],
+      const writerContext: StoryLlmContext = {
+        currentInstruction: input.payload.instruction,
+        initialStoryText: input.payload.initialStoryText,
+        contextBundle: {
+          storyContext: emptyStoryContextSnapshot,
+          observableFacts: [],
+          activeCharacters: [],
+          recentHistoryRounds: [],
           historyWasTrimmed: false,
+          contextWasMissing: true,
         },
+      };
+
+      for await (const event of this.storyService.streamContinueStoryFromContext(
+        writerContext,
         options,
       )) {
         if (options.signal.aborted) {
@@ -79,16 +89,28 @@ export class StorylineGenerationService {
           continue;
         }
 
-        yield { type: "summaryStarted" };
+        yield { type: "contextStarted" };
         if (options.signal.aborted) {
           return;
         }
 
-        const characterSummary =
-          await this.storylineSummaryService.generateCharacterSummary(
+        const contextDraft =
+          await this.storylineContextService.generateStoryContextDraft(
             {
-              operation: "append",
-              previousSummary: null,
+              operation: "create",
+              previousContext: null,
+              sourceRefMappings: [
+                {
+                  ref: "initial",
+                  label: "初始故事正文",
+                  text: input.payload.initialStoryText,
+                },
+                {
+                  ref: "current",
+                  label: "本轮生成正文",
+                  text: event.continuedStory,
+                },
+              ],
               initialStoryText: input.payload.initialStoryText,
               recentHistoryRounds: [],
               currentInstruction: input.payload.instruction,
@@ -101,7 +123,7 @@ export class StorylineGenerationService {
         }
 
         const storyline =
-          await this.storylineService.saveCreatedStorylineWithSummary({
+          await this.storylineService.saveCreatedStorylineWithContext({
             userId: input.userId,
             initialStoryText: input.payload.initialStoryText,
             instruction: input.payload.instruction,
@@ -109,7 +131,7 @@ export class StorylineGenerationService {
             model: event.model,
             elapsedMs: event.elapsedMs,
             usage: event.usage,
-            characterSummary,
+            contextDraft,
           });
 
         yield {
@@ -150,8 +172,7 @@ export class StorylineGenerationService {
         currentInstruction: input.payload.instruction,
         historyScoreConfig: getHistoryScoreConfig(),
       });
-      const previousSummary =
-        context.characterSummary ?? emptyCharacterSummarySnapshot;
+      const previousContext = context.contextBundle.storyContext;
 
       for await (const event of this.storyService.streamContinueStoryFromContext(
         context,
@@ -166,20 +187,26 @@ export class StorylineGenerationService {
           continue;
         }
 
-        yield { type: "summaryStarted" };
+        yield { type: "contextStarted" };
         if (options.signal.aborted) {
           return;
         }
 
-        const characterSummary =
-          await this.storylineSummaryService.generateCharacterSummary(
+        const contextDraft =
+          await this.storylineContextService.generateStoryContextDraft(
             {
               operation: "append",
-              previousSummary,
+              previousContext,
+              sourceRefMappings: buildSourceRefMappings({
+                initialStoryText: context.initialStoryText,
+                recentHistoryRounds: context.contextBundle.recentHistoryRounds,
+                currentLabel: "本轮生成正文",
+                generatedText: event.continuedStory,
+              }),
               ...(context.initialStoryText !== undefined
                 ? { initialStoryText: context.initialStoryText }
                 : {}),
-              recentHistoryRounds: context.historyRounds,
+              recentHistoryRounds: context.contextBundle.recentHistoryRounds,
               currentInstruction: input.payload.instruction,
               generatedText: event.continuedStory,
             },
@@ -190,7 +217,7 @@ export class StorylineGenerationService {
         }
 
         const savedStoryline =
-          await this.storylineService.saveAppendedSegmentWithSummary({
+          await this.storylineService.saveAppendedSegmentWithContext({
             userId: input.userId,
             storylineId: storyline.externalId,
             instruction: input.payload.instruction,
@@ -198,8 +225,8 @@ export class StorylineGenerationService {
             model: event.model,
             elapsedMs: event.elapsedMs,
             usage: event.usage,
-            previousSummary,
-            characterSummary,
+            previousContext,
+            contextDraft,
           });
 
         yield {
@@ -263,20 +290,26 @@ export class StorylineGenerationService {
           continue;
         }
 
-        yield { type: "summaryStarted" };
+        yield { type: "contextStarted" };
         if (options.signal.aborted) {
           return;
         }
 
-        const characterSummary =
-          await this.storylineSummaryService.generateCharacterSummary(
+        const contextDraft =
+          await this.storylineContextService.generateStoryContextDraft(
             {
               operation: "rewrite",
-              previousSummary: context.previousSummary,
+              previousContext: context.previousContext,
+              sourceRefMappings: buildSourceRefMappings({
+                initialStoryText: context.initialStoryText,
+                recentHistoryRounds: context.contextHistoryRounds,
+                currentLabel: "重写后的目标段正文",
+                generatedText: event.continuedStory,
+              }),
               ...(context.initialStoryText !== undefined
                 ? { initialStoryText: context.initialStoryText }
                 : {}),
-              recentHistoryRounds: context.summaryHistoryRounds,
+              recentHistoryRounds: context.contextHistoryRounds,
               currentInstruction: input.payload.instruction,
               generatedText: event.continuedStory,
             },
@@ -287,7 +320,7 @@ export class StorylineGenerationService {
         }
 
         const savedStoryline =
-          await this.storylineService.saveRewrittenSegmentWithSummary({
+          await this.storylineService.saveRewrittenSegmentWithContext({
             userId: input.userId,
             storylineId: storyline.externalId,
             segmentId: context.targetSegmentId,
@@ -296,7 +329,8 @@ export class StorylineGenerationService {
             model: event.model,
             elapsedMs: event.elapsedMs,
             usage: event.usage,
-            characterSummary,
+            previousContext: context.previousContext,
+            contextDraft,
           });
 
         yield {
@@ -353,7 +387,7 @@ export class StorylineGenerationService {
 
         if (isNoOpDialogueText(event.continuedStory)) {
           const savedStoryline =
-            await this.storylineService.saveDialogueSegmentWithoutSummaryUpdate(
+            await this.storylineService.saveDialogueSegmentWithoutContextUpdate(
               {
                 userId: input.userId,
                 storylineId: storyline.externalId,
@@ -362,7 +396,7 @@ export class StorylineGenerationService {
                 model: event.model,
                 elapsedMs: event.elapsedMs,
                 usage: event.usage,
-                previousSummary: context.previousSummary,
+                previousContext: context.previousContext,
               },
             );
           if (options.signal.aborted) {
@@ -377,20 +411,26 @@ export class StorylineGenerationService {
           continue;
         }
 
-        yield { type: "summaryStarted" };
+        yield { type: "contextStarted" };
         if (options.signal.aborted) {
           return;
         }
 
-        const characterSummary =
-          await this.storylineSummaryService.generateCharacterSummary(
+        const contextDraft =
+          await this.storylineContextService.generateStoryContextDraft(
             {
               operation: "dialogue",
-              previousSummary: context.previousSummary,
+              previousContext: context.previousContext,
+              sourceRefMappings: buildSourceRefMappings({
+                initialStoryText: context.initialStoryText,
+                recentHistoryRounds: context.contextHistoryRounds,
+                currentLabel: "本轮互动正文",
+                generatedText: event.continuedStory,
+              }),
               ...(context.initialStoryText !== undefined
                 ? { initialStoryText: context.initialStoryText }
                 : {}),
-              recentHistoryRounds: context.summaryHistoryRounds,
+              recentHistoryRounds: context.contextHistoryRounds,
               currentInstruction: input.payload.input,
               generatedText: event.continuedStory,
             },
@@ -401,7 +441,7 @@ export class StorylineGenerationService {
         }
 
         const savedStoryline =
-          await this.storylineService.saveDialogueSegmentWithSummary({
+          await this.storylineService.saveDialogueSegmentWithContext({
             userId: input.userId,
             storylineId: storyline.externalId,
             input: input.payload.input,
@@ -409,8 +449,8 @@ export class StorylineGenerationService {
             model: event.model,
             elapsedMs: event.elapsedMs,
             usage: event.usage,
-            previousSummary: context.previousSummary,
-            characterSummary,
+            previousContext: context.previousContext,
+            contextDraft,
           });
 
         yield {
@@ -423,6 +463,41 @@ export class StorylineGenerationService {
       releaseLock();
     }
   }
+}
+
+function buildSourceRefMappings(input: {
+  readonly initialStoryText: string | undefined;
+  readonly recentHistoryRounds: readonly StoryHistoryRound[];
+  readonly currentLabel: string;
+  readonly generatedText: string;
+}): StoryContextSourceRefMapping[] {
+  const mappings: StoryContextSourceRefMapping[] = [];
+  if (input.initialStoryText !== undefined) {
+    mappings.push({
+      ref: "initial",
+      label: "初始故事正文",
+      text: input.initialStoryText,
+    });
+  }
+
+  for (const round of input.recentHistoryRounds) {
+    mappings.push({
+      ref: `segment:${round.segmentId}`,
+      label:
+        round.generationMode === "dialogue"
+          ? `第 ${round.roundIndex} 轮互动正文`
+          : `第 ${round.roundIndex} 轮续写正文`,
+      text: round.generatedText,
+    });
+  }
+
+  mappings.push({
+    ref: "current",
+    label: input.currentLabel,
+    text: input.generatedText,
+  });
+
+  return mappings;
 }
 
 function getHistoryScoreConfig(): HistoryScoreConfig {

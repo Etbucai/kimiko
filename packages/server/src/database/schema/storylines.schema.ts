@@ -48,7 +48,7 @@ export const storylineSegments = sqliteTable(
     inputTokens: integer("input_tokens"),
     outputTokens: integer("output_tokens"),
     totalTokens: integer("total_tokens"),
-    previousSummaryJson: text("previous_summary_json"),
+    previousContextJson: text("previous_context_json"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .$defaultFn(() => new Date())
       .notNull(),
@@ -62,14 +62,14 @@ export const storylineSegments = sqliteTable(
   ],
 );
 
-export const storylineSummaries = sqliteTable(
-  "storyline_summary",
+export const storylineContexts = sqliteTable(
+  "storyline_context",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     storylineId: integer("storyline_id")
       .notNull()
       .references(() => storylines.id, { onDelete: "cascade" }),
-    charactersJson: text("characters_json").notNull(),
+    contextJson: text("context_json").notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .$defaultFn(() => new Date())
       .notNull(),
@@ -78,7 +78,7 @@ export const storylineSummaries = sqliteTable(
       .notNull(),
   },
   (table) => [
-    uniqueIndex("storyline_summary_storyline_id_unique").on(table.storylineId),
+    uniqueIndex("storyline_context_storyline_id_unique").on(table.storylineId),
   ],
 );
 
@@ -86,5 +86,5 @@ export type Storyline = InferSelectModel<typeof storylines>;
 export type NewStoryline = InferInsertModel<typeof storylines>;
 export type StorylineSegment = InferSelectModel<typeof storylineSegments>;
 export type NewStorylineSegment = InferInsertModel<typeof storylineSegments>;
-export type StorylineSummary = InferSelectModel<typeof storylineSummaries>;
-export type NewStorylineSummary = InferInsertModel<typeof storylineSummaries>;
+export type StorylineContext = InferSelectModel<typeof storylineContexts>;
+export type NewStorylineContext = InferInsertModel<typeof storylineContexts>;

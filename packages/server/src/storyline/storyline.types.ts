@@ -1,16 +1,17 @@
 import type {
   CompletedStorylineSnapshot,
   ContinueStoryUsage,
+  StoryContextSnapshot,
   StoryContinuePayload,
   StorylineGenerationMode,
 } from "@kimiko/schema";
-import type { StoryCharacterSummarySnapshot } from "./storyline-summary.types";
 import type {
   StoryDialogueLlmContext,
   StoryDialogueRewriteLlmContext,
   StoryHistoryRound,
   StoryRewriteLlmContext,
 } from "../story/story.service";
+import type { StoryContextDraftSnapshot } from "./storyline-context.types";
 
 export interface StorylineRecord {
   readonly id: number;
@@ -28,8 +29,8 @@ export interface SaveCreatedStorylineInput {
   readonly usage: ContinueStoryUsage;
 }
 
-export interface SaveCreatedStorylineWithSummaryInput extends SaveCreatedStorylineInput {
-  readonly characterSummary: StoryCharacterSummarySnapshot;
+export interface SaveCreatedStorylineWithContextInput extends SaveCreatedStorylineInput {
+  readonly contextDraft: StoryContextDraftSnapshot;
 }
 
 export interface SaveAppendedSegmentInput {
@@ -42,12 +43,12 @@ export interface SaveAppendedSegmentInput {
   readonly usage: ContinueStoryUsage;
 }
 
-export interface SaveAppendedSegmentWithSummaryInput extends SaveAppendedSegmentInput {
-  readonly previousSummary: StoryCharacterSummarySnapshot;
-  readonly characterSummary: StoryCharacterSummarySnapshot;
+export interface SaveAppendedSegmentWithContextInput extends SaveAppendedSegmentInput {
+  readonly previousContext: StoryContextSnapshot;
+  readonly contextDraft: StoryContextDraftSnapshot;
 }
 
-export interface SaveRewrittenSegmentWithSummaryInput {
+export interface SaveRewrittenSegmentWithContextInput {
   readonly userId: string;
   readonly storylineId: string;
   readonly segmentId: string;
@@ -56,7 +57,8 @@ export interface SaveRewrittenSegmentWithSummaryInput {
   readonly model: string;
   readonly elapsedMs: number;
   readonly usage: ContinueStoryUsage;
-  readonly characterSummary: StoryCharacterSummarySnapshot;
+  readonly previousContext: StoryContextSnapshot;
+  readonly contextDraft: StoryContextDraftSnapshot;
 }
 
 export interface SaveDialogueSegmentInput {
@@ -67,11 +69,11 @@ export interface SaveDialogueSegmentInput {
   readonly model: string;
   readonly elapsedMs: number;
   readonly usage: ContinueStoryUsage;
-  readonly previousSummary: StoryCharacterSummarySnapshot;
+  readonly previousContext: StoryContextSnapshot;
 }
 
-export interface SaveDialogueSegmentWithSummaryInput extends SaveDialogueSegmentInput {
-  readonly characterSummary: StoryCharacterSummarySnapshot;
+export interface SaveDialogueSegmentWithContextInput extends SaveDialogueSegmentInput {
+  readonly contextDraft: StoryContextDraftSnapshot;
 }
 
 export interface HistoryScoreConfig {
@@ -84,8 +86,8 @@ interface BaseStorylineRewriteContext {
   readonly storyline: StorylineRecord;
   readonly targetSegmentId: string;
   readonly targetGenerationMode: StorylineGenerationMode;
-  readonly previousSummary: StoryCharacterSummarySnapshot;
-  readonly summaryHistoryRounds: readonly StoryHistoryRound[];
+  readonly previousContext: StoryContextSnapshot;
+  readonly contextHistoryRounds: readonly StoryHistoryRound[];
   readonly initialStoryText?: string;
 }
 
@@ -103,15 +105,15 @@ export type StorylineRewriteContext =
 
 export interface StorylineDialogueContext {
   readonly storyline: StorylineRecord;
-  readonly previousSummary: StoryCharacterSummarySnapshot;
+  readonly previousContext: StoryContextSnapshot;
   readonly writerContext: StoryDialogueLlmContext;
-  readonly summaryHistoryRounds: readonly StoryHistoryRound[];
+  readonly contextHistoryRounds: readonly StoryHistoryRound[];
   readonly initialStoryText?: string;
 }
 
 export type StorylineStreamEvent =
   | Readonly<{ type: "chunk"; delta: string; sequence: number }>
-  | Readonly<{ type: "summaryStarted" }>
+  | Readonly<{ type: "contextStarted" }>
   | Readonly<{
       type: "completed";
       storyline: CompletedStorylineSnapshot;

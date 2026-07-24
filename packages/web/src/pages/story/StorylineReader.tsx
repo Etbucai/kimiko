@@ -77,7 +77,7 @@ interface StorylineReaderProps {
   temporaryDialogueText: string;
   temporaryDialogueVisible: boolean;
   temporaryRewrite: RewriteDraftState | null;
-  temporaryTextStatus: "streaming" | "summarizing" | null;
+  temporaryTextStatus: "streaming" | "updatingContext" | null;
 }
 
 export function StorylineReader({
@@ -388,7 +388,7 @@ interface StorylinePagePanelProps {
   temporaryDialogueText: string;
   temporaryDialogueVisible: boolean;
   temporaryRewrite: RewriteDraftState | null;
-  temporaryTextStatus: "streaming" | "summarizing" | null;
+  temporaryTextStatus: "streaming" | "updatingContext" | null;
 }
 
 function StorylinePagePanel({
@@ -453,7 +453,7 @@ function TemporaryRewriteBlock({
   status,
   text,
 }: {
-  status: "streaming" | "summarizing" | null;
+  status: "streaming" | "updatingContext" | null;
   text: string;
 }): JSX.Element {
   return (
@@ -482,7 +482,7 @@ function StoryText({ text }: { text: string }): JSX.Element {
 function TemporaryStatus({
   status,
 }: {
-  status: "streaming" | "summarizing" | null;
+  status: "streaming" | "updatingContext" | null;
 }): JSX.Element | null {
   if (status === null) {
     return null;
@@ -490,7 +490,7 @@ function TemporaryStatus({
 
   return (
     <p className="m-0 text-xs text-(--text)" role="status">
-      {status === "streaming" ? "正在生成..." : "正在记录角色摘要..."}
+      {status === "streaming" ? "正在生成..." : "正在更新故事上下文..."}
     </p>
   );
 }

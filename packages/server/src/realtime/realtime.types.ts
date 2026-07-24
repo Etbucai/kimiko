@@ -11,7 +11,7 @@ export type RealtimeErrorCode =
   | "STORYLINE_NOT_FOUND"
   | "STORYLINE_BUSY"
   | "STORYLINE_SAVE_FAILED"
-  | "STORY_SUMMARY_FAILED"
+  | "STORY_CONTEXT_FAILED"
   | "STORY_SEGMENT_NOT_REWRITABLE";
 
 export interface ActiveRealtimeTask {
