@@ -6,11 +6,7 @@ import { getStorylineContext } from "../../story/storylineApi";
 import { StoryContextDebugView } from "./StoryContextDebugView";
 
 type StoryContextDebugPageStatus =
-  | "loading"
-  | "success"
-  | "empty"
-  | "failed"
-  | "notFound";
+  "loading" | "success" | "empty" | "failed" | "notFound";
 
 interface StoryContextDebugPageProps {
   readonly storylineId: StorylineId;
@@ -24,8 +20,7 @@ export function StoryContextDebugPage({
   const navigate = useNavigate();
   const isMountedRef = useRef<boolean>(false);
   const requestIdRef = useRef<number>(0);
-  const [status, setStatus] =
-    useState<StoryContextDebugPageStatus>("loading");
+  const [status, setStatus] = useState<StoryContextDebugPageStatus>("loading");
   const [context, setContext] = useState<StoryContextSnapshot | null>(null);
   const [errorMessage, setErrorMessage] = useState(defaultContextErrorMessage);
 
@@ -181,9 +176,7 @@ function ContextEmpty({
 }): JSX.Element {
   return (
     <section className="rounded-3xl border border-(--border) bg-(--panel-bg) p-6 text-center shadow-(--shadow) md:p-8">
-      <h2 className="m-0 text-xl font-bold text-(--text-h)">
-        暂无故事上下文
-      </h2>
+      <h2 className="m-0 text-xl font-bold text-(--text-h)">暂无故事上下文</h2>
       <p className="mt-3 mb-6 text-sm leading-6 text-(--text)">
         下一次成功生成后，服务端会建立 StoryContextSnapshot。
       </p>

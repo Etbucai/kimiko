@@ -10,7 +10,11 @@ const preventMultiTouchMove = (event: TouchEvent): void => {
 
 export const preventMobileGestureZoom = (): void => {
   document.addEventListener("gesturestart", preventDefault, { passive: false });
-  document.addEventListener("gesturechange", preventDefault, { passive: false });
+  document.addEventListener("gesturechange", preventDefault, {
+    passive: false,
+  });
   document.addEventListener("gestureend", preventDefault, { passive: false });
-  document.addEventListener("touchmove", preventMultiTouchMove, { passive: false });
+  document.addEventListener("touchmove", preventMultiTouchMove, {
+    passive: false,
+  });
 };

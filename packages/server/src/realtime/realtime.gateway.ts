@@ -471,7 +471,9 @@ export class RealtimeGateway
     input: Readonly<{
       closeCode?: number;
       closeReason?: string;
-      event: "story_realtime_connection_closed" | "story_realtime_gateway_disconnect";
+      event:
+        | "story_realtime_connection_closed"
+        | "story_realtime_gateway_disconnect";
     }>,
   ): void {
     const clientState = this.clientStates.get(client);

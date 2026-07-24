@@ -364,9 +364,7 @@ export const StoryCharacterBeliefSchema = z
   })
   .strict();
 
-export type StoryCharacterBelief = z.infer<
-  typeof StoryCharacterBeliefSchema
->;
+export type StoryCharacterBelief = z.infer<typeof StoryCharacterBeliefSchema>;
 
 export const StoryCharacterOpinionSchema = z
   .object({
@@ -376,9 +374,7 @@ export const StoryCharacterOpinionSchema = z
   })
   .strict();
 
-export type StoryCharacterOpinion = z.infer<
-  typeof StoryCharacterOpinionSchema
->;
+export type StoryCharacterOpinion = z.infer<typeof StoryCharacterOpinionSchema>;
 
 export const StoryCharacterRelationshipSchema = z
   .object({
@@ -409,9 +405,7 @@ export const StoryCharacterContextSchema = z
   })
   .strict();
 
-export type StoryCharacterContext = z.infer<
-  typeof StoryCharacterContextSchema
->;
+export type StoryCharacterContext = z.infer<typeof StoryCharacterContextSchema>;
 
 export const StoryCurrentSceneSchema = z
   .object({
@@ -434,9 +428,7 @@ export const StoryContextSnapshotSchema = z
   })
   .strict();
 
-export type StoryContextSnapshot = z.infer<
-  typeof StoryContextSnapshotSchema
->;
+export type StoryContextSnapshot = z.infer<typeof StoryContextSnapshotSchema>;
 
 export const GetStorylineSummaryResponseSchema = z
   .object({

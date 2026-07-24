@@ -5,7 +5,7 @@ import type {
   StoryWriterContextBundle,
 } from "../story/story.service";
 import type { StorylineContextService } from "./storyline-context.service";
-import type { StoryContextDraftSnapshot } from "./storyline-context.types";
+import type { StoryContextPatchDraft } from "./storyline-context-patch.types";
 import { emptyStoryContextSnapshot } from "./storyline-context.types";
 import type { StorylineLockService } from "./storyline-lock.service";
 import type { StorylineService } from "./storyline.service";
@@ -35,7 +35,7 @@ describe("StorylineGenerationService", () => {
     Pick<StorylineLockService, "acquireStorylineLock">
   >;
   let contextService: jest.Mocked<
-    Pick<StorylineContextService, "generateStoryContextDraft">
+    Pick<StorylineContextService, "generateStoryContextPatch">
   >;
   let releaseLock: jest.Mock;
   let generationService: StorylineGenerationService;
@@ -59,7 +59,7 @@ describe("StorylineGenerationService", () => {
       acquireStorylineLock: jest.fn((_storylineId: string) => releaseLock),
     };
     contextService = {
-      generateStoryContextDraft: jest.fn(),
+      generateStoryContextPatch: jest.fn(),
     };
     generationService = new StorylineGenerationService(
       storylineService as unknown as StorylineService,
@@ -79,7 +79,7 @@ describe("StorylineGenerationService", () => {
       initialStoryText: "雨停以后。",
       contextBundle: createContextBundle(previousContext),
     };
-    const contextDraft = createContextDraft();
+    const contextPatch = createContextDraft();
     const completedStoryline = createCompletedStoryline({
       latestText: "林夏轻快地推开钟楼木门。",
     });
@@ -130,7 +130,7 @@ describe("StorylineGenerationService", () => {
         },
       ]),
     );
-    contextService.generateStoryContextDraft.mockResolvedValue(contextDraft);
+    contextService.generateStoryContextPatch.mockResolvedValue(contextPatch);
     storylineService.saveRewrittenSegmentWithContext.mockResolvedValue(
       completedStoryline,
     );
@@ -163,7 +163,7 @@ describe("StorylineGenerationService", () => {
         generatedSegmentId: "3",
       },
     ]);
-    expect(contextService.generateStoryContextDraft).toHaveBeenCalledWith(
+    expect(contextService.generateStoryContextPatch).toHaveBeenCalledWith(
       expect.objectContaining({
         operation: "rewrite",
         previousContext,
@@ -188,7 +188,7 @@ describe("StorylineGenerationService", () => {
         totalTokens: 15,
       },
       previousContext,
-      contextDraft,
+      contextPatch,
     });
     expect(releaseLock).toHaveBeenCalledTimes(1);
   });
@@ -201,7 +201,7 @@ describe("StorylineGenerationService", () => {
       currentSceneText: "章节正文：\n馥冰站在厨房门口。",
       contextBundle: createContextBundle(previousContext),
     };
-    const contextDraft = createContextDraft();
+    const contextPatch = createContextDraft();
     const completedStoryline = createCompletedStoryline({
       latestGenerationMode: "dialogue",
       latestText: '馥冰白了他一眼，"你自己没长手啊。"',
@@ -243,7 +243,7 @@ describe("StorylineGenerationService", () => {
         },
       ]),
     );
-    contextService.generateStoryContextDraft.mockResolvedValue(contextDraft);
+    contextService.generateStoryContextPatch.mockResolvedValue(contextPatch);
     storylineService.saveDialogueSegmentWithContext.mockResolvedValue(
       completedStoryline,
     );
@@ -275,7 +275,7 @@ describe("StorylineGenerationService", () => {
         generatedSegmentId: "3",
       },
     ]);
-    expect(contextService.generateStoryContextDraft).toHaveBeenCalledWith(
+    expect(contextService.generateStoryContextPatch).toHaveBeenCalledWith(
       expect.objectContaining({
         operation: "dialogue",
         previousContext,
@@ -299,7 +299,7 @@ describe("StorylineGenerationService", () => {
         totalTokens: 9,
       },
       previousContext,
-      contextDraft,
+      contextPatch,
     });
     expect(releaseLock).toHaveBeenCalledTimes(1);
   });
@@ -381,7 +381,7 @@ describe("StorylineGenerationService", () => {
         generatedSegmentId: "3",
       },
     ]);
-    expect(contextService.generateStoryContextDraft).not.toHaveBeenCalled();
+    expect(contextService.generateStoryContextPatch).not.toHaveBeenCalled();
     expect(
       storylineService.saveDialogueSegmentWithoutContextUpdate,
     ).toHaveBeenCalledWith({
@@ -459,18 +459,19 @@ function createContextSnapshot() {
   return emptyStoryContextSnapshot;
 }
 
-function createContextDraft(): StoryContextDraftSnapshot {
+function createContextDraft(): StoryContextPatchDraft {
   return {
-    worldFacts: [],
-    characters: [],
-    currentScene: {
-      location: "",
-      timeLabel: "",
-      presentCharacterRefs: [],
-      observableFactRefs: [],
-      sceneStatus: "",
-      sourceRefs: [],
+    defaultSourceRefs: ["current"],
+    worldFacts: {
+      add: [],
+      update: [],
+      resolve: [],
     },
+    characters: {
+      add: [],
+      update: [],
+    },
+    currentScene: {},
   };
 }
 

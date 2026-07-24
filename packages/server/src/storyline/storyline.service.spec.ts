@@ -7,7 +7,7 @@ import { DatabaseService } from "../database/database.service";
 import { storylineSegments, users } from "../database/schema";
 import { reloadEnvForTesting } from "../env";
 import { StorylineService } from "./storyline.service";
-import type { StoryContextDraftSnapshot } from "./storyline-context.types";
+import type { StoryContextPatchDraft } from "./storyline-context-patch.types";
 
 describe("StorylineService", () => {
   const originalEnv = { ...process.env };
@@ -69,7 +69,7 @@ describe("StorylineService", () => {
         outputTokens: 2,
         totalTokens: 3,
       },
-      contextDraft: createContextDraft({
+      contextPatch: createContextPatch({
         characterName: "林夏",
         factText: "林夏正在前往钟楼。",
       }),
@@ -95,7 +95,7 @@ describe("StorylineService", () => {
         totalTokens: 9,
       },
       previousContext: createdContext,
-      contextDraft: createContextDraft({
+      contextPatch: createContextPatch({
         characterName: "林夏",
         factText: "林夏推开钟楼木门。",
       }),
@@ -121,16 +121,17 @@ describe("StorylineService", () => {
         sourceSegmentIds: [],
       },
     });
-    expect(parseJson(segments[2]?.previousContextJson)).toEqual(
-      createdContext,
-    );
+    expect(parseJson(segments[2]?.previousContextJson)).toEqual(createdContext);
 
     const finalContext = await storylineService.getStoryContextForUser(
       "1",
       created.id,
     );
     expect(finalContext?.characters[0]?.id).toBe("char_1");
-    expect(finalContext?.worldFacts[0]?.id).toBe("fact_2");
+    expect(finalContext?.worldFacts.map((fact) => fact.id)).toEqual([
+      "fact_1",
+      "fact_2",
+    ]);
   });
 
   it("saves no-op dialogue without updating context and keeps chapter count stable", async () => {
@@ -146,7 +147,7 @@ describe("StorylineService", () => {
         outputTokens: 2,
         totalTokens: 3,
       },
-      contextDraft: createContextDraft({
+      contextPatch: createContextPatch({
         characterName: "馥冰",
         factText: "馥冰站在厨房门口。",
       }),
@@ -204,7 +205,7 @@ describe("StorylineService", () => {
         outputTokens: 2,
         totalTokens: 3,
       },
-      contextDraft: createContextDraft({
+      contextPatch: createContextPatch({
         characterName: "林夏",
         factText: "林夏正在前往钟楼。",
       }),
@@ -229,7 +230,7 @@ describe("StorylineService", () => {
         totalTokens: 9,
       },
       previousContext: createdContext,
-      contextDraft: createContextDraft({
+      contextPatch: createContextPatch({
         characterName: "林夏",
         factText: "林夏推开钟楼木门。",
       }),
@@ -268,7 +269,7 @@ describe("StorylineService", () => {
         totalTokens: 13,
       },
       previousContext: context.previousContext,
-      contextDraft: createContextDraft({
+      contextPatch: createContextPatch({
         characterName: "林夏",
         factText: "林夏轻快地推开钟楼木门。",
       }),
@@ -277,57 +278,53 @@ describe("StorylineService", () => {
     expect(rewritten.latestGeneration.segmentId).toBe(
       appended.latestGeneration.segmentId,
     );
-    expect(rewritten.segments.at(-1)?.text).toBe(
-      "林夏轻快地推开钟楼木门。",
-    );
+    expect(rewritten.segments.at(-1)?.text).toBe("林夏轻快地推开钟楼木门。");
   });
 });
 
-function createContextDraft(input: {
+function createContextPatch(input: {
   readonly characterName: string;
   readonly factText: string;
-}): StoryContextDraftSnapshot {
+}): StoryContextPatchDraft {
   return {
-    worldFacts: [
-      {
-        draftKey: "main_fact",
-        kind: "event",
-        text: input.factText,
-        status: "active",
-        visibility: "observable",
-        sourceRefs: ["current"],
-      },
-    ],
-    characters: [
-      {
-        draftKey: "main_character",
-        name: input.characterName,
-        aliases: [],
-        identity: "主要角色",
-        traits: [],
-        relationships: [],
-        motivations: [],
-        currentStatus: input.factText,
-        beliefs: [
-          {
-            text: input.factText,
-            truthStatus: "true",
-            factRefs: ["main_fact"],
-            sourceRefs: ["current"],
-          },
-        ],
-        opinions: [],
-        actionTendencies: [],
-        sourceRefs: ["current"],
-      },
-    ],
+    defaultSourceRefs: ["current"],
+    worldFacts: {
+      add: [
+        {
+          draftKey: "main_fact",
+          kind: "event",
+          text: input.factText,
+          status: "active",
+          visibility: "observable",
+        },
+      ],
+      update: [],
+      resolve: [],
+    },
+    characters: {
+      add: [
+        {
+          draftKey: "main_character",
+          name: input.characterName,
+          identity: "主要角色",
+          currentStatus: input.factText,
+          beliefsAdded: [
+            {
+              text: input.factText,
+              truthStatus: "true",
+              factRefs: ["main_fact"],
+            },
+          ],
+        },
+      ],
+      update: [],
+    },
     currentScene: {
       location: "当前场景",
       timeLabel: "当前",
       presentCharacterRefs: ["main_character"],
       observableFactRefs: ["main_fact"],
       sceneStatus: input.factText,
-      sourceRefs: ["current"],
     },
   };
 }

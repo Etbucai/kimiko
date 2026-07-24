@@ -9,7 +9,8 @@ import type { StoryHistoryRound } from "../story/story.service";
 export { StoryContextSnapshotSchema };
 export type { StoryContextSnapshot };
 
-export type StoryContextOperation = "create" | "append" | "rewrite" | "dialogue";
+export type StoryContextOperation =
+  "create" | "append" | "rewrite" | "dialogue";
 
 export interface StoryContextSourceRefMapping {
   readonly ref: string;
@@ -35,7 +36,10 @@ export interface NormalizeStoryContextDraftInput {
 
 const DraftRefSchema = z.string().trim().min(1).max(80);
 const SourceRefSchema = z.string().trim().min(1).max(120);
-const DraftKeySchema = z.string().trim().regex(/^[a-zA-Z0-9_-]{1,80}$/);
+const DraftKeySchema = z
+  .string()
+  .trim()
+  .regex(/^[a-zA-Z0-9_-]{1,80}$/);
 
 export const StoryWorldFactDraftSchema = z
   .object({
@@ -56,8 +60,7 @@ export const StoryWorldFactDraftSchema = z
   })
   .strict()
   .refine(
-    (value) =>
-      value.existingId !== undefined || value.draftKey !== undefined,
+    (value) => value.existingId !== undefined || value.draftKey !== undefined,
     { message: "existingId or draftKey is required" },
   );
 
@@ -118,8 +121,7 @@ export const StoryCharacterContextDraftSchema = z
   })
   .strict()
   .refine(
-    (value) =>
-      value.existingId !== undefined || value.draftKey !== undefined,
+    (value) => value.existingId !== undefined || value.draftKey !== undefined,
     { message: "existingId or draftKey is required" },
   );
 

@@ -2,9 +2,9 @@ import type { GenerateLlmTextResponse } from "@kimiko/schema";
 import type { LlmService } from "../llm/llm.service";
 import { StorylineContextService } from "./storyline-context.service";
 import type {
-  GenerateStoryContextInput,
-  StoryContextDraftSnapshot,
-} from "./storyline-context.types";
+  GenerateStoryContextPatchInput,
+  StoryContextPatchDraft,
+} from "./storyline-context-patch.types";
 
 describe("StorylineContextService", () => {
   let llmService: jest.Mocked<
@@ -21,34 +21,56 @@ describe("StorylineContextService", () => {
     );
   });
 
-  it("repairs an invalid context draft once before returning it", async () => {
-    const invalidDraft = {
-      ...createContextDraft(),
-      characters: [
-        {
-          ...createContextDraft().characters[0],
-          beliefs: [
-            {
-              text: "林夏知道门已经打开。",
-              truthStatus: "正确",
-              factRefs: ["opened_door"],
-              sourceRefs: ["current"],
-            },
-          ],
-        },
-      ],
+  it("repairs deterministic context patch issues locally", async () => {
+    const invalidPatch = {
+      ...createContextPatch(),
+      characters: {
+        add: [
+          {
+            ...createContextPatch().characters.add[0],
+            beliefsAdded: [
+              {
+                text: "林夏知道门已经打开。",
+                truthStatus: "正确",
+                factRefs: ["opened_door"],
+              },
+            ],
+          },
+        ],
+        update: [],
+      },
     };
-    const repairedDraft = createContextDraft();
+    llmService.generateTextFromParsedRequest.mockResolvedValueOnce(
+      createLlmResponse(invalidPatch),
+    );
 
+    const patch = await contextService.generateStoryContextPatch(
+      createContextInput(),
+      {
+        signal: new AbortController().signal,
+      },
+    );
+
+    expect(llmService.generateTextFromParsedRequest).toHaveBeenCalledTimes(1);
+    expect(patch.characters.add[0]?.beliefsAdded?.[0]?.truthStatus).toBe(
+      "unknown",
+    );
+  });
+
+  it("uses one LLM repair when the context patch is not pure JSON", async () => {
+    const repairedPatch = createContextPatch();
     llmService.generateTextFromParsedRequest
-      .mockResolvedValueOnce(createLlmResponse(invalidDraft))
-      .mockResolvedValueOnce(createLlmResponse(repairedDraft));
+      .mockResolvedValueOnce({
+        text: `修复后的 JSON：${JSON.stringify(createContextPatch())}`,
+        model: "context-model",
+      })
+      .mockResolvedValueOnce(createLlmResponse(repairedPatch));
 
     await expect(
-      contextService.generateStoryContextDraft(createContextInput(), {
+      contextService.generateStoryContextPatch(createContextInput(), {
         signal: new AbortController().signal,
       }),
-    ).resolves.toEqual(repairedDraft);
+    ).resolves.toEqual(repairedPatch);
 
     expect(llmService.generateTextFromParsedRequest).toHaveBeenCalledTimes(2);
     const repairCall = llmService.generateTextFromParsedRequest.mock.calls[1];
@@ -56,13 +78,38 @@ describe("StorylineContextService", () => {
       throw new Error("Expected repair call");
     }
 
-    expect(repairCall[0].userPrompt).toContain("Invalid option");
+    expect(repairCall[0].userPrompt).toContain(
+      "Context response must be pure JSON",
+    );
     expect(repairCall[0].userPrompt).toContain("待修复的 JSON");
-    expect(repairCall[0].userPrompt).toContain('"truthStatus":"正确"');
+    expect(repairCall[0].userPrompt).toContain(
+      "不要输出完整 StoryContextSnapshot",
+    );
+  });
+
+  it("builds minified JSON prompt sections", async () => {
+    llmService.generateTextFromParsedRequest.mockResolvedValueOnce(
+      createLlmResponse(createContextPatch()),
+    );
+
+    await contextService.generateStoryContextPatch(createContextInput(), {
+      signal: new AbortController().signal,
+    });
+
+    const call = llmService.generateTextFromParsedRequest.mock.calls[0];
+    if (call === undefined) {
+      throw new Error("Expected context call");
+    }
+
+    expect(call[0].userPrompt).toContain("旧故事上下文（minified JSON）：");
+    expect(call[0].userPrompt).toContain(
+      '"currentScene":{"location":"","timeLabel":"","presentCharacterIds":[]',
+    );
+    expect(call[0].userPrompt).not.toContain('\n  "worldFacts"');
   });
 });
 
-function createContextInput(): GenerateStoryContextInput {
+function createContextInput(): GenerateStoryContextPatchInput {
   return {
     operation: "append",
     previousContext: null,
@@ -79,48 +126,45 @@ function createContextInput(): GenerateStoryContextInput {
   };
 }
 
-function createContextDraft(): StoryContextDraftSnapshot {
+function createContextPatch(): StoryContextPatchDraft {
   return {
-    worldFacts: [
-      {
-        draftKey: "opened_door",
-        kind: "event",
-        text: "林夏推开门。",
-        status: "active",
-        visibility: "observable",
-        sourceRefs: ["current"],
-      },
-    ],
-    characters: [
-      {
-        draftKey: "lin_xia",
-        name: "林夏",
-        aliases: [],
-        identity: "",
-        traits: [],
-        relationships: [],
-        motivations: [],
-        currentStatus: "站在门口。",
-        beliefs: [
-          {
-            text: "林夏知道门已经打开。",
-            truthStatus: "true",
-            factRefs: ["opened_door"],
-            sourceRefs: ["current"],
-          },
-        ],
-        opinions: [],
-        actionTendencies: [],
-        sourceRefs: ["current"],
-      },
-    ],
+    defaultSourceRefs: ["current"],
+    worldFacts: {
+      add: [
+        {
+          draftKey: "opened_door",
+          kind: "event",
+          text: "林夏推开门。",
+          status: "active",
+          visibility: "observable",
+        },
+      ],
+      update: [],
+      resolve: [],
+    },
+    characters: {
+      add: [
+        {
+          draftKey: "lin_xia",
+          name: "林夏",
+          currentStatus: "站在门口。",
+          beliefsAdded: [
+            {
+              text: "林夏知道门已经打开。",
+              truthStatus: "true",
+              factRefs: ["opened_door"],
+            },
+          ],
+        },
+      ],
+      update: [],
+    },
     currentScene: {
       location: "门口",
       timeLabel: "当前",
       presentCharacterRefs: ["lin_xia"],
       observableFactRefs: ["opened_door"],
       sceneStatus: "门已经打开。",
-      sourceRefs: ["current"],
     },
   };
 }

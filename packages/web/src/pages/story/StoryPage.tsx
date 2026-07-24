@@ -14,10 +14,7 @@ import type {
   StoryRealtimeGenerationHandle,
 } from "../../story/storyRealtimeApi";
 import { startStoryRealtimeGeneration } from "../../story/storyRealtimeApi";
-import {
-  getRecentStoryline,
-  getStoryline,
-} from "../../story/storylineApi";
+import { getRecentStoryline, getStoryline } from "../../story/storylineApi";
 import { StoryInitialInput } from "./StoryInitialInput";
 import { StoryActionDrawer } from "./StoryActionDrawer";
 import { StoryActionFab } from "./StoryActionFab";
@@ -663,7 +660,6 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
         onCancelGeneration={handleCancel}
         onSelectAction={handleSelectStoryAction}
       />
-
     </main>
   );
 }

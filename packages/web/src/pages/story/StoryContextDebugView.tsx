@@ -42,7 +42,10 @@ export function StoryContextDebugView({
         )}
       </ContextSection>
 
-      <ContextSection description="下一轮生成时的当前环境摘要。" title="当前场景">
+      <ContextSection
+        description="下一轮生成时的当前环境摘要。"
+        title="当前场景"
+      >
         <dl className="m-0 grid gap-3 text-sm leading-6 text-(--text-h)">
           <ContextField label="地点" value={context.currentScene.location} />
           <ContextField
@@ -85,7 +88,10 @@ export function StoryContextDebugView({
         </div>
       </ContextSection>
 
-      <ContextSection description="服务端返回的原始 StoryContextSnapshot。" title="原始 JSON">
+      <ContextSection
+        description="服务端返回的原始 StoryContextSnapshot。"
+        title="原始 JSON"
+      >
         <pre className="m-0 overflow-x-auto rounded-2xl border border-(--border) bg-(--input-bg) p-4 text-xs leading-5 text-(--text-h)">
           {JSON.stringify(context, null, 2)}
         </pre>
@@ -108,9 +114,7 @@ function ContextSection({
   return (
     <section className="rounded-3xl border border-(--border) bg-(--panel-bg) p-5 shadow-(--shadow) md:p-6">
       <h2 className="m-0 text-lg font-bold text-(--text-h)">{title}</h2>
-      <p className="mt-1 mb-5 text-sm leading-6 text-(--text)">
-        {description}
-      </p>
+      <p className="mt-1 mb-5 text-sm leading-6 text-(--text)">{description}</p>
       {children}
     </section>
   );
@@ -227,7 +231,9 @@ function BeliefItem({
       : "border-(--border) text-(--text-h)";
 
   return (
-    <li className={`rounded-xl border px-3 py-2 text-sm leading-6 ${className}`}>
+    <li
+      className={`rounded-xl border px-3 py-2 text-sm leading-6 ${className}`}
+    >
       <div className="flex flex-wrap items-center gap-2">
         <Tag value={belief.truthStatus} />
         <span>{belief.text}</span>

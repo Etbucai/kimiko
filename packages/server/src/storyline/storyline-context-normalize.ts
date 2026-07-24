@@ -210,10 +210,7 @@ function normalizeCharacter(
     opinions: character.opinions.map((opinion) => ({
       target: opinion.target,
       text: opinion.text,
-      sourceSegmentIds: mapSourceRefs(
-        opinion.sourceRefs,
-        sourceRefToSegmentId,
-      ),
+      sourceSegmentIds: mapSourceRefs(opinion.sourceRefs, sourceRefToSegmentId),
     })),
     actionTendencies: uniqueStrings(character.actionTendencies),
     sourceSegmentIds: mapSourceRefs(character.sourceRefs, sourceRefToSegmentId),

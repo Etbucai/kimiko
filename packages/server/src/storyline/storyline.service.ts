@@ -38,15 +38,16 @@ import {
   StorylineSaveFailedError,
 } from "./storyline.errors";
 import {
-  normalizeStoryContextDraft,
   parseStoryContextJson,
   serializeStoryContext,
 } from "./storyline-context-normalize";
+import { applyStoryContextPatch } from "./storyline-context-patch";
 import {
   emptyStoryContextSnapshot,
   normalizeContextMatchText,
   STORY_CONTEXT_LIMITS,
 } from "./storyline-context.types";
+import type { StoryContextPatchDraft } from "./storyline-context-patch.types";
 import type {
   SaveAppendedSegmentInput,
   SaveAppendedSegmentWithContextInput,
@@ -362,18 +363,7 @@ export class StorylineService {
   ): Promise<CompletedStorylineSnapshot> {
     return this.saveCreatedStorylineWithContext({
       ...input,
-      contextDraft: {
-        worldFacts: [],
-        characters: [],
-        currentScene: {
-          location: "",
-          timeLabel: "",
-          presentCharacterRefs: [],
-          observableFactRefs: [],
-          sceneStatus: "",
-          sourceRefs: [],
-        },
-      },
+      contextPatch: createEmptyStoryContextPatch(),
     });
   }
 
@@ -443,9 +433,9 @@ export class StorylineService {
           throw new Error("Failed to insert generated segment");
         }
 
-        const context = normalizeStoryContextDraft({
+        const context = applyStoryContextPatch({
           previousContext: null,
-          draftContext: input.contextDraft,
+          patch: input.contextPatch,
           sourceRefToSegmentId: new Map([
             ["initial", String(initialSegment.id)],
             ["current", String(generatedSegment.id)],
@@ -485,18 +475,7 @@ export class StorylineService {
     return this.saveAppendedSegmentWithContext({
       ...input,
       previousContext: emptyStoryContextSnapshot,
-      contextDraft: {
-        worldFacts: [],
-        characters: [],
-        currentScene: {
-          location: "",
-          timeLabel: "",
-          presentCharacterRefs: [],
-          observableFactRefs: [],
-          sceneStatus: "",
-          sourceRefs: [],
-        },
-      },
+      contextPatch: createEmptyStoryContextPatch(),
     });
   }
 
@@ -546,9 +525,9 @@ export class StorylineService {
 
         upsertContext(transaction, {
           storylineId: internalStorylineId,
-          context: normalizeStoryContextDraft({
+          context: applyStoryContextPatch({
             previousContext: input.previousContext,
-            draftContext: input.contextDraft,
+            patch: input.contextPatch,
             sourceRefToSegmentId: buildSourceRefToSegmentIdMap(segments, {
               currentSegmentId: String(generatedSegment.id),
             }),
@@ -623,9 +602,9 @@ export class StorylineService {
 
         upsertContext(transaction, {
           storylineId: internalStorylineId,
-          context: normalizeStoryContextDraft({
+          context: applyStoryContextPatch({
             previousContext: input.previousContext,
-            draftContext: input.contextDraft,
+            patch: input.contextPatch,
             sourceRefToSegmentId: buildSourceRefToSegmentIdMap(segments, {
               currentSegmentId: String(generatedSegment.id),
             }),
@@ -757,9 +736,9 @@ export class StorylineService {
 
         upsertContext(transaction, {
           storylineId: internalStorylineId,
-          context: normalizeStoryContextDraft({
+          context: applyStoryContextPatch({
             previousContext: input.previousContext,
-            draftContext: input.contextDraft,
+            patch: input.contextPatch,
             sourceRefToSegmentId: buildSourceRefToSegmentIdMap(
               segments.filter(
                 (segment) => segment.orderIndex < targetSegment.orderIndex,
@@ -1049,15 +1028,15 @@ function selectActiveCharacters(input: {
   readonly searchText: string;
 }): StoryCharacterContext[] {
   const charactersById = new Map(
-    input.storyContext.characters.map((character) => [
-      character.id,
-      character,
-    ] as const),
+    input.storyContext.characters.map(
+      (character) => [character.id, character] as const,
+    ),
   );
   const presentCharacters = input.storyContext.currentScene.presentCharacterIds
     .map((characterId) => charactersById.get(characterId))
     .filter(
-      (character): character is StoryCharacterContext => character !== undefined,
+      (character): character is StoryCharacterContext =>
+        character !== undefined,
     );
   if (presentCharacters.length === 0) {
     return [];
@@ -1402,6 +1381,22 @@ function truncateSnippet(value: string, maxLength: number): string {
   }
 
   return `${value.slice(0, maxLength - 3).trimEnd()}...`;
+}
+
+function createEmptyStoryContextPatch(): StoryContextPatchDraft {
+  return {
+    defaultSourceRefs: ["current"],
+    worldFacts: {
+      add: [],
+      update: [],
+      resolve: [],
+    },
+    characters: {
+      add: [],
+      update: [],
+    },
+    currentScene: {},
+  };
 }
 
 function toErrorMessage(error: unknown): string {

@@ -11,7 +11,7 @@ import type {
   StoryHistoryRound,
   StoryRewriteLlmContext,
 } from "../story/story.service";
-import type { StoryContextDraftSnapshot } from "./storyline-context.types";
+import type { StoryContextPatchDraft } from "./storyline-context-patch.types";
 
 export interface StorylineRecord {
   readonly id: number;
@@ -30,7 +30,7 @@ export interface SaveCreatedStorylineInput {
 }
 
 export interface SaveCreatedStorylineWithContextInput extends SaveCreatedStorylineInput {
-  readonly contextDraft: StoryContextDraftSnapshot;
+  readonly contextPatch: StoryContextPatchDraft;
 }
 
 export interface SaveAppendedSegmentInput {
@@ -45,7 +45,7 @@ export interface SaveAppendedSegmentInput {
 
 export interface SaveAppendedSegmentWithContextInput extends SaveAppendedSegmentInput {
   readonly previousContext: StoryContextSnapshot;
-  readonly contextDraft: StoryContextDraftSnapshot;
+  readonly contextPatch: StoryContextPatchDraft;
 }
 
 export interface SaveRewrittenSegmentWithContextInput {
@@ -58,7 +58,7 @@ export interface SaveRewrittenSegmentWithContextInput {
   readonly elapsedMs: number;
   readonly usage: ContinueStoryUsage;
   readonly previousContext: StoryContextSnapshot;
-  readonly contextDraft: StoryContextDraftSnapshot;
+  readonly contextPatch: StoryContextPatchDraft;
 }
 
 export interface SaveDialogueSegmentInput {
@@ -73,7 +73,7 @@ export interface SaveDialogueSegmentInput {
 }
 
 export interface SaveDialogueSegmentWithContextInput extends SaveDialogueSegmentInput {
-  readonly contextDraft: StoryContextDraftSnapshot;
+  readonly contextPatch: StoryContextPatchDraft;
 }
 
 export interface HistoryScoreConfig {

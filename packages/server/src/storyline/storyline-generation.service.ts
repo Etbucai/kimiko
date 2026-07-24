@@ -1,7 +1,10 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { Env } from "../env";
 import { StoryService } from "../story/story.service";
-import type { StoryHistoryRound, StoryLlmContext } from "../story/story.service";
+import type {
+  StoryHistoryRound,
+  StoryLlmContext,
+} from "../story/story.service";
 import {
   StorySegmentNotRewritableError,
   StorylineNotFoundError,
@@ -157,8 +160,8 @@ export class StorylineGenerationService {
           requestUserId: input.userId,
           storylineId: null,
         });
-        const contextDraft =
-          await this.storylineContextService.generateStoryContextDraft(
+        const contextPatch =
+          await this.storylineContextService.generateStoryContextPatch(
             {
               operation: "create",
               previousContext: null,
@@ -202,7 +205,7 @@ export class StorylineGenerationService {
             model: event.model,
             elapsedMs: event.elapsedMs,
             usage: event.usage,
-            contextDraft,
+            contextPatch,
           });
         this.logGenerationPhase({
           elapsedMs: getElapsedMs(startedAt),
@@ -357,8 +360,8 @@ export class StorylineGenerationService {
           requestUserId: input.userId,
           storylineId: storyline.externalId,
         });
-        const contextDraft =
-          await this.storylineContextService.generateStoryContextDraft(
+        const contextPatch =
+          await this.storylineContextService.generateStoryContextPatch(
             {
               operation: "append",
               previousContext,
@@ -399,7 +402,7 @@ export class StorylineGenerationService {
             elapsedMs: event.elapsedMs,
             usage: event.usage,
             previousContext,
-            contextDraft,
+            contextPatch,
           });
         this.logGenerationPhase({
           elapsedMs: getElapsedMs(startedAt),
@@ -567,8 +570,8 @@ export class StorylineGenerationService {
           storylineId: storyline.externalId,
           targetGenerationMode: context.targetGenerationMode,
         });
-        const contextDraft =
-          await this.storylineContextService.generateStoryContextDraft(
+        const contextPatch =
+          await this.storylineContextService.generateStoryContextPatch(
             {
               operation: "rewrite",
               previousContext: context.previousContext,
@@ -611,7 +614,7 @@ export class StorylineGenerationService {
             elapsedMs: event.elapsedMs,
             usage: event.usage,
             previousContext: context.previousContext,
-            contextDraft,
+            contextPatch,
           });
         this.logGenerationPhase({
           elapsedMs: getElapsedMs(startedAt),
@@ -801,8 +804,8 @@ export class StorylineGenerationService {
           requestUserId: input.userId,
           storylineId: storyline.externalId,
         });
-        const contextDraft =
-          await this.storylineContextService.generateStoryContextDraft(
+        const contextPatch =
+          await this.storylineContextService.generateStoryContextPatch(
             {
               operation: "dialogue",
               previousContext: context.previousContext,
@@ -843,7 +846,7 @@ export class StorylineGenerationService {
             elapsedMs: event.elapsedMs,
             usage: event.usage,
             previousContext: context.previousContext,
-            contextDraft,
+            contextPatch,
           });
         this.logGenerationPhase({
           elapsedMs: getElapsedMs(startedAt),
@@ -866,32 +869,34 @@ export class StorylineGenerationService {
     }
   }
 
-  private logGenerationPhase(input: Readonly<{
-    chunkChars?: number | undefined;
-    chunkCount?: number | undefined;
-    elapsedMs?: number | undefined;
-    generatedSegmentId?: string;
-    generatedTextChars?: number | undefined;
-    mode: ContinueStorylineInput["payload"]["mode"];
-    phase:
-      | "request_received"
-      | "storyline_lookup_started"
-      | "storyline_lookup_completed"
-      | "lock_acquired"
-      | "llm_context_build_started"
-      | "llm_context_build_completed"
-      | "writer_stream_started"
-      | "writer_first_chunk"
-      | "writer_completed"
-      | "context_started"
-      | "context_completed"
-      | "save_completed"
-      | "noop_save_completed";
-    requestId?: string | undefined;
-    requestUserId: string;
-    storylineId: string | null;
-    targetGenerationMode?: string | undefined;
-  }>): void {
+  private logGenerationPhase(
+    input: Readonly<{
+      chunkChars?: number | undefined;
+      chunkCount?: number | undefined;
+      elapsedMs?: number | undefined;
+      generatedSegmentId?: string;
+      generatedTextChars?: number | undefined;
+      mode: ContinueStorylineInput["payload"]["mode"];
+      phase:
+        | "request_received"
+        | "storyline_lookup_started"
+        | "storyline_lookup_completed"
+        | "lock_acquired"
+        | "llm_context_build_started"
+        | "llm_context_build_completed"
+        | "writer_stream_started"
+        | "writer_first_chunk"
+        | "writer_completed"
+        | "context_started"
+        | "context_completed"
+        | "save_completed"
+        | "noop_save_completed";
+      requestId?: string | undefined;
+      requestUserId: string;
+      storylineId: string | null;
+      targetGenerationMode?: string | undefined;
+    }>,
+  ): void {
     this.logger.log(
       JSON.stringify({
         chunkChars: input.chunkChars,
