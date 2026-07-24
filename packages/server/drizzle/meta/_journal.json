@@ -5,57 +5,8 @@
     {
       "idx": 0,
       "version": "6",
-      "when": 1784450381490,
-      "tag": "0000_known_miracleman",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "6",
-      "when": 1784453379789,
-      "tag": "0001_red_supreme_intelligence",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "6",
-      "when": 1784550132258,
-      "tag": "0002_tricky_princess_powerful",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "6",
-      "when": 1784713974451,
-      "tag": "0003_old_synch",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "6",
-      "when": 1784722887730,
-      "tag": "0004_lean_deathbird",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "6",
-      "when": 1784799454447,
-      "tag": "0005_regular_wraith",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "6",
-      "when": 1784870400000,
-      "tag": "0006_story_context",
-      "breakpoints": true
-    },
-    {
-      "idx": 7,
-      "version": "6",
-      "when": 1784888140000,
-      "tag": "0007_append_target_length",
+      "when": 1784902929353,
+      "tag": "0000_typical_colossus",
       "breakpoints": true
     }
   ]

@@ -1,7 +1,7 @@
+import type { LoginUserRequest } from "@kimiko/schema";
 import type { JSX } from "react";
 import { useMemo, useState } from "react";
-import { Link, useLocation, useNavigate } from "react-router";
-import type { LoginUserRequest } from "@kimiko/schema";
+import { useLocation, useNavigate } from "react-router";
 import {
   getErrorMessage,
   loginUser,
@@ -53,11 +53,7 @@ export function LoginPage(): JSX.Element {
     <AuthPage
       title="登录"
       description="使用用户名和密码进入 Kimiko。"
-      footer={
-        <>
-          还没有账号？<Link to="/register">去注册</Link>
-        </>
-      }
+      footer={<></>}
     >
       {registered ? (
         <p className={authSuccessMessageClassName}>注册成功，请登录。</p>

@@ -1,1 +1,0 @@
-ALTER TABLE `storyline_segment` ADD `previous_summary_json` text;

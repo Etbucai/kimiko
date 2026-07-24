@@ -1,1 +1,0 @@
-ALTER TABLE `storyline_segment` ADD `generation_mode` text DEFAULT 'append' NOT NULL;
