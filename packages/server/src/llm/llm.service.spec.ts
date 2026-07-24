@@ -124,9 +124,18 @@ describe("LlmService", () => {
       userPrompt: "hello",
     });
 
-    expect(logSpy).toHaveBeenCalledTimes(1);
-    const payload = parseLoggedJson(logSpy.mock.calls[0]?.[0]);
-    expect(payload).toEqual(
+    const payloads = getLoggedPayloads(logSpy);
+    expect(payloads).toContainEqual(
+      expect.objectContaining({
+        callType: "text",
+        event: "llm_call_started",
+        requestMeta: {
+          systemPromptChars: null,
+          userPromptChars: 5,
+        },
+      }),
+    );
+    expect(payloads).toContainEqual(
       expect.objectContaining({
         callType: "text",
         elapsedMs: expect.any(Number),
@@ -172,7 +181,26 @@ describe("LlmService", () => {
       done: false,
       value: { type: "chunk", delta: "hello" },
     });
-    expect(logSpy).not.toHaveBeenCalled();
+    expect(getLoggedPayloads(logSpy)).toEqual([
+      expect.objectContaining({
+        callType: "stream",
+        event: "llm_call_started",
+        requestMeta: {
+          systemPromptChars: null,
+          userPromptChars: 5,
+        },
+      }),
+      expect.objectContaining({
+        elapsedMs: expect.any(Number),
+        event: "llm_stream_first_event",
+        eventType: "chunk",
+      }),
+      expect.objectContaining({
+        deltaChars: 5,
+        elapsedMs: expect.any(Number),
+        event: "llm_stream_first_chunk",
+      }),
+    ]);
 
     await expect(iterator.next()).resolves.toEqual(
       expect.objectContaining({
@@ -188,9 +216,7 @@ describe("LlmService", () => {
         },
       }),
     );
-    expect(logSpy).toHaveBeenCalledTimes(1);
-    const payload = parseLoggedJson(logSpy.mock.calls[0]?.[0]);
-    expect(payload).toEqual(
+    expect(getLoggedPayloads(logSpy)).toContainEqual(
       expect.objectContaining({
         callType: "stream",
         elapsedMs: expect.any(Number),
@@ -384,6 +410,12 @@ function parseLoggedJson(value: unknown): Record<string, unknown> {
   }
 
   return parsedValue as Record<string, unknown>;
+}
+
+function getLoggedPayloads(
+  logSpy: jest.SpyInstance<void, Parameters<Logger["log"]>>,
+): Record<string, unknown>[] {
+  return logSpy.mock.calls.map((call) => parseLoggedJson(call[0]));
 }
 
 async function createTemporaryLogDirectory(): Promise<string> {

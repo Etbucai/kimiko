@@ -11,6 +11,6 @@ export class LlmController {
   @HttpCode(200)
   @UseGuards(JwtAuthGuard)
   generate(@Body() body: unknown): Promise<GenerateLlmTextResponse> {
-    return this.llmService.generateText(body);
+    return this.llmService.generateText(body)
   }
 }

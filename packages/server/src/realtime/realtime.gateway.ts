@@ -65,6 +65,13 @@ export class RealtimeGateway
   private bindConnection(client: WebSocket, request: IncomingMessage): void {
     const accessToken = getAccessTokenFromRequest(request);
     if (accessToken === null) {
+      this.logger.warn(
+        JSON.stringify({
+          event: "story_realtime_connection_rejected",
+          reason: "missing_access_token",
+          remoteAddress: request.socket.remoteAddress,
+        }),
+      );
       client.close(unauthorizedCloseCode, unauthorizedCloseReason);
       return;
     }
@@ -78,18 +85,40 @@ export class RealtimeGateway
           uniqueName: payload.uniqueName,
         },
       });
+      this.logger.log(
+        JSON.stringify({
+          event: "story_realtime_connection_accepted",
+          remoteAddress: request.socket.remoteAddress,
+          userId: payload.sub,
+        }),
+      );
+      client.once("close", (code, reason) => {
+        this.cleanupClient(client, {
+          closeCode: code,
+          closeReason: reason.toString("utf8"),
+          event: "story_realtime_connection_closed",
+        });
+      });
       bindClientMessageHandler(client, (rawMessage) => {
         void this.handleRawMessage(client, rawMessage);
       });
-    } catch {
+    } catch (error: unknown) {
+      this.logger.warn(
+        JSON.stringify({
+          error: toLoggableError(error),
+          event: "story_realtime_connection_rejected",
+          reason: "invalid_access_token",
+          remoteAddress: request.socket.remoteAddress,
+        }),
+      );
       client.close(unauthorizedCloseCode, unauthorizedCloseReason);
     }
   }
 
   handleDisconnect(client: WebSocket): void {
-    const clientState = this.clientStates.get(client);
-    clientState?.activeTask?.abortController.abort();
-    this.clientStates.delete(client);
+    this.cleanupClient(client, {
+      event: "story_realtime_gateway_disconnect",
+    });
   }
 
   private async handleRawMessage(
@@ -98,6 +127,13 @@ export class RealtimeGateway
   ): Promise<void> {
     const parsedMessage = parseClientMessage(rawMessage);
     if (!parsedMessage.success) {
+      this.logger.warn(
+        JSON.stringify({
+          code: parsedMessage.code,
+          event: "story_realtime_message_rejected",
+          requestId: parsedMessage.requestId,
+        }),
+      );
       sendError(
         client,
         parsedMessage.requestId,
@@ -106,6 +142,22 @@ export class RealtimeGateway
       );
       return;
     }
+
+    this.logger.log(
+      JSON.stringify({
+        event: "story_realtime_message_received",
+        messageType: parsedMessage.message.type,
+        payloadMode:
+          parsedMessage.message.type === "story.continue"
+            ? parsedMessage.message.payload.mode
+            : undefined,
+        requestId: parsedMessage.message.requestId,
+        storylineId:
+          parsedMessage.message.type === "story.continue"
+            ? getStorylineIdFromPayload(parsedMessage.message.payload)
+            : undefined,
+      }),
+    );
 
     if (parsedMessage.message.type === "story.cancel") {
       this.cancelStory(client, parsedMessage.message);
@@ -121,19 +173,49 @@ export class RealtimeGateway
   ): Promise<void> {
     const clientState = this.clientStates.get(client);
     if (clientState === undefined) {
+      this.logger.warn(
+        JSON.stringify({
+          event: "story_realtime_continue_rejected",
+          reason: "missing_client_state",
+          requestId: message.requestId,
+        }),
+      );
       sendError(client, message.requestId, "GENERATION_FAILED", true);
       return;
     }
 
     if (clientState.user === null) {
+      this.logger.warn(
+        JSON.stringify({
+          event: "story_realtime_continue_rejected",
+          reason: "missing_user",
+          requestId: message.requestId,
+        }),
+      );
       sendError(client, message.requestId, "GENERATION_FAILED", true);
       return;
     }
 
     if (clientState.activeTask !== null) {
+      this.logger.warn(
+        JSON.stringify({
+          activeRequestId: clientState.activeTask.requestId,
+          event: "story_realtime_continue_rejected",
+          reason: "client_busy",
+          requestId: message.requestId,
+          userId: clientState.user.sub,
+        }),
+      );
       sendError(client, message.requestId, "BUSY", true);
       return;
     }
+
+    const startedAt = Date.now();
+    const payloadMode = message.payload.mode;
+    const storylineId = getStorylineIdFromPayload(message.payload);
+    let chunkChars = 0;
+    let chunkCount = 0;
+    let terminalEvent: StorylineStreamEvent["type"] | null = null;
 
     const abortController = new AbortController();
     const activeTask: ActiveRealtimeTask = {
@@ -141,40 +223,142 @@ export class RealtimeGateway
       requestId: message.requestId,
     };
     clientState.activeTask = activeTask;
+    this.logger.log(
+      JSON.stringify({
+        event: "story_realtime_task_started",
+        payloadMode,
+        requestId: message.requestId,
+        storylineId,
+        userId: clientState.user.sub,
+      }),
+    );
     sendEvent(client, {
       type: "story.started",
       requestId: message.requestId,
     });
+    this.logger.log(
+      JSON.stringify({
+        elapsedMs: getElapsedMs(startedAt),
+        event: "story_realtime_started_sent",
+        payloadMode,
+        requestId: message.requestId,
+        storylineId,
+        userId: clientState.user.sub,
+      }),
+    );
 
     try {
       for await (const event of this.storylineGenerationService.streamContinueStoryline(
         {
+          requestId: message.requestId,
           userId: clientState.user.sub,
           payload: message.payload,
         },
         { signal: abortController.signal },
       )) {
         if (abortController.signal.aborted) {
+          this.logger.log(
+            JSON.stringify({
+              chunkChars,
+              chunkCount,
+              elapsedMs: getElapsedMs(startedAt),
+              event: "story_realtime_task_aborted",
+              payloadMode,
+              requestId: message.requestId,
+              storylineId,
+              userId: clientState.user.sub,
+            }),
+          );
           return;
         }
 
         this.sendStoryStreamEvent(client, message.requestId, event);
+        if (event.type === "chunk") {
+          chunkCount += 1;
+          chunkChars += event.delta.length;
+          if (chunkCount === 1) {
+            this.logger.log(
+              JSON.stringify({
+                chunkChars,
+                elapsedMs: getElapsedMs(startedAt),
+                event: "story_realtime_first_chunk_sent",
+                payloadMode,
+                requestId: message.requestId,
+                sequence: event.sequence,
+                storylineId,
+                userId: clientState.user.sub,
+              }),
+            );
+          }
+          continue;
+        }
+
+        terminalEvent = event.type;
+        this.logger.log(
+          JSON.stringify({
+            chunkChars,
+            chunkCount,
+            elapsedMs: getElapsedMs(startedAt),
+            event:
+              event.type === "contextStarted"
+                ? "story_realtime_context_started_sent"
+                : "story_realtime_completed_sent",
+            generatedSegmentId:
+              event.type === "completed" ? event.generatedSegmentId : undefined,
+            payloadMode,
+            requestId: message.requestId,
+            storylineId,
+            userId: clientState.user.sub,
+          }),
+        );
+      }
+
+      if (!abortController.signal.aborted && terminalEvent !== "completed") {
+        this.logger.error(
+          JSON.stringify({
+            chunkChars,
+            chunkCount,
+            elapsedMs: getElapsedMs(startedAt),
+            event: "story_realtime_stream_ended_without_terminal_event",
+            lastEvent: terminalEvent,
+            payloadMode,
+            requestId: message.requestId,
+            storylineId,
+            userId: clientState.user.sub,
+          }),
+        );
+        sendError(client, message.requestId, "GENERATION_FAILED", true);
       }
     } catch (error: unknown) {
       if (abortController.signal.aborted) {
+        this.logger.log(
+          JSON.stringify({
+            chunkChars,
+            chunkCount,
+            elapsedMs: getElapsedMs(startedAt),
+            event: "story_realtime_task_aborted",
+            payloadMode,
+            requestId: message.requestId,
+            storylineId,
+            userId: clientState.user.sub,
+          }),
+        );
         return;
       }
 
       const errorCode = mapStreamErrorCode(error);
       this.logger.error(
         JSON.stringify({
+          chunkChars,
+          chunkCount,
+          elapsedMs: getElapsedMs(startedAt),
           errorCode,
           event: "story_realtime_generation_failed",
           error: toLoggableError(error),
-          payloadMode: message.payload.mode,
+          payloadMode,
           requestId: message.requestId,
           retryable: true,
-          storylineId: getStorylineIdFromPayload(message.payload),
+          storylineId,
           userId: clientState.user.sub,
         }),
       );
@@ -184,6 +368,19 @@ export class RealtimeGateway
       if (latestClientState?.activeTask?.requestId === message.requestId) {
         latestClientState.activeTask = null;
       }
+      this.logger.log(
+        JSON.stringify({
+          chunkChars,
+          chunkCount,
+          elapsedMs: getElapsedMs(startedAt),
+          event: "story_realtime_task_finished",
+          payloadMode,
+          requestId: message.requestId,
+          storylineId,
+          terminalEvent,
+          userId: clientState.user.sub,
+        }),
+      );
     }
   }
 
@@ -196,18 +393,42 @@ export class RealtimeGateway
       clientState?.activeTask === undefined ||
       clientState.activeTask === null
     ) {
+      this.logger.warn(
+        JSON.stringify({
+          event: "story_realtime_cancel_rejected",
+          reason: "no_active_task",
+          requestId: message.requestId,
+          userId: clientState?.user?.sub,
+        }),
+      );
       sendError(client, message.requestId, "NO_ACTIVE_TASK", false);
       return;
     }
 
     const activeTask = clientState.activeTask;
     if (activeTask.requestId !== message.requestId) {
+      this.logger.warn(
+        JSON.stringify({
+          activeRequestId: activeTask.requestId,
+          event: "story_realtime_cancel_rejected",
+          reason: "request_id_mismatch",
+          requestId: message.requestId,
+          userId: clientState.user?.sub,
+        }),
+      );
       sendError(client, message.requestId, "NO_ACTIVE_TASK", false);
       return;
     }
 
     activeTask.abortController.abort();
     clientState.activeTask = null;
+    this.logger.log(
+      JSON.stringify({
+        event: "story_realtime_cancelled",
+        requestId: message.requestId,
+        userId: clientState.user?.sub,
+      }),
+    );
     sendEvent(client, {
       type: "story.cancelled",
       requestId: message.requestId,
@@ -243,6 +464,34 @@ export class RealtimeGateway
       storyline: event.storyline,
       generatedSegmentId: event.generatedSegmentId,
     });
+  }
+
+  private cleanupClient(
+    client: WebSocket,
+    input: Readonly<{
+      closeCode?: number;
+      closeReason?: string;
+      event: "story_realtime_connection_closed" | "story_realtime_gateway_disconnect";
+    }>,
+  ): void {
+    const clientState = this.clientStates.get(client);
+    if (clientState === undefined) {
+      return;
+    }
+
+    const activeRequestId = clientState.activeTask?.requestId;
+    clientState.activeTask?.abortController.abort();
+    this.clientStates.delete(client);
+    this.logger.log(
+      JSON.stringify({
+        activeRequestId,
+        closeCode: input.closeCode,
+        closeReason: input.closeReason,
+        event: input.event,
+        hadActiveTask: activeRequestId !== undefined,
+        userId: clientState.user?.sub,
+      }),
+    );
   }
 }
 
@@ -337,6 +586,10 @@ function sendEvent(client: WebSocket, event: StoryRealtimeServerEvent): void {
   }
 
   client.send(JSON.stringify(event));
+}
+
+function getElapsedMs(startedAt: number): number {
+  return Math.max(0, Date.now() - startedAt);
 }
 
 function getRequestIdFromUnknownMessage(value: unknown): string {

@@ -1,4 +1,5 @@
 import {
+  BadGatewayException,
   BadRequestException,
   Inject,
   Injectable,
@@ -66,6 +67,11 @@ export class LlmService {
       userPrompt: request.userPrompt.trim(),
       ...(systemPrompt !== undefined ? { systemPrompt } : {}),
     };
+    this.logLlmCallStarted({
+      callId,
+      callType: "text",
+      request: providerRequest,
+    });
 
     try {
       const response = await this.llmProvider.generateText(
@@ -136,13 +142,32 @@ export class LlmService {
       ...(systemPrompt !== undefined ? { systemPrompt } : {}),
     };
     let outputText = "";
+    let completed = false;
+    let hasReceivedFirstEvent = false;
+    let hasReceivedFirstChunk = false;
+
+    this.logLlmCallStarted({
+      callId,
+      callType: "stream",
+      request: providerRequest,
+    });
 
     try {
       for await (const event of this.llmProvider.streamText(
         providerRequest,
         options,
       )) {
+        if (!hasReceivedFirstEvent) {
+          hasReceivedFirstEvent = true;
+          this.logLlmStreamFirstEvent({
+            callId,
+            elapsedMs: getElapsedMs(startedAt),
+            eventType: event.type,
+          });
+        }
+
         if (event.type === "completed") {
+          completed = true;
           const completedAtIso = new Date().toISOString();
           const elapsedMs = getElapsedMs(startedAt);
           const usage = normalizeLoggedUsage(event.usage);
@@ -172,12 +197,44 @@ export class LlmService {
           continue;
         }
 
+        if (!hasReceivedFirstChunk) {
+          hasReceivedFirstChunk = true;
+          this.logLlmStreamFirstChunk({
+            callId,
+            deltaChars: event.delta.length,
+            elapsedMs: getElapsedMs(startedAt),
+          });
+        }
         outputText += event.delta;
         yield event;
       }
+
+      if (!completed) {
+        if (options.signal.aborted) {
+          this.logLlmCallAborted({
+            callId,
+            callType: "stream",
+            elapsedMs: getElapsedMs(startedAt),
+            outputTextChars: outputText.length,
+          });
+          return;
+        }
+
+        throw new BadGatewayException("LLM stream ended without completion");
+      }
     } catch (error: unknown) {
-      const completedAtIso = new Date().toISOString();
       const elapsedMs = getElapsedMs(startedAt);
+      if (options.signal.aborted) {
+        this.logLlmCallAborted({
+          callId,
+          callType: "stream",
+          elapsedMs,
+          outputTextChars: outputText.length,
+        });
+        throw error;
+      }
+
+      const completedAtIso = new Date().toISOString();
       await this.writeLlmCallFile(
         buildFailedCallFileRecord({
           callId,
@@ -200,6 +257,43 @@ export class LlmService {
     }
   }
 
+  private logLlmCallAborted(
+    input: Readonly<{
+      callId: string;
+      callType: LlmCallType;
+      elapsedMs: number;
+      outputTextChars: number;
+    }>,
+  ): void {
+    this.logger.log(
+      JSON.stringify({
+        callId: input.callId,
+        callType: input.callType,
+        elapsedMs: input.elapsedMs,
+        event: "llm_call_aborted",
+        outputTextChars: input.outputTextChars,
+        usage: normalizeLoggedUsage(undefined),
+      }),
+    );
+  }
+
+  private logLlmCallStarted(
+    input: Readonly<{
+      callId: string;
+      callType: LlmCallType;
+      request: GenerateLlmTextRequest;
+    }>,
+  ): void {
+    this.logger.log(
+      JSON.stringify({
+        callId: input.callId,
+        callType: input.callType,
+        event: "llm_call_started",
+        requestMeta: buildLlmCallRequestMeta(input.request),
+      }),
+    );
+  }
+
   private logLlmCallCompleted(
     input: Readonly<{
       callId: string;
@@ -219,6 +313,40 @@ export class LlmService {
         finishReason: input.finishReason,
         model: input.model,
         usage: input.usage,
+      }),
+    );
+  }
+
+  private logLlmStreamFirstEvent(
+    input: Readonly<{
+      callId: string;
+      elapsedMs: number;
+      eventType: LlmTextStreamEvent["type"];
+    }>,
+  ): void {
+    this.logger.log(
+      JSON.stringify({
+        callId: input.callId,
+        elapsedMs: input.elapsedMs,
+        event: "llm_stream_first_event",
+        eventType: input.eventType,
+      }),
+    );
+  }
+
+  private logLlmStreamFirstChunk(
+    input: Readonly<{
+      callId: string;
+      deltaChars: number;
+      elapsedMs: number;
+    }>,
+  ): void {
+    this.logger.log(
+      JSON.stringify({
+        callId: input.callId,
+        deltaChars: input.deltaChars,
+        elapsedMs: input.elapsedMs,
+        event: "llm_stream_first_chunk",
       }),
     );
   }

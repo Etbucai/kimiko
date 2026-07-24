@@ -121,6 +121,7 @@ export type StorylineStreamEvent =
     }>;
 
 export interface ContinueStorylineInput {
+  readonly requestId?: string;
   readonly userId: string;
   readonly payload: StoryContinuePayload;
 }

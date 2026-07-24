@@ -34,6 +34,14 @@ export class StorylineGenerationService {
     input: ContinueStorylineInput,
     options: Readonly<{ signal: AbortSignal }>,
   ): AsyncIterable<StorylineStreamEvent> {
+    this.logGenerationPhase({
+      mode: input.payload.mode,
+      phase: "request_received",
+      requestId: input.requestId,
+      requestUserId: input.userId,
+      storylineId: getStorylineIdFromPayload(input.payload),
+    });
+
     if (input.payload.mode === "create") {
       yield* this.streamCreateStoryline(input, options);
       return;
@@ -60,9 +68,18 @@ export class StorylineGenerationService {
       throw new StorylineNotFoundError("Expected create payload");
     }
 
+    const startedAt = Date.now();
     const releaseLock = this.storylineLockService.acquireCreateLock(
       input.userId,
     );
+    this.logGenerationPhase({
+      elapsedMs: getElapsedMs(startedAt),
+      mode: "create",
+      phase: "lock_acquired",
+      requestId: input.requestId,
+      requestUserId: input.userId,
+      storylineId: null,
+    });
 
     try {
       const writerContext: StoryLlmContext = {
@@ -77,6 +94,17 @@ export class StorylineGenerationService {
           contextWasMissing: true,
         },
       };
+      let chunkChars = 0;
+      let chunkCount = 0;
+
+      this.logGenerationPhase({
+        elapsedMs: getElapsedMs(startedAt),
+        mode: "create",
+        phase: "writer_stream_started",
+        requestId: input.requestId,
+        requestUserId: input.userId,
+        storylineId: null,
+      });
 
       for await (const event of this.storyService.streamContinueStoryFromContext(
         writerContext,
@@ -87,13 +115,32 @@ export class StorylineGenerationService {
         }
 
         if (event.type === "chunk") {
+          chunkCount += 1;
+          chunkChars += event.delta.length;
+          if (chunkCount === 1) {
+            this.logGenerationPhase({
+              chunkChars,
+              chunkCount,
+              elapsedMs: getElapsedMs(startedAt),
+              mode: "create",
+              phase: "writer_first_chunk",
+              requestId: input.requestId,
+              requestUserId: input.userId,
+              storylineId: null,
+            });
+          }
           yield event;
           continue;
         }
 
         this.logGenerationPhase({
+          chunkChars,
+          chunkCount,
+          elapsedMs: getElapsedMs(startedAt),
+          generatedTextChars: event.continuedStory.length,
           mode: "create",
           phase: "writer_completed",
+          requestId: input.requestId,
           requestUserId: input.userId,
           storylineId: null,
         });
@@ -103,8 +150,10 @@ export class StorylineGenerationService {
         }
 
         this.logGenerationPhase({
+          elapsedMs: getElapsedMs(startedAt),
           mode: "create",
           phase: "context_started",
+          requestId: input.requestId,
           requestUserId: input.userId,
           storylineId: null,
         });
@@ -136,8 +185,10 @@ export class StorylineGenerationService {
           return;
         }
         this.logGenerationPhase({
+          elapsedMs: getElapsedMs(startedAt),
           mode: "create",
           phase: "context_completed",
+          requestId: input.requestId,
           requestUserId: input.userId,
           storylineId: null,
         });
@@ -154,9 +205,11 @@ export class StorylineGenerationService {
             contextDraft,
           });
         this.logGenerationPhase({
+          elapsedMs: getElapsedMs(startedAt),
           generatedSegmentId: storyline.latestGeneration.segmentId,
           mode: "create",
           phase: "save_completed",
+          requestId: input.requestId,
           requestUserId: input.userId,
           storylineId: storyline.id,
         });
@@ -180,6 +233,15 @@ export class StorylineGenerationService {
       throw new StorylineNotFoundError("Expected append payload");
     }
 
+    const startedAt = Date.now();
+    this.logGenerationPhase({
+      elapsedMs: getElapsedMs(startedAt),
+      mode: "append",
+      phase: "storyline_lookup_started",
+      requestId: input.requestId,
+      requestUserId: input.userId,
+      storylineId: input.payload.storylineId,
+    });
     const storyline = await this.storylineService.getStorylineForUser(
       input.userId,
       input.payload.storylineId,
@@ -187,12 +249,36 @@ export class StorylineGenerationService {
     if (storyline === null) {
       throw new StorylineNotFoundError();
     }
+    this.logGenerationPhase({
+      elapsedMs: getElapsedMs(startedAt),
+      mode: "append",
+      phase: "storyline_lookup_completed",
+      requestId: input.requestId,
+      requestUserId: input.userId,
+      storylineId: storyline.externalId,
+    });
 
     const releaseLock = this.storylineLockService.acquireStorylineLock(
       storyline.externalId,
     );
+    this.logGenerationPhase({
+      elapsedMs: getElapsedMs(startedAt),
+      mode: "append",
+      phase: "lock_acquired",
+      requestId: input.requestId,
+      requestUserId: input.userId,
+      storylineId: storyline.externalId,
+    });
 
     try {
+      this.logGenerationPhase({
+        elapsedMs: getElapsedMs(startedAt),
+        mode: "append",
+        phase: "llm_context_build_started",
+        requestId: input.requestId,
+        requestUserId: input.userId,
+        storylineId: storyline.externalId,
+      });
       const context = await this.storylineService.buildLlmContext({
         userId: input.userId,
         storylineId: storyline.externalId,
@@ -200,6 +286,25 @@ export class StorylineGenerationService {
         historyScoreConfig: getHistoryScoreConfig(),
       });
       const previousContext = context.contextBundle.storyContext;
+      this.logGenerationPhase({
+        elapsedMs: getElapsedMs(startedAt),
+        mode: "append",
+        phase: "llm_context_build_completed",
+        requestId: input.requestId,
+        requestUserId: input.userId,
+        storylineId: storyline.externalId,
+      });
+      let chunkChars = 0;
+      let chunkCount = 0;
+
+      this.logGenerationPhase({
+        elapsedMs: getElapsedMs(startedAt),
+        mode: "append",
+        phase: "writer_stream_started",
+        requestId: input.requestId,
+        requestUserId: input.userId,
+        storylineId: storyline.externalId,
+      });
 
       for await (const event of this.storyService.streamContinueStoryFromContext(
         context,
@@ -210,13 +315,32 @@ export class StorylineGenerationService {
         }
 
         if (event.type === "chunk") {
+          chunkCount += 1;
+          chunkChars += event.delta.length;
+          if (chunkCount === 1) {
+            this.logGenerationPhase({
+              chunkChars,
+              chunkCount,
+              elapsedMs: getElapsedMs(startedAt),
+              mode: "append",
+              phase: "writer_first_chunk",
+              requestId: input.requestId,
+              requestUserId: input.userId,
+              storylineId: storyline.externalId,
+            });
+          }
           yield event;
           continue;
         }
 
         this.logGenerationPhase({
+          chunkChars,
+          chunkCount,
+          elapsedMs: getElapsedMs(startedAt),
+          generatedTextChars: event.continuedStory.length,
           mode: "append",
           phase: "writer_completed",
+          requestId: input.requestId,
           requestUserId: input.userId,
           storylineId: storyline.externalId,
         });
@@ -226,8 +350,10 @@ export class StorylineGenerationService {
         }
 
         this.logGenerationPhase({
+          elapsedMs: getElapsedMs(startedAt),
           mode: "append",
           phase: "context_started",
+          requestId: input.requestId,
           requestUserId: input.userId,
           storylineId: storyline.externalId,
         });
@@ -255,8 +381,10 @@ export class StorylineGenerationService {
           return;
         }
         this.logGenerationPhase({
+          elapsedMs: getElapsedMs(startedAt),
           mode: "append",
           phase: "context_completed",
+          requestId: input.requestId,
           requestUserId: input.userId,
           storylineId: storyline.externalId,
         });
@@ -274,9 +402,11 @@ export class StorylineGenerationService {
             contextDraft,
           });
         this.logGenerationPhase({
+          elapsedMs: getElapsedMs(startedAt),
           generatedSegmentId: savedStoryline.latestGeneration.segmentId,
           mode: "append",
           phase: "save_completed",
+          requestId: input.requestId,
           requestUserId: input.userId,
           storylineId: storyline.externalId,
         });
@@ -300,6 +430,15 @@ export class StorylineGenerationService {
       throw new StorySegmentNotRewritableError("Expected rewrite payload");
     }
 
+    const startedAt = Date.now();
+    this.logGenerationPhase({
+      elapsedMs: getElapsedMs(startedAt),
+      mode: "rewrite",
+      phase: "storyline_lookup_started",
+      requestId: input.requestId,
+      requestUserId: input.userId,
+      storylineId: input.payload.storylineId,
+    });
     const storyline = await this.storylineService.getStorylineForUser(
       input.userId,
       input.payload.storylineId,
@@ -307,18 +446,51 @@ export class StorylineGenerationService {
     if (storyline === null) {
       throw new StorylineNotFoundError();
     }
+    this.logGenerationPhase({
+      elapsedMs: getElapsedMs(startedAt),
+      mode: "rewrite",
+      phase: "storyline_lookup_completed",
+      requestId: input.requestId,
+      requestUserId: input.userId,
+      storylineId: storyline.externalId,
+    });
 
     const releaseLock = this.storylineLockService.acquireStorylineLock(
       storyline.externalId,
     );
+    this.logGenerationPhase({
+      elapsedMs: getElapsedMs(startedAt),
+      mode: "rewrite",
+      phase: "lock_acquired",
+      requestId: input.requestId,
+      requestUserId: input.userId,
+      storylineId: storyline.externalId,
+    });
 
     try {
+      this.logGenerationPhase({
+        elapsedMs: getElapsedMs(startedAt),
+        mode: "rewrite",
+        phase: "llm_context_build_started",
+        requestId: input.requestId,
+        requestUserId: input.userId,
+        storylineId: storyline.externalId,
+      });
       const context = await this.storylineService.buildRewriteLlmContext({
         userId: input.userId,
         storylineId: storyline.externalId,
         segmentId: input.payload.segmentId,
         rewriteInstruction: input.payload.instruction,
         historyScoreConfig: getHistoryScoreConfig(),
+      });
+      this.logGenerationPhase({
+        elapsedMs: getElapsedMs(startedAt),
+        mode: "rewrite",
+        phase: "llm_context_build_completed",
+        requestId: input.requestId,
+        requestUserId: input.userId,
+        storylineId: storyline.externalId,
+        targetGenerationMode: context.targetGenerationMode,
       });
 
       const rewriteStream =
@@ -331,6 +503,18 @@ export class StorylineGenerationService {
               context.writerContext,
               options,
             );
+      let chunkChars = 0;
+      let chunkCount = 0;
+
+      this.logGenerationPhase({
+        elapsedMs: getElapsedMs(startedAt),
+        mode: "rewrite",
+        phase: "writer_stream_started",
+        requestId: input.requestId,
+        requestUserId: input.userId,
+        storylineId: storyline.externalId,
+        targetGenerationMode: context.targetGenerationMode,
+      });
 
       for await (const event of rewriteStream) {
         if (options.signal.aborted) {
@@ -338,15 +522,36 @@ export class StorylineGenerationService {
         }
 
         if (event.type === "chunk") {
+          chunkCount += 1;
+          chunkChars += event.delta.length;
+          if (chunkCount === 1) {
+            this.logGenerationPhase({
+              chunkChars,
+              chunkCount,
+              elapsedMs: getElapsedMs(startedAt),
+              mode: "rewrite",
+              phase: "writer_first_chunk",
+              requestId: input.requestId,
+              requestUserId: input.userId,
+              storylineId: storyline.externalId,
+              targetGenerationMode: context.targetGenerationMode,
+            });
+          }
           yield event;
           continue;
         }
 
         this.logGenerationPhase({
+          chunkChars,
+          chunkCount,
+          elapsedMs: getElapsedMs(startedAt),
+          generatedTextChars: event.continuedStory.length,
           mode: "rewrite",
           phase: "writer_completed",
+          requestId: input.requestId,
           requestUserId: input.userId,
           storylineId: storyline.externalId,
+          targetGenerationMode: context.targetGenerationMode,
         });
         yield { type: "contextStarted" };
         if (options.signal.aborted) {
@@ -354,10 +559,13 @@ export class StorylineGenerationService {
         }
 
         this.logGenerationPhase({
+          elapsedMs: getElapsedMs(startedAt),
           mode: "rewrite",
           phase: "context_started",
+          requestId: input.requestId,
           requestUserId: input.userId,
           storylineId: storyline.externalId,
+          targetGenerationMode: context.targetGenerationMode,
         });
         const contextDraft =
           await this.storylineContextService.generateStoryContextDraft(
@@ -383,10 +591,13 @@ export class StorylineGenerationService {
           return;
         }
         this.logGenerationPhase({
+          elapsedMs: getElapsedMs(startedAt),
           mode: "rewrite",
           phase: "context_completed",
+          requestId: input.requestId,
           requestUserId: input.userId,
           storylineId: storyline.externalId,
+          targetGenerationMode: context.targetGenerationMode,
         });
 
         const savedStoryline =
@@ -403,11 +614,14 @@ export class StorylineGenerationService {
             contextDraft,
           });
         this.logGenerationPhase({
+          elapsedMs: getElapsedMs(startedAt),
           generatedSegmentId: savedStoryline.latestGeneration.segmentId,
           mode: "rewrite",
           phase: "save_completed",
+          requestId: input.requestId,
           requestUserId: input.userId,
           storylineId: storyline.externalId,
+          targetGenerationMode: context.targetGenerationMode,
         });
 
         yield {
@@ -429,6 +643,15 @@ export class StorylineGenerationService {
       throw new StorylineNotFoundError("Expected dialogue payload");
     }
 
+    const startedAt = Date.now();
+    this.logGenerationPhase({
+      elapsedMs: getElapsedMs(startedAt),
+      mode: "dialogue",
+      phase: "storyline_lookup_started",
+      requestId: input.requestId,
+      requestUserId: input.userId,
+      storylineId: input.payload.storylineId,
+    });
     const storyline = await this.storylineService.getStorylineForUser(
       input.userId,
       input.payload.storylineId,
@@ -436,17 +659,60 @@ export class StorylineGenerationService {
     if (storyline === null) {
       throw new StorylineNotFoundError();
     }
+    this.logGenerationPhase({
+      elapsedMs: getElapsedMs(startedAt),
+      mode: "dialogue",
+      phase: "storyline_lookup_completed",
+      requestId: input.requestId,
+      requestUserId: input.userId,
+      storylineId: storyline.externalId,
+    });
 
     const releaseLock = this.storylineLockService.acquireStorylineLock(
       storyline.externalId,
     );
+    this.logGenerationPhase({
+      elapsedMs: getElapsedMs(startedAt),
+      mode: "dialogue",
+      phase: "lock_acquired",
+      requestId: input.requestId,
+      requestUserId: input.userId,
+      storylineId: storyline.externalId,
+    });
 
     try {
+      this.logGenerationPhase({
+        elapsedMs: getElapsedMs(startedAt),
+        mode: "dialogue",
+        phase: "llm_context_build_started",
+        requestId: input.requestId,
+        requestUserId: input.userId,
+        storylineId: storyline.externalId,
+      });
       const context = await this.storylineService.buildDialogueLlmContext({
         userId: input.userId,
         storylineId: storyline.externalId,
         input: input.payload.input,
         historyScoreConfig: getHistoryScoreConfig(),
+      });
+      this.logGenerationPhase({
+        elapsedMs: getElapsedMs(startedAt),
+        mode: "dialogue",
+        phase: "llm_context_build_completed",
+        requestId: input.requestId,
+        requestUserId: input.userId,
+        storylineId: storyline.externalId,
+      });
+      let chunkChars = 0;
+      let chunkCount = 0;
+
+      this.logGenerationPhase({
+        elapsedMs: getElapsedMs(startedAt),
+        mode: "dialogue",
+        phase: "writer_stream_started",
+        requestId: input.requestId,
+        requestUserId: input.userId,
+        storylineId: storyline.externalId,
       });
 
       for await (const event of this.storyService.streamDialogueStoryFromContext(
@@ -458,13 +724,32 @@ export class StorylineGenerationService {
         }
 
         if (event.type === "chunk") {
+          chunkCount += 1;
+          chunkChars += event.delta.length;
+          if (chunkCount === 1) {
+            this.logGenerationPhase({
+              chunkChars,
+              chunkCount,
+              elapsedMs: getElapsedMs(startedAt),
+              mode: "dialogue",
+              phase: "writer_first_chunk",
+              requestId: input.requestId,
+              requestUserId: input.userId,
+              storylineId: storyline.externalId,
+            });
+          }
           yield event;
           continue;
         }
 
         this.logGenerationPhase({
+          chunkChars,
+          chunkCount,
+          elapsedMs: getElapsedMs(startedAt),
+          generatedTextChars: event.continuedStory.length,
           mode: "dialogue",
           phase: "writer_completed",
+          requestId: input.requestId,
           requestUserId: input.userId,
           storylineId: storyline.externalId,
         });
@@ -486,9 +771,11 @@ export class StorylineGenerationService {
             return;
           }
           this.logGenerationPhase({
+            elapsedMs: getElapsedMs(startedAt),
             generatedSegmentId: savedStoryline.latestGeneration.segmentId,
             mode: "dialogue",
             phase: "noop_save_completed",
+            requestId: input.requestId,
             requestUserId: input.userId,
             storylineId: storyline.externalId,
           });
@@ -507,8 +794,10 @@ export class StorylineGenerationService {
         }
 
         this.logGenerationPhase({
+          elapsedMs: getElapsedMs(startedAt),
           mode: "dialogue",
           phase: "context_started",
+          requestId: input.requestId,
           requestUserId: input.userId,
           storylineId: storyline.externalId,
         });
@@ -536,8 +825,10 @@ export class StorylineGenerationService {
           return;
         }
         this.logGenerationPhase({
+          elapsedMs: getElapsedMs(startedAt),
           mode: "dialogue",
           phase: "context_completed",
+          requestId: input.requestId,
           requestUserId: input.userId,
           storylineId: storyline.externalId,
         });
@@ -555,9 +846,11 @@ export class StorylineGenerationService {
             contextDraft,
           });
         this.logGenerationPhase({
+          elapsedMs: getElapsedMs(startedAt),
           generatedSegmentId: savedStoryline.latestGeneration.segmentId,
           mode: "dialogue",
           phase: "save_completed",
+          requestId: input.requestId,
           requestUserId: input.userId,
           storylineId: storyline.externalId,
         });
@@ -574,24 +867,44 @@ export class StorylineGenerationService {
   }
 
   private logGenerationPhase(input: Readonly<{
+    chunkChars?: number | undefined;
+    chunkCount?: number | undefined;
+    elapsedMs?: number | undefined;
     generatedSegmentId?: string;
+    generatedTextChars?: number | undefined;
     mode: ContinueStorylineInput["payload"]["mode"];
     phase:
+      | "request_received"
+      | "storyline_lookup_started"
+      | "storyline_lookup_completed"
+      | "lock_acquired"
+      | "llm_context_build_started"
+      | "llm_context_build_completed"
+      | "writer_stream_started"
+      | "writer_first_chunk"
       | "writer_completed"
       | "context_started"
       | "context_completed"
       | "save_completed"
       | "noop_save_completed";
+    requestId?: string | undefined;
     requestUserId: string;
     storylineId: string | null;
+    targetGenerationMode?: string | undefined;
   }>): void {
     this.logger.log(
       JSON.stringify({
+        chunkChars: input.chunkChars,
+        chunkCount: input.chunkCount,
+        elapsedMs: input.elapsedMs,
         event: "story_generation_phase",
         generatedSegmentId: input.generatedSegmentId,
+        generatedTextChars: input.generatedTextChars,
         mode: input.mode,
         phase: input.phase,
+        requestId: input.requestId,
         storylineId: input.storylineId,
+        targetGenerationMode: input.targetGenerationMode,
         userId: input.requestUserId,
       }),
     );
@@ -641,6 +954,16 @@ function getHistoryScoreConfig(): HistoryScoreConfig {
   };
 }
 
+function getStorylineIdFromPayload(
+  payload: ContinueStorylineInput["payload"],
+): string | null {
+  return payload.mode === "create" ? null : payload.storylineId;
+}
+
 function isNoOpDialogueText(value: string): boolean {
   return value.trim() === noOpDialogueText;
+}
+
+function getElapsedMs(startedAt: number): number {
+  return Math.max(0, Date.now() - startedAt);
 }
