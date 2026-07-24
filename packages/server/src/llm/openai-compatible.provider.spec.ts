@@ -150,6 +150,82 @@ describe("OpenAiCompatibleProvider", () => {
     });
   });
 
+  it("enables DeepSeek JSON mode for non-streaming JSON prompts", async () => {
+    provider = new OpenAiCompatibleProvider(
+      {
+        apiKey: "test-key",
+        baseUrl: "https://api.deepseek.com",
+        model: "deepseek-chat",
+        timeoutMs: 30_000,
+      },
+      client as unknown as OpenAiClientLike,
+    );
+    client.chat.completions.create.mockResolvedValue({
+      model: "deepseek-chat",
+      choices: [
+        {
+          finish_reason: "stop",
+          message: {
+            content: '{"ok":true}',
+          },
+        },
+      ],
+    } as ChatCompletion);
+
+    await provider.generateText({
+      systemPrompt: "只输出 JSON。",
+      userPrompt: '输出 JSON：{"ok": true}',
+    });
+
+    expect(client.chat.completions.create.mock.calls[0]?.[0]).toEqual({
+      model: "deepseek-chat",
+      messages: [
+        {
+          role: "system",
+          content: "只输出 JSON。",
+        },
+        {
+          role: "user",
+          content: '输出 JSON：{"ok": true}',
+        },
+      ],
+      response_format: { type: "json_object" },
+    });
+  });
+
+  it("does not enable DeepSeek JSON mode for other base URLs", async () => {
+    client.chat.completions.create.mockResolvedValue({
+      model: "default-model",
+      choices: [
+        {
+          finish_reason: "stop",
+          message: {
+            content: '{"ok":true}',
+          },
+        },
+      ],
+    } as ChatCompletion);
+
+    await provider.generateText({
+      systemPrompt: "只输出 JSON。",
+      userPrompt: '输出 JSON：{"ok": true}',
+    });
+
+    expect(client.chat.completions.create.mock.calls[0]?.[0]).toEqual({
+      model: "default-model",
+      messages: [
+        {
+          role: "system",
+          content: "只输出 JSON。",
+        },
+        {
+          role: "user",
+          content: '输出 JSON：{"ok": true}',
+        },
+      ],
+    });
+  });
+
   it("passes abort signals to non-streaming completions", async () => {
     client.chat.completions.create.mockResolvedValue({
       model: "default-model",
@@ -239,10 +315,19 @@ describe("OpenAiCompatibleProvider", () => {
   });
 
   it("streams text chunks and maps completed usage", async () => {
+    provider = new OpenAiCompatibleProvider(
+      {
+        apiKey: "test-key",
+        baseUrl: "https://api.deepseek.com",
+        model: "deepseek-chat",
+        timeoutMs: 30_000,
+      },
+      client as unknown as OpenAiClientLike,
+    );
     client.chat.completions.create.mockResolvedValue(
       createChatCompletionStream([
         {
-          model: "default-model",
+          model: "deepseek-chat",
           choices: [
             {
               delta: {
@@ -254,7 +339,7 @@ describe("OpenAiCompatibleProvider", () => {
           ],
         },
         {
-          model: "default-model",
+          model: "deepseek-chat",
           choices: [
             {
               delta: {
@@ -294,7 +379,7 @@ describe("OpenAiCompatibleProvider", () => {
       },
       {
         type: "completed",
-        model: "default-model",
+        model: "deepseek-chat",
         usage: {
           inputTokens: 3,
           outputTokens: 4,
@@ -303,7 +388,7 @@ describe("OpenAiCompatibleProvider", () => {
       },
     ]);
     expect(client.chat.completions.create.mock.calls[0]?.[0]).toEqual({
-      model: "default-model",
+      model: "deepseek-chat",
       messages: [
         {
           role: "user",

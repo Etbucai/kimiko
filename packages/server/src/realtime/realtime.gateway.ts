@@ -1,4 +1,4 @@
-import { BadGatewayException, Injectable } from "@nestjs/common";
+import { BadGatewayException, Injectable, Logger } from "@nestjs/common";
 import { WebSocketGateway } from "@nestjs/websockets";
 import type { OnGatewayDisconnect, OnGatewayInit } from "@nestjs/websockets";
 import type {
@@ -49,6 +49,7 @@ const errorMessages: Record<RealtimeErrorCode, string> = {
 export class RealtimeGateway
   implements OnGatewayInit<WebSocketServer>, OnGatewayDisconnect<WebSocket>
 {
+  private readonly logger = new Logger(RealtimeGateway.name);
   private readonly clientStates = new WeakMap<WebSocket, RealtimeClientState>();
 
   constructor(
@@ -164,7 +165,20 @@ export class RealtimeGateway
         return;
       }
 
-      sendError(client, message.requestId, mapStreamErrorCode(error), true);
+      const errorCode = mapStreamErrorCode(error);
+      this.logger.error(
+        JSON.stringify({
+          errorCode,
+          event: "story_realtime_generation_failed",
+          error: toLoggableError(error),
+          payloadMode: message.payload.mode,
+          requestId: message.requestId,
+          retryable: true,
+          storylineId: getStorylineIdFromPayload(message.payload),
+          userId: clientState.user.sub,
+        }),
+      );
+      sendError(client, message.requestId, errorCode, true);
     } finally {
       const latestClientState = this.clientStates.get(client);
       if (latestClientState?.activeTask?.requestId === message.requestId) {
@@ -230,6 +244,12 @@ export class RealtimeGateway
       generatedSegmentId: event.generatedSegmentId,
     });
   }
+}
+
+function getStorylineIdFromPayload(
+  payload: StoryContinueClientMessage["payload"],
+): string | null {
+  return payload.mode === "create" ? null : payload.storylineId;
 }
 
 function parseClientMessage(rawMessage: unknown):
@@ -390,4 +410,23 @@ function mapStreamErrorCode(error: unknown): RealtimeErrorCode {
   }
 
   return "GENERATION_FAILED";
+}
+
+function toLoggableError(error: unknown): Readonly<{
+  message: string;
+  name: string;
+  stack?: string;
+}> {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      ...(error.stack !== undefined ? { stack: error.stack } : {}),
+    };
+  }
+
+  return {
+    name: "UnknownError",
+    message: String(error),
+  };
 }

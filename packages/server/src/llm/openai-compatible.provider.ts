@@ -118,10 +118,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     options?: Readonly<{ signal: AbortSignal }>,
   ): Promise<ChatCompletion> {
     try {
-      const request = {
-        model: this.config.model,
-        messages: buildChatCompletionMessages(input),
-      } satisfies ChatCompletionCreateParamsNonStreaming;
+      const request = buildChatCompletionRequest(input, this.config);
 
       return options === undefined
         ? await this.client.chat.completions.create(request)
@@ -155,6 +152,25 @@ export class OpenAiCompatibleProvider implements LlmProvider {
   }
 }
 
+function buildChatCompletionRequest(
+  input: GenerateLlmTextRequest,
+  config: OpenAiCompatibleProviderConfig,
+): ChatCompletionCreateParamsNonStreaming {
+  const request: ChatCompletionCreateParamsNonStreaming = {
+    model: config.model,
+    messages: buildChatCompletionMessages(input),
+  };
+
+  if (shouldUseDeepSeekJsonMode(input, config)) {
+    return {
+      ...request,
+      response_format: { type: "json_object" },
+    };
+  }
+
+  return request;
+}
+
 function createOpenAiClient(
   config: OpenAiCompatibleProviderConfig,
 ): OpenAiClientLike {
@@ -184,6 +200,31 @@ function buildChatCompletionMessages(
   });
 
   return messages;
+}
+
+function shouldUseDeepSeekJsonMode(
+  input: GenerateLlmTextRequest,
+  config: OpenAiCompatibleProviderConfig,
+): boolean {
+  if (!isDeepSeekBaseUrl(config.baseUrl)) {
+    return false;
+  }
+
+  const promptText = `${input.systemPrompt ?? ""}\n${input.userPrompt}`;
+  return /\bjson\b/i.test(promptText);
+}
+
+function isDeepSeekBaseUrl(baseUrl: string): boolean {
+  try {
+    const url = new URL(baseUrl);
+    return (
+      url.protocol === "https:" &&
+      url.hostname === "api.deepseek.com" &&
+      (url.pathname === "" || url.pathname === "/")
+    );
+  } catch {
+    return false;
+  }
 }
 
 function mapCompletionToGenerateTextResponse(

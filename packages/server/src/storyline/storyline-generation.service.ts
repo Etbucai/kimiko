@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { Env } from "../env";
 import { StoryService } from "../story/story.service";
 import type { StoryHistoryRound, StoryLlmContext } from "../story/story.service";
@@ -21,6 +21,8 @@ const noOpDialogueText = "无事发生";
 
 @Injectable()
 export class StorylineGenerationService {
+  private readonly logger = new Logger(StorylineGenerationService.name);
+
   constructor(
     private readonly storylineService: StorylineService,
     private readonly storyService: StoryService,
@@ -89,11 +91,23 @@ export class StorylineGenerationService {
           continue;
         }
 
+        this.logGenerationPhase({
+          mode: "create",
+          phase: "writer_completed",
+          requestUserId: input.userId,
+          storylineId: null,
+        });
         yield { type: "contextStarted" };
         if (options.signal.aborted) {
           return;
         }
 
+        this.logGenerationPhase({
+          mode: "create",
+          phase: "context_started",
+          requestUserId: input.userId,
+          storylineId: null,
+        });
         const contextDraft =
           await this.storylineContextService.generateStoryContextDraft(
             {
@@ -121,6 +135,12 @@ export class StorylineGenerationService {
         if (options.signal.aborted) {
           return;
         }
+        this.logGenerationPhase({
+          mode: "create",
+          phase: "context_completed",
+          requestUserId: input.userId,
+          storylineId: null,
+        });
 
         const storyline =
           await this.storylineService.saveCreatedStorylineWithContext({
@@ -133,6 +153,13 @@ export class StorylineGenerationService {
             usage: event.usage,
             contextDraft,
           });
+        this.logGenerationPhase({
+          generatedSegmentId: storyline.latestGeneration.segmentId,
+          mode: "create",
+          phase: "save_completed",
+          requestUserId: input.userId,
+          storylineId: storyline.id,
+        });
 
         yield {
           type: "completed",
@@ -187,11 +214,23 @@ export class StorylineGenerationService {
           continue;
         }
 
+        this.logGenerationPhase({
+          mode: "append",
+          phase: "writer_completed",
+          requestUserId: input.userId,
+          storylineId: storyline.externalId,
+        });
         yield { type: "contextStarted" };
         if (options.signal.aborted) {
           return;
         }
 
+        this.logGenerationPhase({
+          mode: "append",
+          phase: "context_started",
+          requestUserId: input.userId,
+          storylineId: storyline.externalId,
+        });
         const contextDraft =
           await this.storylineContextService.generateStoryContextDraft(
             {
@@ -215,6 +254,12 @@ export class StorylineGenerationService {
         if (options.signal.aborted) {
           return;
         }
+        this.logGenerationPhase({
+          mode: "append",
+          phase: "context_completed",
+          requestUserId: input.userId,
+          storylineId: storyline.externalId,
+        });
 
         const savedStoryline =
           await this.storylineService.saveAppendedSegmentWithContext({
@@ -228,6 +273,13 @@ export class StorylineGenerationService {
             previousContext,
             contextDraft,
           });
+        this.logGenerationPhase({
+          generatedSegmentId: savedStoryline.latestGeneration.segmentId,
+          mode: "append",
+          phase: "save_completed",
+          requestUserId: input.userId,
+          storylineId: storyline.externalId,
+        });
 
         yield {
           type: "completed",
@@ -290,11 +342,23 @@ export class StorylineGenerationService {
           continue;
         }
 
+        this.logGenerationPhase({
+          mode: "rewrite",
+          phase: "writer_completed",
+          requestUserId: input.userId,
+          storylineId: storyline.externalId,
+        });
         yield { type: "contextStarted" };
         if (options.signal.aborted) {
           return;
         }
 
+        this.logGenerationPhase({
+          mode: "rewrite",
+          phase: "context_started",
+          requestUserId: input.userId,
+          storylineId: storyline.externalId,
+        });
         const contextDraft =
           await this.storylineContextService.generateStoryContextDraft(
             {
@@ -318,6 +382,12 @@ export class StorylineGenerationService {
         if (options.signal.aborted) {
           return;
         }
+        this.logGenerationPhase({
+          mode: "rewrite",
+          phase: "context_completed",
+          requestUserId: input.userId,
+          storylineId: storyline.externalId,
+        });
 
         const savedStoryline =
           await this.storylineService.saveRewrittenSegmentWithContext({
@@ -332,6 +402,13 @@ export class StorylineGenerationService {
             previousContext: context.previousContext,
             contextDraft,
           });
+        this.logGenerationPhase({
+          generatedSegmentId: savedStoryline.latestGeneration.segmentId,
+          mode: "rewrite",
+          phase: "save_completed",
+          requestUserId: input.userId,
+          storylineId: storyline.externalId,
+        });
 
         yield {
           type: "completed",
@@ -385,6 +462,12 @@ export class StorylineGenerationService {
           continue;
         }
 
+        this.logGenerationPhase({
+          mode: "dialogue",
+          phase: "writer_completed",
+          requestUserId: input.userId,
+          storylineId: storyline.externalId,
+        });
         if (isNoOpDialogueText(event.continuedStory)) {
           const savedStoryline =
             await this.storylineService.saveDialogueSegmentWithoutContextUpdate(
@@ -402,6 +485,13 @@ export class StorylineGenerationService {
           if (options.signal.aborted) {
             return;
           }
+          this.logGenerationPhase({
+            generatedSegmentId: savedStoryline.latestGeneration.segmentId,
+            mode: "dialogue",
+            phase: "noop_save_completed",
+            requestUserId: input.userId,
+            storylineId: storyline.externalId,
+          });
 
           yield {
             type: "completed",
@@ -416,6 +506,12 @@ export class StorylineGenerationService {
           return;
         }
 
+        this.logGenerationPhase({
+          mode: "dialogue",
+          phase: "context_started",
+          requestUserId: input.userId,
+          storylineId: storyline.externalId,
+        });
         const contextDraft =
           await this.storylineContextService.generateStoryContextDraft(
             {
@@ -439,6 +535,12 @@ export class StorylineGenerationService {
         if (options.signal.aborted) {
           return;
         }
+        this.logGenerationPhase({
+          mode: "dialogue",
+          phase: "context_completed",
+          requestUserId: input.userId,
+          storylineId: storyline.externalId,
+        });
 
         const savedStoryline =
           await this.storylineService.saveDialogueSegmentWithContext({
@@ -452,6 +554,13 @@ export class StorylineGenerationService {
             previousContext: context.previousContext,
             contextDraft,
           });
+        this.logGenerationPhase({
+          generatedSegmentId: savedStoryline.latestGeneration.segmentId,
+          mode: "dialogue",
+          phase: "save_completed",
+          requestUserId: input.userId,
+          storylineId: storyline.externalId,
+        });
 
         yield {
           type: "completed",
@@ -462,6 +571,30 @@ export class StorylineGenerationService {
     } finally {
       releaseLock();
     }
+  }
+
+  private logGenerationPhase(input: Readonly<{
+    generatedSegmentId?: string;
+    mode: ContinueStorylineInput["payload"]["mode"];
+    phase:
+      | "writer_completed"
+      | "context_started"
+      | "context_completed"
+      | "save_completed"
+      | "noop_save_completed";
+    requestUserId: string;
+    storylineId: string | null;
+  }>): void {
+    this.logger.log(
+      JSON.stringify({
+        event: "story_generation_phase",
+        generatedSegmentId: input.generatedSegmentId,
+        mode: input.mode,
+        phase: input.phase,
+        storylineId: input.storylineId,
+        userId: input.requestUserId,
+      }),
+    );
   }
 }
 
