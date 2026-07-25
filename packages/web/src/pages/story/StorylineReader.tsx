@@ -70,6 +70,7 @@ type StorylineReaderPageBuilder =
     };
 
 interface StorylineReaderProps {
+  initialInstruction?: string | undefined;
   onViewportChange: (state: StorylineReaderViewportState) => void;
   storyline: StorylineSnapshot;
   temporaryAppendText: string;
@@ -81,6 +82,7 @@ interface StorylineReaderProps {
 }
 
 export function StorylineReader({
+  initialInstruction,
   onViewportChange,
   storyline,
   temporaryAppendText,
@@ -282,7 +284,7 @@ export function StorylineReader({
   return (
     <article
       aria-label="故事正文"
-      className="rounded-3xl border border-(--border) bg-(--panel-bg) p-4 shadow-(--shadow) outline-none focus:border-(--accent-border) md:p-5"
+      className="outline-none"
       onKeyDown={handleKeyDown}
       tabIndex={0}
     >
@@ -294,7 +296,7 @@ export function StorylineReader({
       </div>
       <div
         ref={scrollerRef}
-        className="flex snap-x snap-mandatory items-start gap-0 overflow-x-auto overflow-y-hidden overscroll-x-contain"
+        className="flex snap-x snap-mandatory items-start gap-0 overflow-x-auto overflow-y-hidden overscroll-x-none"
         onScroll={handleScroll}
         style={scrollerStyle}
       >
@@ -304,6 +306,7 @@ export function StorylineReader({
             page={page}
             pageIndex={index}
             pageTotal={pages.length}
+            initialInstruction={initialInstruction}
             panelRef={(element) => {
               pagePanelRefs.current[index] = element;
             }}
@@ -381,6 +384,7 @@ function buildReaderPages({
 }
 
 interface StorylinePagePanelProps {
+  initialInstruction?: string | undefined;
   page: StorylineReaderPage;
   pageIndex: number;
   pageTotal: number;
@@ -392,6 +396,7 @@ interface StorylinePagePanelProps {
 }
 
 function StorylinePagePanel({
+  initialInstruction,
   page,
   pageIndex,
   pageTotal,
@@ -404,14 +409,23 @@ function StorylinePagePanel({
   return (
     <section
       aria-label={formatPageLabel(page, pageIndex, pageTotal)}
-      className="box-border w-full min-w-0 flex-none snap-center px-1"
+      className="box-border w-full min-w-0 flex-none snap-center"
     >
       <div
         ref={panelRef}
-        className="box-border flex w-full min-w-0 flex-col gap-4 rounded-3xl border border-(--border) bg-(--panel-bg) p-5 md:p-7"
+        className="box-border flex w-full min-w-0 flex-col gap-4"
       >
         <SegmentDivider label={getPageKindLabel(page)} />
         <StoryText text={page.text} />
+        {page.kind === "initial" && initialInstruction !== undefined ? (
+          <section
+            aria-label="已提交的续写指令"
+            className="flex flex-col gap-4"
+          >
+            <SegmentDivider label="续写指令" />
+            <StoryText text={initialInstruction} />
+          </section>
+        ) : null}
         {temporaryRewrite?.targetSegmentId === page.id ? (
           <TemporaryRewriteBlock
             status={temporaryTextStatus}

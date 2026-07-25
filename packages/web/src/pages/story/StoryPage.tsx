@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
 import type {
@@ -80,6 +80,11 @@ type GenerationIntent =
   | Readonly<{ type: "rewrite"; segmentId: StorylineSegmentId }>
   | Readonly<{ type: "dialogue" }>;
 
+interface SubmittedCreateDraft {
+  readonly initialStoryText: string;
+  readonly instruction: string;
+}
+
 type StoryPageMode = "recent" | "detail" | "new";
 
 interface StoryPageProps {
@@ -96,6 +101,9 @@ const restoreFailureMessage = "恢复故事线失败，请稍后重试";
 const notFoundFailureTitle = "故事线不可用";
 const bottomScrollThresholdPx = 140;
 const backgroundPollIntervalMs = 2000;
+const submittedCreateStorylineId = "local-create-preview";
+const submittedCreateInitialSegmentId = "local-create-preview-initial";
+const submittedCreateUpdatedAt = "1970-01-01T00:00:00.000Z";
 
 export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   const navigate = useNavigate();
@@ -112,6 +120,8 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   const [storyline, setStoryline] = useState<StorylineSnapshot | null>(null);
   const [initialStoryText, setInitialStoryText] = useState("");
   const [appendInstruction, setAppendInstruction] = useState("");
+  const [submittedCreateDraft, setSubmittedCreateDraft] =
+    useState<SubmittedCreateDraft | null>(null);
   const [appendTargetLength, setAppendTargetLength] =
     useState<AppendTargetLength>(() =>
       readAppendTargetLengthPreference(getCurrentStoryUserId()),
@@ -147,8 +157,6 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     status === "streaming" ||
     status === "updatingContext" ||
     status === "saving";
-  const isComposerVisible =
-    storyline === null && status !== "loading" && status !== "restoreFailed";
   const temporaryTextStatus = getTemporaryTextStatus(status);
   const latestGeneratedSegmentId =
     storyline === null ? null : getLatestGeneratedSegmentId(storyline.segments);
@@ -160,7 +168,14 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     storyline !== null &&
     activeDrawerMode === null &&
     (isGenerating || readerViewport?.isViewingLatestPage === true);
-  const mainBottomPaddingClassName = storyline === null ? "pb-64" : "pb-28";
+  const mainBottomPaddingClassName = storyline === null ? "pb-12" : "pb-28";
+  const submittedCreateStoryline = useMemo<StorylineSnapshot | null>(
+    () =>
+      submittedCreateDraft === null
+        ? null
+        : buildSubmittedCreateStoryline(submittedCreateDraft),
+    [submittedCreateDraft],
+  );
 
   const clearBackgroundPoll = useCallback((): void => {
     if (backgroundPollTimerRef.current === null) {
@@ -317,6 +332,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     setTemporaryRewrite(null);
     setActiveDrawerMode(null);
     setActiveGenerationIntent(null);
+    setSubmittedCreateDraft(null);
     setFieldErrors({});
     setRestoreErrorTitle("故事线恢复失败");
     setRestoreErrorMessage(restoreFailureMessage);
@@ -326,6 +342,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
       setStoryline(null);
       setInitialStoryText("");
       setAppendInstruction("");
+      setSubmittedCreateDraft(null);
       setDialogueInput("");
       setRewriteInstruction("");
       setRewriteTargetSegmentId(null);
@@ -373,6 +390,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     setStoryline(result.storyline);
     setInitialStoryText("");
     setAppendInstruction("");
+    setSubmittedCreateDraft(null);
     setDialogueInput("");
     setRewriteInstruction("");
     setRewriteTargetSegmentId(null);
@@ -550,6 +568,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     }
 
     const intent = validationResult.intent;
+    setSubmittedCreateDraft(getSubmittedCreateDraft(validationResult.payload));
     shouldFollowScrollRef.current = intent.type !== "rewrite" && isNearBottom();
     setActiveDrawerMode(null);
     setActiveGenerationIntent(intent);
@@ -613,6 +632,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
           if (intent.type === "create") {
             setInitialStoryText("");
             setAppendInstruction("");
+            setSubmittedCreateDraft(null);
             void navigate(`/storylines/${event.storyline.id}`, {
               replace: true,
             });
@@ -644,6 +664,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
           }
           setActiveGenerationIntent(null);
           if (intent.type === "create") {
+            setSubmittedCreateDraft(null);
             setGenerationStatusMessage(generationCancelledMessage);
           } else {
             toast(generationCancelledMessage);
@@ -662,6 +683,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
           setActiveGenerationIntent(null);
           const message = getGenerationErrorMessage(error);
           if (intent.type === "create") {
+            setSubmittedCreateDraft(null);
             setGenerationStatusMessage(message);
           } else {
             toast.error(message);
@@ -670,6 +692,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
         },
         onAuthRequired() {
           generationHandleRef.current = null;
+          setSubmittedCreateDraft(null);
           setActiveGenerationIntent(null);
           void navigate("/login", { replace: true });
         },
@@ -837,6 +860,21 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
                 temporaryRewrite={temporaryRewrite}
                 temporaryTextStatus={temporaryTextStatus}
               />
+            ) : submittedCreateDraft !== null &&
+              submittedCreateStoryline !== null ? (
+              <StorylineReader
+                initialInstruction={submittedCreateDraft.instruction}
+                onViewportChange={handleReaderViewportChange}
+                storyline={submittedCreateStoryline}
+                temporaryAppendText={temporaryAppendText}
+                temporaryAppendVisible={
+                  activeGenerationIntent?.type === "create"
+                }
+                temporaryDialogueText=""
+                temporaryDialogueVisible={false}
+                temporaryRewrite={null}
+                temporaryTextStatus={temporaryTextStatus}
+              />
             ) : (
               <>
                 <StoryInitialInput
@@ -845,12 +883,33 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
                   onChange={handleInitialStoryTextChange}
                   value={initialStoryText}
                 />
-                {temporaryAppendText.length > 0 ? (
-                  <TemporaryGeneratedText
-                    status={temporaryTextStatus}
-                    text={temporaryAppendText}
-                  />
-                ) : null}
+                <div aria-hidden="true" className="h-px bg-(--border)" />
+                <StorylineComposer
+                  disabled={isGenerating}
+                  error={
+                    composerMode === "rewrite"
+                      ? fieldErrors.rewriteInstruction
+                      : fieldErrors.appendInstruction
+                  }
+                  isGenerating={isGenerating}
+                  mode={composerMode}
+                  modeHint={
+                    composerMode === "rewrite" ? "正在重写上一段" : undefined
+                  }
+                  onCancelGeneration={handleCancel}
+                  onCancelRewrite={handleCancelRewrite}
+                  onChange={
+                    composerMode === "rewrite"
+                      ? handleRewriteInstructionChange
+                      : handleAppendInstructionChange
+                  }
+                  onSubmit={handleSubmit}
+                  value={
+                    composerMode === "rewrite"
+                      ? rewriteInstruction
+                      : appendInstruction
+                  }
+                />
               </>
             )}
 
@@ -867,31 +926,6 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
           </>
         ) : null}
       </section>
-
-      {isComposerVisible ? (
-        <StorylineComposer
-          disabled={isGenerating}
-          error={
-            composerMode === "rewrite"
-              ? fieldErrors.rewriteInstruction
-              : fieldErrors.appendInstruction
-          }
-          isGenerating={isGenerating}
-          mode={composerMode}
-          modeHint={composerMode === "rewrite" ? "正在重写上一段" : undefined}
-          onCancelGeneration={handleCancel}
-          onCancelRewrite={handleCancelRewrite}
-          onChange={
-            composerMode === "rewrite"
-              ? handleRewriteInstructionChange
-              : handleAppendInstructionChange
-          }
-          onSubmit={handleSubmit}
-          value={
-            composerMode === "rewrite" ? rewriteInstruction : appendInstruction
-          }
-        />
-      ) : null}
 
       {activeDrawerMode !== null ? (
         <StoryActionDrawer
@@ -1050,6 +1084,36 @@ function validatePayload(input: ValidatePayloadInput): PayloadValidationResult {
       targetLength: input.appendTargetLength,
     },
     intent: { type: "append" },
+  };
+}
+
+function getSubmittedCreateDraft(
+  payload: StoryContinuePayload,
+): SubmittedCreateDraft | null {
+  if (payload.mode !== "create") {
+    return null;
+  }
+
+  return {
+    initialStoryText: payload.initialStoryText,
+    instruction: payload.instruction,
+  };
+}
+
+function buildSubmittedCreateStoryline(
+  draft: SubmittedCreateDraft,
+): StorylineSnapshot {
+  return {
+    id: submittedCreateStorylineId,
+    latestGeneration: null,
+    segments: [
+      {
+        id: submittedCreateInitialSegmentId,
+        text: draft.initialStoryText,
+        type: "initial",
+      },
+    ],
+    updatedAt: submittedCreateUpdatedAt,
   };
 }
 
@@ -1254,32 +1318,6 @@ function StorylineLoading(): JSX.Element {
     >
       <p className="m-0 text-base text-[var(--text)]">正在恢复故事线...</p>
     </section>
-  );
-}
-
-interface TemporaryGeneratedTextProps {
-  status: TemporaryTextStatus;
-  text: string;
-}
-
-function TemporaryGeneratedText({
-  status,
-  text,
-}: TemporaryGeneratedTextProps): JSX.Element {
-  return (
-    <article
-      aria-label="正在生成的续写"
-      className="rounded-3xl border border-[var(--border)] bg-[var(--panel-bg)] p-5 shadow-[var(--shadow)] md:p-7"
-    >
-      <p className="m-0 whitespace-pre-wrap text-base leading-8 text-[var(--text-h)]">
-        {text}
-      </p>
-      {status !== null ? (
-        <p className="mt-4 mb-0 text-xs text-[var(--text)]" role="status">
-          {status === "streaming" ? "正在生成..." : "正在更新故事上下文..."}
-        </p>
-      ) : null}
-    </article>
   );
 }
 
