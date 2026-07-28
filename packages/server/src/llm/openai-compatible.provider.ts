@@ -25,6 +25,7 @@ import type {
 import type {
   GenerateLlmTextRequest,
   GenerateLlmTextResponse,
+  GenerateLlmTextStreamUsage,
   GenerateLlmTextUsage,
 } from "@kimiko/schema";
 import type { LlmProvider, LlmTextStreamEvent } from "./llm.provider";
@@ -75,11 +76,17 @@ export class OpenAiCompatibleProvider implements LlmProvider {
   ): AsyncIterable<LlmTextStreamEvent> {
     const stream = await this.createChatCompletionStream(input, options);
     let model = "";
-    let usage: Required<GenerateLlmTextUsage> | undefined;
+    let finishReason: string | undefined;
+    let usage: GenerateLlmTextStreamUsage | undefined;
 
     for await (const chunk of stream) {
       if (chunk.model.length > 0) {
         model = chunk.model;
+      }
+
+      const chunkFinishReason = chunk.choices[0]?.finish_reason;
+      if (typeof chunkFinishReason === "string" && chunkFinishReason.length > 0) {
+        finishReason = chunkFinishReason;
       }
 
       const delta = chunk.choices[0]?.delta.content;
@@ -109,6 +116,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     yield {
       type: "completed",
       model,
+      ...(finishReason !== undefined ? { finishReason } : {}),
       usage,
     };
   }
@@ -269,7 +277,7 @@ function mapUsage(
 
 function mapRequiredUsage(
   usage: ChatCompletionChunk["usage"] | undefined | null,
-): Required<GenerateLlmTextUsage> | undefined {
+): GenerateLlmTextStreamUsage | undefined {
   if (usage === undefined || usage === null) {
     return undefined;
   }

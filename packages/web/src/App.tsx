@@ -10,6 +10,7 @@ import { Toaster } from "sonner";
 import { RequireAuth } from "./auth/RequireAuth";
 import { LoginPage } from "./pages/auth/LoginPage";
 import { RegisterPage } from "./pages/auth/RegisterPage";
+import { ModelDebugPage } from "./pages/debug/ModelDebugPage";
 import { StoryContextDebugPage } from "./pages/story/StoryContextDebugPage";
 import { StorylineListPage } from "./pages/story/StorylineListPage";
 import { StoryPage } from "./pages/story/StoryPage";
@@ -55,6 +56,14 @@ function App(): JSX.Element {
           element={
             <RequireAuth>
               <StorylineDetailRoute />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/test/model"
+          element={
+            <RequireAuth>
+              <ModelDebugPage />
             </RequireAuth>
           }
         />

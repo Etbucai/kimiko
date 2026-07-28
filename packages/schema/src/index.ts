@@ -143,6 +143,76 @@ export type GenerateLlmTextResponse = z.infer<
   typeof GenerateLlmTextResponseSchema
 >;
 
+export const GenerateLlmTextStreamUsageSchema = z
+  .object({
+    inputTokens: z.number().int().nonnegative(),
+    outputTokens: z.number().int().nonnegative(),
+    totalTokens: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export type GenerateLlmTextStreamUsage = z.infer<
+  typeof GenerateLlmTextStreamUsageSchema
+>;
+
+export const GenerateLlmTextStreamStartedEventSchema = z
+  .object({
+    type: z.literal("started"),
+  })
+  .strict();
+
+export type GenerateLlmTextStreamStartedEvent = z.infer<
+  typeof GenerateLlmTextStreamStartedEventSchema
+>;
+
+export const GenerateLlmTextStreamChunkEventSchema = z
+  .object({
+    type: z.literal("chunk"),
+    sequence: z.number().int().positive(),
+    delta: z.string().min(1),
+  })
+  .strict();
+
+export type GenerateLlmTextStreamChunkEvent = z.infer<
+  typeof GenerateLlmTextStreamChunkEventSchema
+>;
+
+export const GenerateLlmTextStreamCompletedEventSchema = z
+  .object({
+    type: z.literal("completed"),
+    model: z.string().trim().min(1),
+    elapsedMs: z.number().int().nonnegative(),
+    usage: GenerateLlmTextStreamUsageSchema,
+    finishReason: z.string().trim().min(1).optional(),
+  })
+  .strict();
+
+export type GenerateLlmTextStreamCompletedEvent = z.infer<
+  typeof GenerateLlmTextStreamCompletedEventSchema
+>;
+
+export const GenerateLlmTextStreamErrorEventSchema = z
+  .object({
+    type: z.literal("error"),
+    message: z.string().min(1),
+  })
+  .strict();
+
+export type GenerateLlmTextStreamErrorEvent = z.infer<
+  typeof GenerateLlmTextStreamErrorEventSchema
+>;
+
+export const GenerateLlmTextStreamEventSchema = z.discriminatedUnion("type", [
+  GenerateLlmTextStreamStartedEventSchema,
+  GenerateLlmTextStreamChunkEventSchema,
+  GenerateLlmTextStreamCompletedEventSchema,
+  GenerateLlmTextStreamErrorEventSchema,
+]);
+
+export type GenerateLlmTextStreamEvent = z.infer<
+  typeof GenerateLlmTextStreamEventSchema
+>;
+
 export const ContinueStoryRequestSchema = z
   .object({
     storyText: z.string().trim().min(1).max(20_000),

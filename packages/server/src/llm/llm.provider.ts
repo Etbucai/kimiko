@@ -1,7 +1,7 @@
 import type {
   GenerateLlmTextRequest,
   GenerateLlmTextResponse,
-  GenerateLlmTextUsage,
+  GenerateLlmTextStreamUsage,
 } from "@kimiko/schema";
 
 export const LLM_PROVIDER = Symbol("LLM_PROVIDER");
@@ -11,7 +11,8 @@ export type LlmTextStreamEvent =
   | Readonly<{
       type: "completed";
       model: string;
-      usage: Required<GenerateLlmTextUsage>;
+      finishReason?: string;
+      usage: GenerateLlmTextStreamUsage;
     }>;
 
 export interface LlmProvider {

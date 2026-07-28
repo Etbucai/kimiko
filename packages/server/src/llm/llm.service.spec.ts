@@ -161,6 +161,7 @@ describe("LlmService", () => {
         {
           type: "completed",
           model: "default-model",
+          finishReason: "stop",
           usage: {
             inputTokens: 7,
             outputTokens: 3,
@@ -208,6 +209,7 @@ describe("LlmService", () => {
         value: {
           type: "completed",
           model: "default-model",
+          finishReason: "stop",
           usage: {
             inputTokens: 7,
             outputTokens: 3,
@@ -221,6 +223,7 @@ describe("LlmService", () => {
         callType: "stream",
         elapsedMs: expect.any(Number),
         event: "llm_call_completed",
+        finishReason: "stop",
         model: "default-model",
         usage: {
           inputTokens: 7,

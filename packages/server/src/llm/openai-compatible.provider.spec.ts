@@ -345,7 +345,7 @@ describe("OpenAiCompatibleProvider", () => {
               delta: {
                 content: " world",
               },
-              finish_reason: null,
+              finish_reason: "stop",
               index: 0,
             },
           ],
@@ -380,6 +380,7 @@ describe("OpenAiCompatibleProvider", () => {
       {
         type: "completed",
         model: "deepseek-chat",
+        finishReason: "stop",
         usage: {
           inputTokens: 3,
           outputTokens: 4,

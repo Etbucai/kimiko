@@ -55,6 +55,17 @@ export class LlmService {
     return this.generateTextFromParsedRequest(request);
   }
 
+  streamText(
+    body: unknown,
+    options: Readonly<{ signal: AbortSignal }>,
+  ): AsyncIterable<LlmTextStreamEvent> {
+    const request = parseRequest<GenerateLlmTextRequest>(
+      GenerateLlmTextRequestSchema.safeParse(body),
+    );
+
+    return this.streamTextFromParsedRequest(request, options);
+  }
+
   async generateTextFromParsedRequest(
     request: GenerateLlmTextRequest,
     options?: Readonly<{ signal: AbortSignal }>,
@@ -177,7 +188,7 @@ export class LlmService {
               callType: "stream",
               completedAtIso,
               elapsedMs,
-              finishReason: undefined,
+              finishReason: event.finishReason,
               model: event.model,
               outputText,
               request: providerRequest,
@@ -189,7 +200,7 @@ export class LlmService {
             callId,
             callType: "stream",
             elapsedMs,
-            finishReason: undefined,
+            finishReason: event.finishReason,
             model: event.model,
             usage,
           });

@@ -4,11 +4,13 @@ import { Test, type TestingModuleBuilder } from "@nestjs/testing";
 import type {
   GenerateLlmTextRequest,
   GenerateLlmTextResponse,
+  GenerateLlmTextStreamEvent,
   LoginUserRequest,
   RegisterUserRequest,
 } from "@kimiko/schema";
 import {
   GenerateLlmTextResponseSchema,
+  GenerateLlmTextStreamEventSchema,
   LoginUserResponseSchema,
 } from "@kimiko/schema";
 import request from "supertest";
@@ -145,6 +147,74 @@ describe("LlmController (e2e)", () => {
       } satisfies GenerateLlmTextRequest)
       .expect(503);
   });
+
+  it("streams NDJSON events through the configured provider", async () => {
+    const llmProvider: jest.Mocked<LlmProvider> = {
+      generateText: jest.fn<
+        Promise<GenerateLlmTextResponse>,
+        [GenerateLlmTextRequest, Readonly<{ signal: AbortSignal }>?]
+      >(),
+      streamText: jest.fn<
+        AsyncIterable<LlmTextStreamEvent>,
+        [GenerateLlmTextRequest, Readonly<{ signal: AbortSignal }>]
+      >(),
+    };
+    llmProvider.streamText.mockReturnValue(
+      createEventStream([
+        { type: "chunk", delta: "hello" },
+        {
+          type: "completed",
+          model: "default-model",
+          finishReason: "stop",
+          usage: {
+            inputTokens: 5,
+            outputTokens: 2,
+            totalTokens: 7,
+          },
+        },
+      ]),
+    );
+
+    app = await createApp(llmProvider);
+    const accessToken = await registerAndLogin(app, "configured_stream");
+
+    const response = await request(app.getHttpServer())
+      .post("/llm/generate/stream")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .set("Accept", "application/x-ndjson")
+      .send({
+        userPrompt: "  hello  ",
+        systemPrompt: "  be concise  ",
+      } satisfies GenerateLlmTextRequest)
+      .expect(200);
+
+    expect(response.headers["content-type"]).toContain("application/x-ndjson");
+    expect(parseNdjsonEvents(response.text)).toEqual([
+      {
+        type: "started",
+      },
+      {
+        type: "chunk",
+        sequence: 1,
+        delta: "hello",
+      },
+      {
+        type: "completed",
+        model: "default-model",
+        finishReason: "stop",
+        elapsedMs: expect.any(Number),
+        usage: {
+          inputTokens: 5,
+          outputTokens: 2,
+          totalTokens: 7,
+        },
+      },
+    ]);
+    expect(llmProvider.streamText.mock.calls[0]?.[0]).toEqual({
+      userPrompt: "hello",
+      systemPrompt: "be concise",
+    });
+  });
 });
 
 async function createApp(
@@ -214,4 +284,40 @@ function createFailingStream(error: Error): AsyncIterable<never> {
       };
     },
   };
+}
+
+function createEventStream(
+  events: readonly LlmTextStreamEvent[],
+): AsyncIterable<LlmTextStreamEvent> {
+  return {
+    [Symbol.asyncIterator](): AsyncIterator<LlmTextStreamEvent> {
+      let index = 0;
+
+      return {
+        async next(): Promise<IteratorResult<LlmTextStreamEvent>> {
+          const event = events[index];
+          if (event === undefined) {
+            return {
+              done: true,
+              value: undefined,
+            };
+          }
+
+          index += 1;
+          return {
+            done: false,
+            value: event,
+          };
+        },
+      };
+    },
+  };
+}
+
+function parseNdjsonEvents(text: string): GenerateLlmTextStreamEvent[] {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => GenerateLlmTextStreamEventSchema.parse(JSON.parse(line)));
 }
