@@ -70,6 +70,10 @@ export class LlmController {
           return;
         }
 
+        if (event.type === "reasoning") {
+          continue;
+        }
+
         if (event.type === "chunk") {
           sequence += 1;
           writeStreamEvent(response, {

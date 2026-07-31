@@ -234,6 +234,10 @@ export class StoryService {
         continue;
       }
 
+      if (event.type === "reasoning") {
+        continue;
+      }
+
       const normalizedStory = normalizeGeneratedStory(continuedStory);
       const model = normalizeModel(event.model);
       const usage = parseCompleteUsage(event.usage);

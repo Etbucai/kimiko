@@ -234,6 +234,11 @@ export class LlmService {
           continue;
         }
 
+        if (event.type === "reasoning") {
+          yield event;
+          continue;
+        }
+
         if (!hasReceivedFirstChunk) {
           hasReceivedFirstChunk = true;
           this.logLlmStreamFirstChunk({

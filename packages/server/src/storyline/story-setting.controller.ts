@@ -12,9 +12,9 @@ import {
 } from "@nestjs/common";
 import type {
   CreateStorySettingResponse,
-  GenerateLlmTextStreamEvent,
   GetStorySettingResponse,
   ListStorySettingsResponse,
+  StorySettingCompletionStreamEvent,
 } from "@kimiko/schema";
 import type { AuthenticatedUser } from "../auth/auth.types";
 import { CurrentUser } from "../auth/current-user.decorator";
@@ -77,6 +77,7 @@ export class StorySettingController {
     const abortController = new AbortController();
     const startedAt = Date.now();
     let sequence = 0;
+    let reasoningSequence = 0;
     request.on("close", () => {
       abortController.abort();
     });
@@ -94,6 +95,16 @@ export class StorySettingController {
         if (abortController.signal.aborted) {
           response.end();
           return;
+        }
+
+        if (event.type === "reasoning") {
+          reasoningSequence += 1;
+          writeStreamEvent(response, {
+            type: "reasoning_chunk",
+            sequence: reasoningSequence,
+            delta: event.delta,
+          });
+          continue;
         }
 
         if (event.type === "chunk") {
@@ -156,7 +167,7 @@ function configureStreamResponse(response: StreamResponse): void {
 
 function writeStreamEvent(
   response: StreamResponse,
-  event: GenerateLlmTextStreamEvent,
+  event: StorySettingCompletionStreamEvent,
 ): void {
   response.write(`${JSON.stringify(event)}\n`);
 }

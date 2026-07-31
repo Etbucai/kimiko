@@ -394,6 +394,10 @@ describe("OpenAiCompatibleProvider", () => {
       ),
     ).resolves.toEqual([
       {
+        type: "reasoning",
+        delta: "thinking",
+      },
+      {
         type: "chunk",
         delta: "hello",
       },

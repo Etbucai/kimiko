@@ -105,9 +105,16 @@ export class OpenAiCompatibleProvider implements LlmProvider {
       }
 
       const reasoningContent = getReasoningContent(chunk);
-      if (reasoningContent !== undefined && !hasObservedReasoningContent) {
-        hasObservedReasoningContent = true;
-        options.telemetry?.onFirstReasoningContent(reasoningContent.length);
+      if (reasoningContent !== undefined) {
+        if (!hasObservedReasoningContent) {
+          hasObservedReasoningContent = true;
+          options.telemetry?.onFirstReasoningContent(reasoningContent.length);
+        }
+
+        yield {
+          type: "reasoning",
+          delta: reasoningContent,
+        };
       }
 
       const content = chunk.choices[0]?.delta.content;

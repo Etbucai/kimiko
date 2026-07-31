@@ -8,11 +8,14 @@ interface StorySettingCreateViewProps {
   completionText: string;
   error?: string | undefined;
   inspiration: string;
+  isReasoningExpanded: boolean;
   onBack: () => void;
   onComplete: () => void;
   onInspirationChange: (value: string) => void;
+  onReasoningExpandedChange: (isExpanded: boolean) => void;
   onRevise: (revisionInstruction: string) => void;
   onSave: () => void;
+  reasoningText: string;
   status: StorySettingCompletionStatus;
 }
 
@@ -23,15 +26,19 @@ export function StorySettingCreateView({
   completionText,
   error,
   inspiration,
+  isReasoningExpanded,
   onBack,
   onComplete,
   onInspirationChange,
+  onReasoningExpandedChange,
   onRevise,
   onSave,
+  reasoningText,
   status,
 }: StorySettingCreateViewProps): JSX.Element {
   const [isRevisionDialogOpen, setIsRevisionDialogOpen] = useState(false);
   const errorId = "story-setting-inspiration-error";
+  const reasoningContentId = "story-setting-reasoning-content";
   const isInputDisabled =
     status === "streaming" || status === "completed" || status === "saving";
   const isCompleting = status === "streaming";
@@ -97,6 +104,36 @@ export function StorySettingCreateView({
           {isCompleting ? "正在补全..." : "补全设定"}
         </button>
       </form>
+
+      {reasoningText.length > 0 ? (
+        <section className="rounded-3xl border border-(--border) bg-(--panel-bg) p-5 shadow-[var(--shadow)]">
+          <button
+            aria-controls={reasoningContentId}
+            aria-expanded={isReasoningExpanded}
+            className="flex w-full items-center justify-between gap-4 border-0 bg-transparent p-0 text-left"
+            onClick={() => onReasoningExpandedChange(!isReasoningExpanded)}
+            type="button"
+          >
+            <span className="text-base font-bold text-(--text-h)">
+              {isCompleting && completionText.length === 0
+                ? "正在思考"
+                : "思考过程"}
+            </span>
+            <span className="shrink-0 text-sm font-semibold text-(--accent)">
+              {isReasoningExpanded ? "收起" : "展开"}
+            </span>
+          </button>
+          {isReasoningExpanded ? (
+            <div
+              className="mt-4 border-t border-(--border) pt-4 text-sm leading-7 whitespace-pre-wrap break-words text-(--text)"
+              id={reasoningContentId}
+              role="region"
+            >
+              {reasoningText}
+            </div>
+          ) : null}
+        </section>
+      ) : null}
 
       {completionText.length > 0 ? (
         <section

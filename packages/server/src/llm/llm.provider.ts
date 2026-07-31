@@ -7,6 +7,7 @@ import type {
 export const LLM_PROVIDER = Symbol("LLM_PROVIDER");
 
 export type LlmTextStreamEvent =
+  | Readonly<{ type: "reasoning"; delta: string }>
   | Readonly<{ type: "chunk"; delta: string }>
   | Readonly<{
       type: "completed";

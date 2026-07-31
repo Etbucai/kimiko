@@ -113,6 +113,10 @@ describe("StoryService", () => {
     llmProvider.streamText.mockReturnValue(
       createStream([
         {
+          type: "reasoning",
+          delta: "先衔接雨停后的场景。",
+        },
+        {
           type: "chunk",
           delta: "林夏",
         },

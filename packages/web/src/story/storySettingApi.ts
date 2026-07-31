@@ -3,16 +3,16 @@ import type {
   CreateStorySettingRequest,
   CreateStorySettingResponse,
   GenerateLlmTextStreamCompletedEvent,
-  GenerateLlmTextStreamEvent,
   StorySetting,
+  StorySettingCompletionStreamEvent,
   StorySettingId,
   StorySettingListItem,
 } from "@kimiko/schema";
 import {
   CreateStorySettingResponseSchema,
-  GenerateLlmTextStreamEventSchema,
   GetStorySettingResponseSchema,
   ListStorySettingsResponseSchema,
+  StorySettingCompletionStreamEventSchema,
 } from "@kimiko/schema";
 import { clearAuthSession, getStoredAuthSession } from "../auth/authApi";
 
@@ -198,6 +198,7 @@ export async function createStorySetting(
 
 export interface StorySettingCompletionCallbacks {
   onStarted: () => void;
+  onReasoningChunk: (delta: string, sequence: number) => void;
   onChunk: (delta: string, sequence: number) => void;
   onCompleted: (event: GenerateLlmTextStreamCompletedEvent) => void;
   onCancelled: () => void;
@@ -351,6 +352,9 @@ export function startStorySettingCompletionStream(
       case "started":
         callbacks.onStarted();
         return true;
+      case "reasoning_chunk":
+        callbacks.onReasoningChunk(event.delta, event.sequence);
+        return true;
       case "chunk":
         callbacks.onChunk(event.delta, event.sequence);
         return true;
@@ -383,10 +387,13 @@ async function readJsonResponse(response: Response): Promise<unknown> {
   return JSON.parse(text) as unknown;
 }
 
-function parseStreamEvent(value: string): GenerateLlmTextStreamEvent | null {
+function parseStreamEvent(
+  value: string,
+): StorySettingCompletionStreamEvent | null {
   try {
     const parsedValue = JSON.parse(value) as unknown;
-    const result = GenerateLlmTextStreamEventSchema.safeParse(parsedValue);
+    const result =
+      StorySettingCompletionStreamEventSchema.safeParse(parsedValue);
     return result.success ? result.data : null;
   } catch {
     return null;

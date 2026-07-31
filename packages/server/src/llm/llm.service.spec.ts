@@ -329,6 +329,7 @@ describe("LlmService", () => {
     jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
     llmProvider.streamText.mockReturnValue(
       createLlmStream([
+        { type: "reasoning", delta: "private thought" },
         { type: "chunk", delta: "hello " },
         { type: "chunk", delta: "world" },
         {
@@ -345,7 +346,7 @@ describe("LlmService", () => {
     );
 
     try {
-      await collectAsyncIterable(
+      const events = await collectAsyncIterable(
         llmService.streamTextFromParsedRequest(
           {
             userPrompt: " hello ",
@@ -353,6 +354,10 @@ describe("LlmService", () => {
           { signal: new AbortController().signal },
         ),
       );
+      expect(events[0]).toEqual({
+        type: "reasoning",
+        delta: "private thought",
+      });
 
       const record = await readSingleLogRecord(directory);
       expect(record).toEqual(

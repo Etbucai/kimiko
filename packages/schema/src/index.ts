@@ -321,10 +321,26 @@ export type CompleteStorySettingRequest = z.infer<
   typeof CompleteStorySettingRequestSchema
 >;
 
-export const StorySettingCompletionStreamEventSchema =
-  GenerateLlmTextStreamEventSchema;
+export const StorySettingCompletionReasoningChunkEventSchema = z
+  .object({
+    type: z.literal("reasoning_chunk"),
+    sequence: z.number().int().positive(),
+    delta: z.string().min(1),
+  })
+  .strict();
 
-export type StorySettingCompletionStreamEvent = GenerateLlmTextStreamEvent;
+export type StorySettingCompletionReasoningChunkEvent = z.infer<
+  typeof StorySettingCompletionReasoningChunkEventSchema
+>;
+
+export const StorySettingCompletionStreamEventSchema = z.union([
+  GenerateLlmTextStreamEventSchema,
+  StorySettingCompletionReasoningChunkEventSchema,
+]);
+
+export type StorySettingCompletionStreamEvent = z.infer<
+  typeof StorySettingCompletionStreamEventSchema
+>;
 
 export const CreateStorySettingRequestSchema = z
   .object({

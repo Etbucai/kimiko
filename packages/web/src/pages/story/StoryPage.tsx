@@ -146,6 +146,8 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   );
   const settingCompletionHandleRef =
     useRef<StorySettingCompletionHandle | null>(null);
+  const hasReceivedSettingContentRef = useRef(false);
+  const hasReceivedSettingReasoningRef = useRef(false);
   const backgroundPollTimerRef = useRef<number | null>(null);
   const backgroundPollFailureNotifiedRef = useRef<boolean>(false);
   const isMountedRef = useRef(false);
@@ -204,6 +206,9 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     useState(settingDetailFailureMessage);
   const [settingInspiration, setSettingInspiration] = useState("");
   const [settingCompletionText, setSettingCompletionText] = useState("");
+  const [settingReasoningText, setSettingReasoningText] = useState("");
+  const [isSettingReasoningExpanded, setIsSettingReasoningExpanded] =
+    useState(false);
   const [settingCompletionStatus, setSettingCompletionStatus] =
     useState<StorySettingCompletionStatus>("idle");
   const [settingOpening, setSettingOpening] = useState("");
@@ -465,6 +470,10 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
       setActiveStorySetting(null);
       setSettingInspiration("");
       setSettingCompletionText("");
+      setSettingReasoningText("");
+      setIsSettingReasoningExpanded(false);
+      hasReceivedSettingContentRef.current = false;
+      hasReceivedSettingReasoningRef.current = false;
       setSettingCompletionStatus("idle");
       setSettingOpening("");
       setStatus("empty");
@@ -724,6 +733,10 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     setActiveStorySetting(null);
     setSettingInspiration("");
     setSettingCompletionText("");
+    setSettingReasoningText("");
+    setIsSettingReasoningExpanded(false);
+    hasReceivedSettingContentRef.current = false;
+    hasReceivedSettingReasoningRef.current = false;
     setSettingCompletionStatus("idle");
     setFieldErrors((previousFieldErrors) =>
       removeFieldError(
@@ -739,6 +752,10 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     setNewStoryView({ type: "settingCreate" });
     setSettingInspiration("");
     setSettingCompletionText("");
+    setSettingReasoningText("");
+    setIsSettingReasoningExpanded(false);
+    hasReceivedSettingContentRef.current = false;
+    hasReceivedSettingReasoningRef.current = false;
     setSettingCompletionStatus("idle");
     setFieldErrors((previousFieldErrors) =>
       removeFieldError(previousFieldErrors, "settingInspiration"),
@@ -752,6 +769,10 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     setActiveStorySetting(null);
     setSettingInspiration("");
     setSettingCompletionText("");
+    setSettingReasoningText("");
+    setIsSettingReasoningExpanded(false);
+    hasReceivedSettingContentRef.current = false;
+    hasReceivedSettingReasoningRef.current = false;
     setSettingCompletionStatus("idle");
     setFieldErrors((previousFieldErrors) =>
       removeFieldError(
@@ -842,6 +863,10 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   ): void {
     closeSettingCompletionStream();
     setSettingCompletionText("");
+    setSettingReasoningText("");
+    setIsSettingReasoningExpanded(false);
+    hasReceivedSettingContentRef.current = false;
+    hasReceivedSettingReasoningRef.current = false;
     setSettingCompletionStatus("streaming");
 
     settingCompletionHandleRef.current = startStorySettingCompletionStream(
@@ -850,7 +875,20 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
         onStarted() {
           setSettingCompletionStatus("streaming");
         },
+        onReasoningChunk(delta) {
+          if (!hasReceivedSettingReasoningRef.current) {
+            hasReceivedSettingReasoningRef.current = true;
+            setIsSettingReasoningExpanded(
+              !hasReceivedSettingContentRef.current,
+            );
+          }
+          setSettingReasoningText((previousText) => `${previousText}${delta}`);
+        },
         onChunk(delta) {
+          if (!hasReceivedSettingContentRef.current) {
+            hasReceivedSettingContentRef.current = true;
+            setIsSettingReasoningExpanded(false);
+          }
           setSettingCompletionText((previousText) => `${previousText}${delta}`);
         },
         onCompleted() {
@@ -872,6 +910,8 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
         },
         onAuthRequired() {
           settingCompletionHandleRef.current = null;
+          setSettingReasoningText("");
+          setIsSettingReasoningExpanded(false);
           void navigate("/login", { replace: true });
         },
       },
@@ -882,6 +922,10 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     fallbackText: string | undefined,
   ): void {
     setSettingCompletionText(fallbackText ?? "");
+    setSettingReasoningText("");
+    setIsSettingReasoningExpanded(false);
+    hasReceivedSettingContentRef.current = false;
+    hasReceivedSettingReasoningRef.current = false;
     setSettingCompletionStatus(
       fallbackText === undefined ? "idle" : "completed",
     );
@@ -894,6 +938,10 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     }
 
     setSettingCompletionStatus("saving");
+    setSettingReasoningText("");
+    setIsSettingReasoningExpanded(false);
+    hasReceivedSettingContentRef.current = false;
+    hasReceivedSettingReasoningRef.current = false;
     const result = await createStorySetting({ content });
     if (!isMountedRef.current) {
       return;
@@ -1273,13 +1321,16 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
             completionText={settingCompletionText}
             error={fieldErrors.settingInspiration}
             inspiration={settingInspiration}
+            isReasoningExpanded={isSettingReasoningExpanded}
             onBack={handleBackToSettingList}
             onComplete={handleCompleteSetting}
             onInspirationChange={handleSettingInspirationChange}
+            onReasoningExpandedChange={setIsSettingReasoningExpanded}
             onRevise={handleReviseSetting}
             onSave={() => {
               void handleSaveSetting();
             }}
+            reasoningText={settingReasoningText}
             status={settingCompletionStatus}
           />
         );
