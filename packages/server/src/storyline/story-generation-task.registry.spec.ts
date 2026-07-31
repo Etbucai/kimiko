@@ -232,6 +232,29 @@ describe("StoryGenerationTaskRegistry", () => {
       }),
     ).toEqual({ task: null });
   });
+
+  it("does not expose create-from-setting tasks through storyline status", () => {
+    registry.createTask({
+      abortController: new AbortController(),
+      observer,
+      payload: {
+        mode: "createFromSetting",
+        settingId: "5",
+        opening: "从雨夜开始。",
+      },
+      requestId: "request-1",
+      startedAt: 1000,
+      userId: "user-1",
+    });
+
+    expect(
+      registry.getStorylineStatus({
+        now: 1000,
+        storylineId: "10",
+        userId: "user-1",
+      }),
+    ).toEqual({ task: null });
+  });
 });
 
 function createAppendPayload(storylineId: string): StoryContinuePayload {

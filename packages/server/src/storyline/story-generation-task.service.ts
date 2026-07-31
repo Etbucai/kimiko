@@ -33,13 +33,11 @@ export class StoryGenerationTaskService {
   ) {}
 
   start(input: StartStoryGenerationTaskInput): StartStoryGenerationTaskResult {
-    if (
-      input.payload.mode !== "create" &&
+    if (isStorylineTaskPayload(input.payload) &&
       this.registry.hasActiveStorylineTask({
         storylineId: input.payload.storylineId,
         userId: input.userId,
-      })
-    ) {
+      })) {
       return { status: "busy", code: "STORYLINE_BUSY" };
     }
 
@@ -325,6 +323,15 @@ export class StoryGenerationTaskService {
 
     this.logger.log(JSON.stringify(payload));
   }
+}
+
+function isStorylineTaskPayload(
+  payload: StartStoryGenerationTaskInput["payload"],
+): payload is Extract<
+  StartStoryGenerationTaskInput["payload"],
+  { storylineId: string }
+> {
+  return payload.mode !== "create" && payload.mode !== "createFromSetting";
 }
 
 function toLoggableError(error: unknown): Readonly<{

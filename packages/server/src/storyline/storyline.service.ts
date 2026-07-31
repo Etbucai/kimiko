@@ -909,7 +909,7 @@ function mapListItemDto(
   return {
     id: String(storyline.id),
     title: truncateSnippet(
-      getFirstNonEmptyLine(initialSegment.text),
+      getFirstNonEmptyLine(getStorylineTitleSourceText(initialSegment.text)),
       storylineListTitleMaxLength,
     ),
     preview: truncateSnippet(
@@ -1392,6 +1392,16 @@ function getFirstNonEmptyLine(value: string): string {
     .find((line) => line.length > 0);
 
   return firstLine ?? normalizeSnippet(value);
+}
+
+function getStorylineTitleSourceText(initialText: string): string {
+  const openingMarkerIndex = initialText.indexOf("【开场】");
+  if (openingMarkerIndex < 0) {
+    return initialText;
+  }
+
+  const openingText = initialText.slice(openingMarkerIndex + "【开场】".length);
+  return openingText.trim().length > 0 ? openingText : initialText;
 }
 
 function normalizeSnippet(value: string): string {

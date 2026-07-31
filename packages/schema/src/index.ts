@@ -251,6 +251,91 @@ export const StorylineSegmentIdSchema = z.string().trim().min(1);
 
 export type StorylineSegmentId = z.infer<typeof StorylineSegmentIdSchema>;
 
+export const StorySettingIdSchema = z.string().trim().min(1);
+
+export type StorySettingId = z.infer<typeof StorySettingIdSchema>;
+
+export const StorySettingContentSchema = z.string().trim().min(1).max(20_000);
+
+export type StorySettingContent = z.infer<typeof StorySettingContentSchema>;
+
+export const StorySettingSchema = z
+  .object({
+    id: StorySettingIdSchema,
+    content: StorySettingContentSchema,
+    createdAt: z.string().datetime(),
+  })
+  .strict();
+
+export type StorySetting = z.infer<typeof StorySettingSchema>;
+
+export const StorySettingListItemSchema = z
+  .object({
+    id: StorySettingIdSchema,
+    preview: z.string().trim().min(1).max(240),
+    createdAt: z.string().datetime(),
+  })
+  .strict();
+
+export type StorySettingListItem = z.infer<
+  typeof StorySettingListItemSchema
+>;
+
+export const ListStorySettingsResponseSchema = z
+  .object({
+    settings: z.array(StorySettingListItemSchema).max(100),
+  })
+  .strict();
+
+export type ListStorySettingsResponse = z.infer<
+  typeof ListStorySettingsResponseSchema
+>;
+
+export const GetStorySettingResponseSchema = z
+  .object({
+    setting: StorySettingSchema,
+  })
+  .strict();
+
+export type GetStorySettingResponse = z.infer<
+  typeof GetStorySettingResponseSchema
+>;
+
+export const CompleteStorySettingRequestSchema = z
+  .object({
+    inspiration: z.string().trim().min(1).max(8_000),
+  })
+  .strict();
+
+export type CompleteStorySettingRequest = z.infer<
+  typeof CompleteStorySettingRequestSchema
+>;
+
+export const StorySettingCompletionStreamEventSchema =
+  GenerateLlmTextStreamEventSchema;
+
+export type StorySettingCompletionStreamEvent = GenerateLlmTextStreamEvent;
+
+export const CreateStorySettingRequestSchema = z
+  .object({
+    content: StorySettingContentSchema,
+  })
+  .strict();
+
+export type CreateStorySettingRequest = z.infer<
+  typeof CreateStorySettingRequestSchema
+>;
+
+export const CreateStorySettingResponseSchema = z
+  .object({
+    setting: StorySettingSchema,
+  })
+  .strict();
+
+export type CreateStorySettingResponse = z.infer<
+  typeof CreateStorySettingResponseSchema
+>;
+
 export const StoryTargetLengthSchema = z.number().int().min(100).max(1_200);
 
 export type StoryTargetLength = z.infer<typeof StoryTargetLengthSchema>;
@@ -536,6 +621,18 @@ export type StoryContinueCreatePayload = z.infer<
   typeof StoryContinueCreatePayloadSchema
 >;
 
+export const StoryContinueCreateFromSettingPayloadSchema = z
+  .object({
+    mode: z.literal("createFromSetting"),
+    settingId: StorySettingIdSchema,
+    opening: z.string().trim().min(1).max(8_000),
+  })
+  .strict();
+
+export type StoryContinueCreateFromSettingPayload = z.infer<
+  typeof StoryContinueCreateFromSettingPayloadSchema
+>;
+
 export const StoryContinueAppendPayloadSchema = z
   .object({
     mode: z.literal("append"),
@@ -576,6 +673,7 @@ export type StoryContinueDialoguePayload = z.infer<
 
 export const StoryContinuePayloadSchema = z.discriminatedUnion("mode", [
   StoryContinueCreatePayloadSchema,
+  StoryContinueCreateFromSettingPayloadSchema,
   StoryContinueAppendPayloadSchema,
   StoryContinueRewritePayloadSchema,
   StoryContinueDialoguePayloadSchema,
@@ -699,6 +797,8 @@ export const StoryRealtimeErrorCodeSchema = z.enum([
   "STORY_SUMMARY_FAILED",
   "STORY_CONTEXT_FAILED",
   "STORY_SEGMENT_NOT_REWRITABLE",
+  "STORY_SETTING_NOT_FOUND",
+  "STORY_SETTING_ACCESS_DENIED",
 ]);
 
 export type StoryRealtimeErrorCode = z.infer<
@@ -727,6 +827,7 @@ export type StoryGenerationTaskStatus = z.infer<
 
 export const StoryGenerationModeSchema = z.enum([
   "create",
+  "createFromSetting",
   "append",
   "rewrite",
   "dialogue",

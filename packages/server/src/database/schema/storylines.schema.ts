@@ -27,6 +27,26 @@ export const storylines = sqliteTable(
   ],
 );
 
+export const storySettings = sqliteTable(
+  "story_setting",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    content: text("content").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .$defaultFn(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    index("story_setting_user_id_created_at_idx").on(
+      table.userId,
+      table.createdAt,
+    ),
+  ],
+);
+
 export const storylineSegments = sqliteTable(
   "storyline_segment",
   {
@@ -85,6 +105,8 @@ export const storylineContexts = sqliteTable(
 
 export type Storyline = InferSelectModel<typeof storylines>;
 export type NewStoryline = InferInsertModel<typeof storylines>;
+export type StorySetting = InferSelectModel<typeof storySettings>;
+export type NewStorySetting = InferInsertModel<typeof storySettings>;
 export type StorylineSegment = InferSelectModel<typeof storylineSegments>;
 export type NewStorylineSegment = InferInsertModel<typeof storylineSegments>;
 export type StorylineContext = InferSelectModel<typeof storylineContexts>;

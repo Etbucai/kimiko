@@ -130,6 +130,10 @@ export class RealtimeGateway
           parsedMessage.message.type === "story.continue"
             ? getStorylineIdFromPayload(parsedMessage.message.payload)
             : undefined,
+        settingId:
+          parsedMessage.message.type === "story.continue"
+            ? getSettingIdFromPayload(parsedMessage.message.payload)
+            : undefined,
         targetLength:
           parsedMessage.message.type === "story.continue"
             ? getTargetLengthFromPayload(parsedMessage.message.payload)
@@ -222,6 +226,7 @@ export class RealtimeGateway
         event: "story_realtime_task_started",
         payloadMode,
         requestId: message.requestId,
+        settingId: getSettingIdFromPayload(message.payload),
         storylineId,
         targetLength: getTargetLengthFromPayload(message.payload),
         userId: clientState.user.sub,
@@ -398,7 +403,15 @@ export class RealtimeGateway
 function getStorylineIdFromPayload(
   payload: StoryContinueClientMessage["payload"],
 ): string | null {
-  return payload.mode === "create" ? null : payload.storylineId;
+  return payload.mode === "create" || payload.mode === "createFromSetting"
+    ? null
+    : payload.storylineId;
+}
+
+function getSettingIdFromPayload(
+  payload: StoryContinueClientMessage["payload"],
+): string | undefined {
+  return payload.mode === "createFromSetting" ? payload.settingId : undefined;
 }
 
 function getTargetLengthFromPayload(

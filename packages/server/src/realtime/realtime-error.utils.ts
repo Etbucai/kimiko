@@ -7,6 +7,7 @@ import {
   StorylineNotFoundError,
   StorylineSaveFailedError,
 } from "../storyline/storyline.errors";
+import { StorySettingNotFoundError } from "../storyline/story-setting.errors";
 
 export const realtimeErrorMessages: Record<StoryRealtimeErrorCode, string> = {
   INVALID_MESSAGE: "消息格式不正确",
@@ -22,6 +23,8 @@ export const realtimeErrorMessages: Record<StoryRealtimeErrorCode, string> = {
   STORY_SUMMARY_FAILED: "生成失败，请稍后重试",
   STORY_CONTEXT_FAILED: "生成失败，请稍后重试",
   STORY_SEGMENT_NOT_REWRITABLE: "当前段落不可重写",
+  STORY_SETTING_NOT_FOUND: "设定不存在",
+  STORY_SETTING_ACCESS_DENIED: "设定不可用",
 };
 
 export function getRealtimeErrorMessage(code: StoryRealtimeErrorCode): string {
@@ -49,6 +52,10 @@ export function mapRealtimeStreamErrorCode(
 
   if (error instanceof StoryContextFailedError) {
     return "STORY_CONTEXT_FAILED";
+  }
+
+  if (error instanceof StorySettingNotFoundError) {
+    return "STORY_SETTING_NOT_FOUND";
   }
 
   if (error instanceof BadGatewayException) {

@@ -251,7 +251,10 @@ export function getTaskKey(input: {
   readonly requestId: string;
   readonly userId: string;
 }): StoryGenerationTaskKey {
-  if (input.payload.mode === "create") {
+  if (
+    input.payload.mode === "create" ||
+    input.payload.mode === "createFromSetting"
+  ) {
     return `create:${input.userId}:${input.requestId}`;
   }
 
@@ -271,7 +274,9 @@ function getStorylineTaskKey(input: {
 function getStorylineIdFromPayload(
   payload: StoryContinuePayload,
 ): string | null {
-  return payload.mode === "create" ? null : payload.storylineId;
+  return payload.mode === "create" || payload.mode === "createFromSetting"
+    ? null
+    : payload.storylineId;
 }
 
 function toStoryGenerationTask(

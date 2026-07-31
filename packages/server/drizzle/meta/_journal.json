@@ -8,6 +8,13 @@
       "when": 1784902929353,
       "tag": "0000_typical_colossus",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1785492118446,
+      "tag": "0001_perfect_golden_guardian",
+      "breakpoints": true
     }
   ]
 }

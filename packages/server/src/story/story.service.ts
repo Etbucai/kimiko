@@ -70,6 +70,15 @@ export const STORY_DIALOGUE_SYSTEM_PROMPT = [
   "不要输出标题、解释、列表、JSON、调试信息或“以下是互动”等前缀。",
 ].join("\n");
 
+export const STORY_CREATE_FROM_SETTING_SYSTEM_PROMPT = [
+  "你是 StoryAgent，负责根据用户提供的故事设定和开场方向生成新故事开端。",
+  "设定是创作背景，不是需要逐字复述的正文。",
+  "开场方向描述本次故事应该从哪里开始。",
+  "你必须只输出新生成的故事正文。",
+  "不要输出设定整理、标题、解释、列表、调试信息或“以下是正文”等前缀。",
+  "输出语言必须跟随用户开场和设定的主要语言。",
+].join("\n");
+
 export type StoryStreamEvent =
   | Readonly<{ type: "chunk"; delta: string; sequence: number }>
   | Readonly<{
@@ -127,6 +136,11 @@ export interface StoryDialogueRewriteLlmContext {
   readonly contextBundle: StoryWriterContextBundle;
 }
 
+export interface StoryCreateFromSettingLlmContext {
+  readonly settingContent: string;
+  readonly opening: string;
+}
+
 @Injectable()
 export class StoryService {
   constructor(private readonly llmService: LlmService) {}
@@ -179,6 +193,16 @@ export class StoryService {
   ): AsyncIterable<StoryStreamEvent> {
     yield* this.streamStoryLlmRequest(
       buildRewriteDialogueLlmRequestFromContext(context),
+      options,
+    );
+  }
+
+  async *streamCreateStoryFromSetting(
+    context: StoryCreateFromSettingLlmContext,
+    options: Readonly<{ signal: AbortSignal }>,
+  ): AsyncIterable<StoryStreamEvent> {
+    yield* this.streamStoryLlmRequest(
+      buildCreateFromSettingLlmRequest(context),
       options,
     );
   }
@@ -280,6 +304,15 @@ export function buildRewriteDialogueLlmRequestFromContext(
   };
 }
 
+export function buildCreateFromSettingLlmRequest(
+  context: StoryCreateFromSettingLlmContext,
+): GenerateLlmTextRequest {
+  return {
+    systemPrompt: STORY_CREATE_FROM_SETTING_SYSTEM_PROMPT,
+    userPrompt: buildCreateFromSettingUserPrompt(context),
+  };
+}
+
 function buildStoryUserPromptFromContext(context: StoryLlmContext): string {
   const promptParts: string[] = [];
   const initialStoryText = context.initialStoryText?.trim();
@@ -303,6 +336,20 @@ function buildStoryUserPromptFromContext(context: StoryLlmContext): string {
   promptParts.push("当前续写指令：", context.currentInstruction);
 
   return promptParts.join("\n");
+}
+
+function buildCreateFromSettingUserPrompt(
+  context: StoryCreateFromSettingLlmContext,
+): string {
+  return [
+    "故事设定：",
+    context.settingContent,
+    "",
+    "开场方向：",
+    context.opening,
+    "",
+    "请基于设定和开场方向，生成新故事的开端正文。",
+  ].join("\n");
 }
 
 function buildRewriteStoryUserPromptFromContext(

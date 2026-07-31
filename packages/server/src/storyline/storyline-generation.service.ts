@@ -10,6 +10,7 @@ import {
   StorySegmentNotRewritableError,
   StorylineNotFoundError,
 } from "./storyline.errors";
+import { StorySettingService } from "./story-setting.service";
 import { StorylineContextService } from "./storyline-context.service";
 import { emptyStoryContextSnapshot } from "./storyline-context.types";
 import type { StoryContextSourceRefMapping } from "./storyline-context.types";
@@ -31,6 +32,7 @@ export class StorylineGenerationService {
   constructor(
     private readonly storylineService: StorylineService,
     private readonly storyService: StoryService,
+    private readonly storySettingService: StorySettingService,
     private readonly storylineLockService: StorylineLockService,
     private readonly storylineContextService: StorylineContextService,
   ) {}
@@ -45,12 +47,18 @@ export class StorylineGenerationService {
       phase: "request_received",
       requestId: input.requestId,
       requestUserId: input.userId,
+      settingId: getSettingIdFromPayload(input.payload),
       storylineId: getStorylineIdFromPayload(input.payload),
       targetLength: getTargetLengthFromPayload(input.payload),
     });
 
     if (input.payload.mode === "create") {
       yield* this.streamCreateStoryline(input, options);
+      return;
+    }
+
+    if (input.payload.mode === "createFromSetting") {
+      yield* this.streamCreateFromSettingStoryline(input, options);
       return;
     }
 
@@ -221,6 +229,199 @@ export class StorylineGenerationService {
           phase: "save_completed",
           requestId: input.requestId,
           requestUserId: input.userId,
+          storylineId: storyline.id,
+        });
+
+        yield {
+          type: "completed",
+          storyline,
+          generatedSegmentId: storyline.latestGeneration.segmentId,
+        };
+      }
+    } finally {
+      releaseLock();
+    }
+  }
+
+  private async *streamCreateFromSettingStoryline(
+    input: ContinueStorylineInput,
+    options: StorylineGenerationOptions,
+  ): AsyncIterable<StorylineStreamEvent> {
+    if (input.payload.mode !== "createFromSetting") {
+      throw new StorylineNotFoundError("Expected createFromSetting payload");
+    }
+
+    const startedAt = Date.now();
+    this.logGenerationPhase({
+      elapsedMs: getElapsedMs(startedAt),
+      mode: "createFromSetting",
+      phase: "setting_lookup_started",
+      requestId: input.requestId,
+      requestUserId: input.userId,
+      settingId: input.payload.settingId,
+      storylineId: null,
+    });
+    const setting = await this.storySettingService.getRequiredSettingForUser({
+      userId: input.userId,
+      settingId: input.payload.settingId,
+    });
+    this.logGenerationPhase({
+      elapsedMs: getElapsedMs(startedAt),
+      mode: "createFromSetting",
+      phase: "setting_lookup_completed",
+      requestId: input.requestId,
+      requestUserId: input.userId,
+      settingId: setting.id,
+      storylineId: null,
+    });
+
+    const releaseLock = this.storylineLockService.acquireCreateLock(
+      input.userId,
+    );
+    this.logGenerationPhase({
+      elapsedMs: getElapsedMs(startedAt),
+      mode: "createFromSetting",
+      phase: "lock_acquired",
+      requestId: input.requestId,
+      requestUserId: input.userId,
+      settingId: setting.id,
+      storylineId: null,
+    });
+
+    try {
+      const initialStoryText = buildCreateFromSettingInitialText({
+        settingContent: setting.content,
+        opening: input.payload.opening,
+      });
+      let chunkChars = 0;
+      let chunkCount = 0;
+
+      emitPhase(options, "streaming");
+      this.logGenerationPhase({
+        elapsedMs: getElapsedMs(startedAt),
+        mode: "createFromSetting",
+        phase: "writer_stream_started",
+        requestId: input.requestId,
+        requestUserId: input.userId,
+        settingId: setting.id,
+        storylineId: null,
+      });
+
+      for await (const event of this.storyService.streamCreateStoryFromSetting(
+        {
+          settingContent: setting.content,
+          opening: input.payload.opening,
+        },
+        options,
+      )) {
+        if (options.signal.aborted) {
+          return;
+        }
+
+        if (event.type === "chunk") {
+          chunkCount += 1;
+          chunkChars += event.delta.length;
+          if (chunkCount === 1) {
+            this.logGenerationPhase({
+              chunkChars,
+              chunkCount,
+              elapsedMs: getElapsedMs(startedAt),
+              mode: "createFromSetting",
+              phase: "writer_first_chunk",
+              requestId: input.requestId,
+              requestUserId: input.userId,
+              settingId: setting.id,
+              storylineId: null,
+            });
+          }
+          yield event;
+          continue;
+        }
+
+        this.logGenerationPhase({
+          chunkChars,
+          chunkCount,
+          elapsedMs: getElapsedMs(startedAt),
+          generatedTextChars: event.continuedStory.length,
+          mode: "createFromSetting",
+          phase: "writer_completed",
+          requestId: input.requestId,
+          requestUserId: input.userId,
+          settingId: setting.id,
+          storylineId: null,
+        });
+        yield { type: "contextStarted" };
+        if (options.signal.aborted) {
+          return;
+        }
+
+        emitPhase(options, "updatingContext");
+        this.logGenerationPhase({
+          elapsedMs: getElapsedMs(startedAt),
+          mode: "createFromSetting",
+          phase: "context_started",
+          requestId: input.requestId,
+          requestUserId: input.userId,
+          settingId: setting.id,
+          storylineId: null,
+        });
+        const contextPatch =
+          await this.storylineContextService.generateStoryContextPatch(
+            {
+              operation: "create",
+              previousContext: null,
+              sourceRefMappings: [
+                {
+                  ref: "initial",
+                  label: "设定与开场",
+                  text: initialStoryText,
+                },
+                {
+                  ref: "current",
+                  label: "本轮生成正文",
+                  text: event.continuedStory,
+                },
+              ],
+              initialStoryText,
+              recentHistoryRounds: [],
+              currentInstruction: input.payload.opening,
+              generatedText: event.continuedStory,
+            },
+            options,
+          );
+        if (options.signal.aborted) {
+          return;
+        }
+        this.logGenerationPhase({
+          elapsedMs: getElapsedMs(startedAt),
+          mode: "createFromSetting",
+          phase: "context_completed",
+          requestId: input.requestId,
+          requestUserId: input.userId,
+          settingId: setting.id,
+          storylineId: null,
+        });
+
+        emitPhase(options, "saving");
+        const storyline =
+          await this.storylineService.saveCreatedStorylineWithContext({
+            userId: input.userId,
+            initialStoryText,
+            instruction: input.payload.opening,
+            generatedText: event.continuedStory,
+            model: event.model,
+            elapsedMs: event.elapsedMs,
+            usage: event.usage,
+            contextPatch,
+          });
+        this.logGenerationPhase({
+          elapsedMs: getElapsedMs(startedAt),
+          generatedSegmentId: storyline.latestGeneration.segmentId,
+          mode: "createFromSetting",
+          phase: "save_completed",
+          requestId: input.requestId,
+          requestUserId: input.userId,
+          settingId: setting.id,
           storylineId: storyline.id,
         });
 
@@ -921,6 +1122,8 @@ export class StorylineGenerationService {
       mode: ContinueStorylineInput["payload"]["mode"];
       phase:
         | "request_received"
+        | "setting_lookup_started"
+        | "setting_lookup_completed"
         | "storyline_lookup_started"
         | "storyline_lookup_completed"
         | "lock_acquired"
@@ -935,6 +1138,7 @@ export class StorylineGenerationService {
         | "noop_save_completed";
       requestId?: string | undefined;
       requestUserId: string;
+      settingId?: string | undefined;
       storylineId: string | null;
       targetLength?: StoryTargetLength | undefined;
       targetGenerationMode?: string | undefined;
@@ -951,6 +1155,7 @@ export class StorylineGenerationService {
         mode: input.mode,
         phase: input.phase,
         requestId: input.requestId,
+        settingId: input.settingId,
         storylineId: input.storylineId,
         targetLength: input.targetLength,
         targetGenerationMode: input.targetGenerationMode,
@@ -1006,7 +1211,15 @@ function getHistoryScoreConfig(): HistoryScoreConfig {
 function getStorylineIdFromPayload(
   payload: ContinueStorylineInput["payload"],
 ): string | null {
-  return payload.mode === "create" ? null : payload.storylineId;
+  return payload.mode === "create" || payload.mode === "createFromSetting"
+    ? null
+    : payload.storylineId;
+}
+
+function getSettingIdFromPayload(
+  payload: ContinueStorylineInput["payload"],
+): string | undefined {
+  return payload.mode === "createFromSetting" ? payload.settingId : undefined;
 }
 
 function getTargetLengthFromPayload(
@@ -1028,4 +1241,17 @@ function emitPhase(
   phase: StoryGenerationPhase,
 ): void {
   options.onPhaseChange?.({ phase });
+}
+
+export function buildCreateFromSettingInitialText(input: {
+  readonly opening: string;
+  readonly settingContent: string;
+}): string {
+  return [
+    "【设定】",
+    input.settingContent.trim(),
+    "",
+    "【开场】",
+    input.opening.trim(),
+  ].join("\n");
 }

@@ -13,7 +13,9 @@ export type RealtimeErrorCode =
   | "STORYLINE_SAVE_FAILED"
   | "STORY_SUMMARY_FAILED"
   | "STORY_CONTEXT_FAILED"
-  | "STORY_SEGMENT_NOT_REWRITABLE";
+  | "STORY_SEGMENT_NOT_REWRITABLE"
+  | "STORY_SETTING_NOT_FOUND"
+  | "STORY_SETTING_ACCESS_DENIED";
 
 export interface ActiveRealtimeTask {
   requestId: string;

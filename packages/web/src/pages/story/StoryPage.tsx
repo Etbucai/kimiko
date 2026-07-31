@@ -6,6 +6,9 @@ import type {
   StoryContinuePayload,
   StoryGenerationPhase,
   StoryGenerationTask,
+  StorySetting,
+  StorySettingId,
+  StorySettingListItem,
   StorylineGenerationMetadata,
   StorylineSegmentId,
   StorylineId,
@@ -23,6 +26,13 @@ import {
   getStoryGenerationStatus,
   getStoryline,
 } from "../../story/storylineApi";
+import {
+  createStorySetting,
+  getStorySetting,
+  listStorySettings,
+  startStorySettingCompletionStream,
+  type StorySettingCompletionHandle,
+} from "../../story/storySettingApi";
 import { StoryInitialInput } from "./StoryInitialInput";
 import { StoryActionDrawer } from "./StoryActionDrawer";
 import { StoryActionFab } from "./StoryActionFab";
@@ -41,6 +51,14 @@ import type {
   StorylineReaderViewportState,
 } from "./StorylineReader";
 import { StorylineRestoreError } from "./StorylineRestoreError";
+import { StoryCreateFromSettingView } from "./StoryCreateFromSettingView";
+import { StorySettingCreateView } from "./StorySettingCreateView";
+import type { StorySettingCompletionStatus } from "./StorySettingCreateView";
+import { StorySettingDetailView } from "./StorySettingDetailView";
+import type { StorySettingDetailStatus } from "./StorySettingDetailView";
+import { StorySettingEntryButton } from "./StorySettingEntryButton";
+import { StorySettingListView } from "./StorySettingListView";
+import type { StorySettingListStatus } from "./StorySettingListView";
 import { getLatestGeneratedSegmentId } from "./storylineSegmentUtils";
 
 type StorylinePageStatus =
@@ -62,6 +80,8 @@ interface StorylineFieldErrors {
   appendInstruction?: string;
   dialogueInput?: string;
   rewriteInstruction?: string;
+  settingInspiration?: string;
+  settingOpening?: string;
 }
 
 type PayloadValidationResult =
@@ -76,6 +96,7 @@ type TemporaryTextStatus = "streaming" | "updatingContext" | null;
 type BackgroundGenerationTask = StoryGenerationTask;
 type GenerationIntent =
   | Readonly<{ type: "create" }>
+  | Readonly<{ type: "createFromSetting" }>
   | Readonly<{ type: "append" }>
   | Readonly<{ type: "rewrite"; segmentId: StorylineSegmentId }>
   | Readonly<{ type: "dialogue" }>;
@@ -86,6 +107,13 @@ interface SubmittedCreateDraft {
 }
 
 type StoryPageMode = "recent" | "detail" | "new";
+
+type NewStoryView =
+  | Readonly<{ type: "manual" }>
+  | Readonly<{ type: "settingList" }>
+  | Readonly<{ type: "settingCreate" }>
+  | Readonly<{ type: "settingDetail"; settingId: StorySettingId }>
+  | Readonly<{ type: "createFromSetting"; settingId: StorySettingId }>;
 
 interface StoryPageProps {
   mode: StoryPageMode;
@@ -98,6 +126,10 @@ const generationCompletedMessage = "生成已完成";
 const generationRefreshFailureMessage = "生成已完成，但刷新故事线失败，请重试";
 const backgroundStatusFailureMessage = "后台生成状态暂时不可用，稍后自动重试";
 const restoreFailureMessage = "恢复故事线失败，请稍后重试";
+const settingListFailureMessage = "加载设定列表失败，请稍后重试";
+const settingDetailFailureMessage = "加载设定失败，请稍后重试";
+const settingCompletionFailureMessage = "补全设定失败，请稍后重试";
+const settingSaveFailureMessage = "保存设定失败，请稍后重试";
 const notFoundFailureTitle = "故事线不可用";
 const bottomScrollThresholdPx = 140;
 const backgroundPollIntervalMs = 2000;
@@ -110,6 +142,8 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   const generationHandleRef = useRef<StoryRealtimeGenerationHandle | null>(
     null,
   );
+  const settingCompletionHandleRef =
+    useRef<StorySettingCompletionHandle | null>(null);
   const backgroundPollTimerRef = useRef<number | null>(null);
   const backgroundPollFailureNotifiedRef = useRef<boolean>(false);
   const isMountedRef = useRef(false);
@@ -150,6 +184,27 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     restoreFailureMessage,
   );
   const [generationStatusMessage, setGenerationStatusMessage] = useState("");
+  const [newStoryView, setNewStoryView] = useState<NewStoryView>(() =>
+    mode === "new" ? parseNewStoryViewFromCurrentLocation() : { type: "manual" },
+  );
+  const [storySettingListStatus, setStorySettingListStatus] =
+    useState<StorySettingListStatus>("loading");
+  const [storySettings, setStorySettings] = useState<
+    readonly StorySettingListItem[]
+  >([]);
+  const [storySettingListErrorMessage, setStorySettingListErrorMessage] =
+    useState(settingListFailureMessage);
+  const [storySettingDetailStatus, setStorySettingDetailStatus] =
+    useState<StorySettingDetailStatus>("loading");
+  const [activeStorySetting, setActiveStorySetting] =
+    useState<StorySetting | null>(null);
+  const [storySettingDetailErrorMessage, setStorySettingDetailErrorMessage] =
+    useState(settingDetailFailureMessage);
+  const [settingInspiration, setSettingInspiration] = useState("");
+  const [settingCompletionText, setSettingCompletionText] = useState("");
+  const [settingCompletionStatus, setSettingCompletionStatus] =
+    useState<StorySettingCompletionStatus>("idle");
+  const [settingOpening, setSettingOpening] = useState("");
 
   const isGenerating =
     status === "connecting" ||
@@ -185,6 +240,61 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     window.clearInterval(backgroundPollTimerRef.current);
     backgroundPollTimerRef.current = null;
   }, []);
+
+  const loadStorySettings = useCallback(async (): Promise<void> => {
+    setStorySettingListStatus("loading");
+    setStorySettingListErrorMessage(settingListFailureMessage);
+
+    const result = await listStorySettings();
+    if (!isMountedRef.current) {
+      return;
+    }
+
+    if (result.status === "authRequired") {
+      void navigate("/login", { replace: true });
+      return;
+    }
+
+    if (result.status === "failed") {
+      setStorySettings([]);
+      setStorySettingListErrorMessage(result.message);
+      setStorySettingListStatus("failed");
+      return;
+    }
+
+    setStorySettings(result.settings);
+    setStorySettingListStatus(
+      result.settings.length === 0 ? "empty" : "ready",
+    );
+  }, [navigate]);
+
+  const loadStorySetting = useCallback(
+    async (settingId: StorySettingId): Promise<void> => {
+      setStorySettingDetailStatus("loading");
+      setStorySettingDetailErrorMessage(settingDetailFailureMessage);
+      setActiveStorySetting(null);
+
+      const result = await getStorySetting(settingId);
+      if (!isMountedRef.current) {
+        return;
+      }
+
+      if (result.status === "authRequired") {
+        void navigate("/login", { replace: true });
+        return;
+      }
+
+      if (result.status === "notFound" || result.status === "failed") {
+        setStorySettingDetailErrorMessage(result.message);
+        setStorySettingDetailStatus("failed");
+        return;
+      }
+
+      setActiveStorySetting(result.setting);
+      setStorySettingDetailStatus("ready");
+    },
+    [navigate],
+  );
 
   const restoreStorylineSnapshot = useCallback(
     async (targetStorylineId: StorylineId): Promise<boolean> => {
@@ -325,6 +435,8 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     backgroundPollFailureNotifiedRef.current = false;
     generationHandleRef.current?.close();
     generationHandleRef.current = null;
+    settingCompletionHandleRef.current?.close();
+    settingCompletionHandleRef.current = null;
     setBackgroundTask(null);
     setStatus("loading");
     setTemporaryAppendText("");
@@ -339,6 +451,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     setGenerationStatusMessage("");
 
     if (mode === "new") {
+      setNewStoryView(parseNewStoryViewFromCurrentLocation());
       setStoryline(null);
       setInitialStoryText("");
       setAppendInstruction("");
@@ -347,6 +460,11 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
       setRewriteInstruction("");
       setRewriteTargetSegmentId(null);
       setComposerMode("append");
+      setActiveStorySetting(null);
+      setSettingInspiration("");
+      setSettingCompletionText("");
+      setSettingCompletionStatus("idle");
+      setSettingOpening("");
       setStatus("empty");
       return;
     }
@@ -464,8 +582,38 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
       clearBackgroundPoll();
       generationHandleRef.current?.close();
       generationHandleRef.current = null;
+      settingCompletionHandleRef.current?.close();
+      settingCompletionHandleRef.current = null;
     };
   }, [clearBackgroundPoll, restoreStoryline]);
+
+  useEffect(() => {
+    if (mode !== "new" || newStoryView.type !== "settingList") {
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void loadStorySettings();
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [loadStorySettings, mode, newStoryView]);
+
+  useEffect(() => {
+    if (
+      mode !== "new" ||
+      (newStoryView.type !== "settingDetail" &&
+        newStoryView.type !== "createFromSetting")
+    ) {
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void loadStorySetting(newStoryView.settingId);
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [loadStorySetting, mode, newStoryView]);
 
   useEffect(() => {
     if (storyline !== null || !shouldFollowScrollRef.current) {
@@ -515,6 +663,20 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     );
   }
 
+  function handleSettingInspirationChange(value: string): void {
+    setSettingInspiration(value);
+    setFieldErrors((previousFieldErrors) =>
+      removeFieldError(previousFieldErrors, "settingInspiration"),
+    );
+  }
+
+  function handleSettingOpeningChange(value: string): void {
+    setSettingOpening(value);
+    setFieldErrors((previousFieldErrors) =>
+      removeFieldError(previousFieldErrors, "settingOpening"),
+    );
+  }
+
   const handleReaderViewportChange = useCallback(
     (state: StorylineReaderViewportState): void => {
       setReaderViewport(state);
@@ -545,6 +707,204 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     setActiveDrawerMode(action);
   }
 
+  function handleOpenSettingList(): void {
+    if (isGenerating || mode !== "new") {
+      return;
+    }
+
+    setNewStoryView({ type: "settingList" });
+    void navigate("/storylines/new", { replace: true });
+  }
+
+  function handleBackToManualCreate(): void {
+    closeSettingCompletionStream();
+    setNewStoryView({ type: "manual" });
+    setActiveStorySetting(null);
+    setSettingInspiration("");
+    setSettingCompletionText("");
+    setSettingCompletionStatus("idle");
+    setFieldErrors((previousFieldErrors) =>
+      removeFieldError(
+        removeFieldError(previousFieldErrors, "settingInspiration"),
+        "settingOpening",
+      ),
+    );
+    void navigate("/storylines/new", { replace: true });
+  }
+
+  function handleOpenSettingCreate(): void {
+    closeSettingCompletionStream();
+    setNewStoryView({ type: "settingCreate" });
+    setSettingInspiration("");
+    setSettingCompletionText("");
+    setSettingCompletionStatus("idle");
+    setFieldErrors((previousFieldErrors) =>
+      removeFieldError(previousFieldErrors, "settingInspiration"),
+    );
+    void navigate("/storylines/new", { replace: true });
+  }
+
+  function handleBackToSettingList(): void {
+    closeSettingCompletionStream();
+    setNewStoryView({ type: "settingList" });
+    setActiveStorySetting(null);
+    setSettingInspiration("");
+    setSettingCompletionText("");
+    setSettingCompletionStatus("idle");
+    setFieldErrors((previousFieldErrors) =>
+      removeFieldError(
+        removeFieldError(previousFieldErrors, "settingInspiration"),
+        "settingOpening",
+      ),
+    );
+    void navigate("/storylines/new", { replace: true });
+  }
+
+  function handleSelectSetting(settingId: StorySettingId): void {
+    setNewStoryView({ type: "settingDetail", settingId });
+    setActiveStorySetting(null);
+    setStorySettingDetailStatus("loading");
+  }
+
+  function handleStartFromSetting(settingId: StorySettingId): void {
+    setNewStoryView({ type: "createFromSetting", settingId });
+    setSettingOpening("");
+    setFieldErrors((previousFieldErrors) =>
+      removeFieldError(previousFieldErrors, "settingOpening"),
+    );
+    void navigate(
+      `/storylines/new?mode=setting&settingId=${encodeURIComponent(settingId)}`,
+      { replace: true },
+    );
+  }
+
+  function closeSettingCompletionStream(): void {
+    settingCompletionHandleRef.current?.close();
+    settingCompletionHandleRef.current = null;
+  }
+
+  function handleCompleteSetting(): void {
+    if (settingCompletionStatus === "streaming") {
+      return;
+    }
+
+    const inspiration = settingInspiration.trim();
+    if (inspiration.length === 0) {
+      setFieldErrors((previousFieldErrors) => ({
+        ...previousFieldErrors,
+        settingInspiration: "请输入灵感",
+      }));
+      return;
+    }
+
+    closeSettingCompletionStream();
+    setSettingCompletionText("");
+    setSettingCompletionStatus("streaming");
+    setFieldErrors((previousFieldErrors) =>
+      removeFieldError(previousFieldErrors, "settingInspiration"),
+    );
+
+    settingCompletionHandleRef.current = startStorySettingCompletionStream(
+      { inspiration },
+      {
+        onStarted() {
+          setSettingCompletionStatus("streaming");
+        },
+        onChunk(delta) {
+          setSettingCompletionText((previousText) => `${previousText}${delta}`);
+        },
+        onCompleted() {
+          settingCompletionHandleRef.current = null;
+          setSettingCompletionStatus("completed");
+        },
+        onCancelled() {
+          settingCompletionHandleRef.current = null;
+          setSettingCompletionText("");
+          setSettingCompletionStatus("idle");
+        },
+        onError(message) {
+          settingCompletionHandleRef.current = null;
+          setSettingCompletionText("");
+          setSettingCompletionStatus("idle");
+          toast.error(message.length > 0 ? message : settingCompletionFailureMessage);
+        },
+        onAuthRequired() {
+          settingCompletionHandleRef.current = null;
+          void navigate("/login", { replace: true });
+        },
+      },
+    );
+  }
+
+  async function handleSaveSetting(): Promise<void> {
+    const content = settingCompletionText.trim();
+    if (content.length === 0 || settingCompletionStatus === "saving") {
+      return;
+    }
+
+    setSettingCompletionStatus("saving");
+    const result = await createStorySetting({ content });
+    if (!isMountedRef.current) {
+      return;
+    }
+
+    if (result.status === "authRequired") {
+      void navigate("/login", { replace: true });
+      return;
+    }
+
+    if (result.status === "failed") {
+      setSettingCompletionText("");
+      setSettingCompletionStatus("idle");
+      toast.error(result.message.length > 0 ? result.message : settingSaveFailureMessage);
+      return;
+    }
+
+    setSettingInspiration("");
+    setSettingCompletionText("");
+    setSettingCompletionStatus("idle");
+    setActiveStorySetting(result.setting);
+    handleStartFromSetting(result.setting.id);
+  }
+
+  function handleSubmitCreateFromSetting(): void {
+    if (isGenerating) {
+      return;
+    }
+
+    const setting = activeStorySetting;
+    const opening = settingOpening.trim();
+    if (setting === null || storySettingDetailStatus !== "ready") {
+      toast.error(settingDetailFailureMessage);
+      return;
+    }
+
+    if (opening.length === 0) {
+      setFieldErrors((previousFieldErrors) => ({
+        ...previousFieldErrors,
+        settingOpening: "请输入开场",
+      }));
+      return;
+    }
+
+    const initialStoryText = buildCreateFromSettingInitialText({
+      opening,
+      settingContent: setting.content,
+    });
+    beginRealtimeGeneration({
+      intent: { type: "createFromSetting" },
+      payload: {
+        mode: "createFromSetting",
+        settingId: setting.id,
+        opening,
+      },
+      submittedCreateDraft: {
+        initialStoryText,
+        instruction: opening,
+      },
+    });
+  }
+
   function handleSubmit(): void {
     if (isGenerating) {
       handleCancel();
@@ -567,8 +927,20 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
       return;
     }
 
-    const intent = validationResult.intent;
-    setSubmittedCreateDraft(getSubmittedCreateDraft(validationResult.payload));
+    beginRealtimeGeneration({
+      intent: validationResult.intent,
+      payload: validationResult.payload,
+      submittedCreateDraft: getSubmittedCreateDraft(validationResult.payload),
+    });
+  }
+
+  function beginRealtimeGeneration(input: {
+    readonly intent: GenerationIntent;
+    readonly payload: StoryContinuePayload;
+    readonly submittedCreateDraft: SubmittedCreateDraft | null;
+  }): void {
+    const intent = input.intent;
+    setSubmittedCreateDraft(input.submittedCreateDraft);
     shouldFollowScrollRef.current = intent.type !== "rewrite" && isNearBottom();
     setActiveDrawerMode(null);
     setActiveGenerationIntent(intent);
@@ -585,7 +957,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     generationHandleRef.current?.close();
 
     generationHandleRef.current = startStoryRealtimeGeneration(
-      validationResult.payload,
+      input.payload,
       {
         onStarted() {
           shouldFollowScrollRef.current =
@@ -629,9 +1001,11 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
           setGenerationStatusMessage("");
           setStatus("completed");
 
-          if (intent.type === "create") {
+          if (intent.type === "create" || intent.type === "createFromSetting") {
             setInitialStoryText("");
             setAppendInstruction("");
+            setSettingOpening("");
+            setNewStoryView({ type: "manual" });
             setSubmittedCreateDraft(null);
             void navigate(`/storylines/${event.storyline.id}`, {
               replace: true,
@@ -666,6 +1040,9 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
           if (intent.type === "create") {
             setSubmittedCreateDraft(null);
             setGenerationStatusMessage(generationCancelledMessage);
+          } else if (intent.type === "createFromSetting") {
+            setSubmittedCreateDraft(null);
+            toast(generationCancelledMessage);
           } else {
             toast(generationCancelledMessage);
           }
@@ -685,6 +1062,9 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
           if (intent.type === "create") {
             setSubmittedCreateDraft(null);
             setGenerationStatusMessage(message);
+          } else if (intent.type === "createFromSetting") {
+            setSubmittedCreateDraft(null);
+            toast.error(message);
           } else {
             toast.error(message);
           }
@@ -817,6 +1197,109 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     void navigate(`/storylines/${encodeURIComponent(storyline.id)}/context`);
   }
 
+  function renderNewStoryView(): JSX.Element {
+    switch (newStoryView.type) {
+      case "settingList":
+        return (
+          <StorySettingListView
+            errorMessage={storySettingListErrorMessage}
+            onBack={handleBackToManualCreate}
+            onCreate={handleOpenSettingCreate}
+            onRetry={() => {
+              void loadStorySettings();
+            }}
+            onSelect={handleSelectSetting}
+            settings={storySettings}
+            status={storySettingListStatus}
+          />
+        );
+      case "settingCreate":
+        return (
+          <StorySettingCreateView
+            completionText={settingCompletionText}
+            error={fieldErrors.settingInspiration}
+            inspiration={settingInspiration}
+            onBack={handleBackToSettingList}
+            onComplete={handleCompleteSetting}
+            onInspirationChange={handleSettingInspirationChange}
+            onSave={() => {
+              void handleSaveSetting();
+            }}
+            status={settingCompletionStatus}
+          />
+        );
+      case "settingDetail":
+        return (
+          <StorySettingDetailView
+            errorMessage={storySettingDetailErrorMessage}
+            onBack={handleBackToSettingList}
+            onRetry={() => {
+              void loadStorySetting(newStoryView.settingId);
+            }}
+            onStart={() => handleStartFromSetting(newStoryView.settingId)}
+            setting={activeStorySetting}
+            status={storySettingDetailStatus}
+          />
+        );
+      case "createFromSetting":
+        return (
+          <StoryCreateFromSettingView
+            errorMessage={storySettingDetailErrorMessage}
+            isGenerating={isGenerating}
+            onBack={handleGoToStorylineList}
+            onOpeningChange={handleSettingOpeningChange}
+            onRetry={() => {
+              void loadStorySetting(newStoryView.settingId);
+            }}
+            onSubmit={handleSubmitCreateFromSetting}
+            opening={settingOpening}
+            openingError={fieldErrors.settingOpening}
+            setting={activeStorySetting}
+            status={storySettingDetailStatus}
+          />
+        );
+      case "manual":
+        return renderManualCreateView();
+    }
+  }
+
+  function renderManualCreateView(): JSX.Element {
+    return (
+      <>
+        {mode === "new" ? (
+          <StorySettingEntryButton onClick={handleOpenSettingList} />
+        ) : null}
+        <StoryInitialInput
+          disabled={isGenerating}
+          error={fieldErrors.initialStoryText}
+          onChange={handleInitialStoryTextChange}
+          value={initialStoryText}
+        />
+        <div aria-hidden="true" className="h-px bg-(--border)" />
+        <StorylineComposer
+          disabled={isGenerating}
+          error={
+            composerMode === "rewrite"
+              ? fieldErrors.rewriteInstruction
+              : fieldErrors.appendInstruction
+          }
+          isGenerating={isGenerating}
+          mode={composerMode}
+          modeHint={composerMode === "rewrite" ? "正在重写上一段" : undefined}
+          onCancelGeneration={handleCancel}
+          onCancelRewrite={handleCancelRewrite}
+          onChange={
+            composerMode === "rewrite"
+              ? handleRewriteInstructionChange
+              : handleAppendInstructionChange
+          }
+          onSubmit={handleSubmit}
+          value={composerMode === "rewrite" ? rewriteInstruction : appendInstruction}
+        />
+      </>
+    );
+  }
+
   const latestGeneration = storyline?.latestGeneration ?? null;
   const contextDebugStorylineId = storyline?.id ?? null;
 
@@ -868,49 +1351,18 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
                 storyline={submittedCreateStoryline}
                 temporaryAppendText={temporaryAppendText}
                 temporaryAppendVisible={
-                  activeGenerationIntent?.type === "create"
+                  activeGenerationIntent?.type === "create" ||
+                  activeGenerationIntent?.type === "createFromSetting"
                 }
                 temporaryDialogueText=""
                 temporaryDialogueVisible={false}
                 temporaryRewrite={null}
                 temporaryTextStatus={temporaryTextStatus}
               />
+            ) : mode === "new" && newStoryView.type !== "manual" ? (
+              renderNewStoryView()
             ) : (
-              <>
-                <StoryInitialInput
-                  disabled={isGenerating}
-                  error={fieldErrors.initialStoryText}
-                  onChange={handleInitialStoryTextChange}
-                  value={initialStoryText}
-                />
-                <div aria-hidden="true" className="h-px bg-(--border)" />
-                <StorylineComposer
-                  disabled={isGenerating}
-                  error={
-                    composerMode === "rewrite"
-                      ? fieldErrors.rewriteInstruction
-                      : fieldErrors.appendInstruction
-                  }
-                  isGenerating={isGenerating}
-                  mode={composerMode}
-                  modeHint={
-                    composerMode === "rewrite" ? "正在重写上一段" : undefined
-                  }
-                  onCancelGeneration={handleCancel}
-                  onCancelRewrite={handleCancelRewrite}
-                  onChange={
-                    composerMode === "rewrite"
-                      ? handleRewriteInstructionChange
-                      : handleAppendInstructionChange
-                  }
-                  onSubmit={handleSubmit}
-                  value={
-                    composerMode === "rewrite"
-                      ? rewriteInstruction
-                      : appendInstruction
-                  }
-                />
-              </>
+              renderManualCreateView()
             )}
 
             {latestGeneration !== null ? (
@@ -1115,6 +1567,36 @@ function buildSubmittedCreateStoryline(
     ],
     updatedAt: submittedCreateUpdatedAt,
   };
+}
+
+function parseNewStoryViewFromCurrentLocation(): NewStoryView {
+  const searchParams = new URLSearchParams(window.location.search);
+  if (searchParams.get("mode") !== "setting") {
+    return { type: "manual" };
+  }
+
+  const settingId = searchParams.get("settingId")?.trim();
+  if (settingId === undefined || settingId.length === 0) {
+    return { type: "manual" };
+  }
+
+  return {
+    type: "createFromSetting",
+    settingId,
+  };
+}
+
+function buildCreateFromSettingInitialText(input: {
+  readonly opening: string;
+  readonly settingContent: string;
+}): string {
+  return [
+    "【设定】",
+    input.settingContent.trim(),
+    "",
+    "【开场】",
+    input.opening.trim(),
+  ].join("\n");
 }
 
 function getCurrentStoryUserId(): string | null {

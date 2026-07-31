@@ -7,9 +7,13 @@ import type {
 import type { StorylineContextService } from "./storyline-context.service";
 import type { StoryContextPatchDraft } from "./storyline-context-patch.types";
 import { emptyStoryContextSnapshot } from "./storyline-context.types";
+import type { StorySettingService } from "./story-setting.service";
 import type { StorylineLockService } from "./storyline-lock.service";
 import type { StorylineService } from "./storyline.service";
-import { StorylineGenerationService } from "./storyline-generation.service";
+import {
+  buildCreateFromSettingInitialText,
+  StorylineGenerationService,
+} from "./storyline-generation.service";
 
 describe("StorylineGenerationService", () => {
   let storylineService: jest.Mocked<
@@ -19,6 +23,7 @@ describe("StorylineGenerationService", () => {
       | "buildLlmContext"
       | "buildDialogueLlmContext"
       | "buildRewriteLlmContext"
+      | "saveCreatedStorylineWithContext"
       | "saveAppendedSegmentWithContext"
       | "saveDialogueSegmentWithContext"
       | "saveDialogueSegmentWithoutContextUpdate"
@@ -29,13 +34,17 @@ describe("StorylineGenerationService", () => {
     Pick<
       StoryService,
       | "streamContinueStoryFromContext"
+      | "streamCreateStoryFromSetting"
       | "streamDialogueStoryFromContext"
       | "streamRewriteDialogueFromContext"
       | "streamRewriteStoryFromContext"
     >
   >;
+  let storySettingService: jest.Mocked<
+    Pick<StorySettingService, "getRequiredSettingForUser">
+  >;
   let lockService: jest.Mocked<
-    Pick<StorylineLockService, "acquireStorylineLock">
+    Pick<StorylineLockService, "acquireCreateLock" | "acquireStorylineLock">
   >;
   let contextService: jest.Mocked<
     Pick<StorylineContextService, "generateStoryContextPatch">
@@ -49,6 +58,7 @@ describe("StorylineGenerationService", () => {
       buildLlmContext: jest.fn(),
       buildDialogueLlmContext: jest.fn(),
       buildRewriteLlmContext: jest.fn(),
+      saveCreatedStorylineWithContext: jest.fn(),
       saveAppendedSegmentWithContext: jest.fn(),
       saveDialogueSegmentWithContext: jest.fn(),
       saveDialogueSegmentWithoutContextUpdate: jest.fn(),
@@ -56,12 +66,17 @@ describe("StorylineGenerationService", () => {
     };
     storyService = {
       streamContinueStoryFromContext: jest.fn(),
+      streamCreateStoryFromSetting: jest.fn(),
       streamDialogueStoryFromContext: jest.fn(),
       streamRewriteDialogueFromContext: jest.fn(),
       streamRewriteStoryFromContext: jest.fn(),
     };
+    storySettingService = {
+      getRequiredSettingForUser: jest.fn(),
+    };
     releaseLock = jest.fn();
     lockService = {
+      acquireCreateLock: jest.fn((_userId: string) => releaseLock),
       acquireStorylineLock: jest.fn((_storylineId: string) => releaseLock),
     };
     contextService = {
@@ -70,6 +85,7 @@ describe("StorylineGenerationService", () => {
     generationService = new StorylineGenerationService(
       storylineService as unknown as StorylineService,
       storyService as unknown as StoryService,
+      storySettingService as unknown as StorySettingService,
       lockService as unknown as StorylineLockService,
       contextService as unknown as StorylineContextService,
     );
@@ -187,6 +203,127 @@ describe("StorylineGenerationService", () => {
       previousContext,
       contextPatch,
     });
+    expect(releaseLock).toHaveBeenCalledTimes(1);
+  });
+
+  it("creates a storyline from a saved setting and opening", async () => {
+    const abortController = new AbortController();
+    const contextPatch = createContextDraft();
+    const completedStoryline = createCompletedStoryline({
+      latestText: "雨夜里，林夏推开旧书店的门。",
+    });
+    const initialStoryText = buildCreateFromSettingInitialText({
+      settingContent: "赛博城邦里，主角经营一家旧书店。",
+      opening: "从雨夜访客开始。",
+    });
+
+    storySettingService.getRequiredSettingForUser.mockResolvedValue({
+      id: "5",
+      content: "赛博城邦里，主角经营一家旧书店。",
+      createdAt: "2026-07-31T00:00:00.000Z",
+    });
+    storyService.streamCreateStoryFromSetting.mockReturnValue(
+      createStoryStream([
+        {
+          type: "chunk",
+          delta: "雨夜里，",
+          sequence: 1,
+        },
+        {
+          type: "completed",
+          continuedStory: "雨夜里，林夏推开旧书店的门。",
+          model: "create-setting-model",
+          elapsedMs: 31,
+          usage: {
+            inputTokens: 10,
+            outputTokens: 11,
+            totalTokens: 21,
+          },
+        },
+      ]),
+    );
+    contextService.generateStoryContextPatch.mockResolvedValue(contextPatch);
+    storylineService.saveCreatedStorylineWithContext.mockResolvedValue(
+      completedStoryline,
+    );
+
+    const events = await collectAsyncIterable(
+      generationService.streamContinueStoryline(
+        {
+          userId: "1",
+          payload: {
+            mode: "createFromSetting",
+            settingId: "5",
+            opening: "从雨夜访客开始。",
+          },
+        },
+        { signal: abortController.signal },
+      ),
+    );
+
+    expect(events).toEqual([
+      {
+        type: "chunk",
+        delta: "雨夜里，",
+        sequence: 1,
+      },
+      { type: "contextStarted" },
+      {
+        type: "completed",
+        storyline: completedStoryline,
+        generatedSegmentId: "3",
+      },
+    ]);
+    expect(storySettingService.getRequiredSettingForUser).toHaveBeenCalledWith({
+      userId: "1",
+      settingId: "5",
+    });
+    expect(lockService.acquireCreateLock).toHaveBeenCalledWith("1");
+    expect(storyService.streamCreateStoryFromSetting).toHaveBeenCalledWith(
+      {
+        settingContent: "赛博城邦里，主角经营一家旧书店。",
+        opening: "从雨夜访客开始。",
+      },
+      { signal: abortController.signal },
+    );
+    expect(contextService.generateStoryContextPatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: "create",
+        previousContext: null,
+        initialStoryText,
+        currentInstruction: "从雨夜访客开始。",
+        generatedText: "雨夜里，林夏推开旧书店的门。",
+        sourceRefMappings: [
+          {
+            ref: "initial",
+            label: "设定与开场",
+            text: initialStoryText,
+          },
+          {
+            ref: "current",
+            label: "本轮生成正文",
+            text: "雨夜里，林夏推开旧书店的门。",
+          },
+        ],
+      }),
+      { signal: abortController.signal },
+    );
+    expect(storylineService.saveCreatedStorylineWithContext).toHaveBeenCalledWith(
+      {
+        userId: "1",
+        initialStoryText,
+        instruction: "从雨夜访客开始。",
+        generatedText: "雨夜里，林夏推开旧书店的门。",
+        model: "create-setting-model",
+        elapsedMs: 31,
+        usage: {
+          inputTokens: 10,
+          outputTokens: 11,
+          totalTokens: 21,
+        },
+        contextPatch,
+      },
+    );
     expect(releaseLock).toHaveBeenCalledTimes(1);
   });
 
