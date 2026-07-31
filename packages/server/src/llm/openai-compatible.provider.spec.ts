@@ -87,6 +87,9 @@ describe("OpenAiCompatibleProvider", () => {
       usage: {
         prompt_tokens: 11,
         completion_tokens: 7,
+        completion_tokens_details: {
+          reasoning_tokens: 3,
+        },
         total_tokens: 18,
       },
     } as ChatCompletion);
@@ -102,6 +105,7 @@ describe("OpenAiCompatibleProvider", () => {
       usage: {
         inputTokens: 11,
         outputTokens: 7,
+        reasoningTokens: 3,
         totalTokens: 18,
       },
     });
@@ -331,6 +335,18 @@ describe("OpenAiCompatibleProvider", () => {
           choices: [
             {
               delta: {
+                reasoning_content: "thinking",
+              } as ChatCompletionChunk["choices"][number]["delta"],
+              finish_reason: null,
+              index: 0,
+            },
+          ],
+        },
+        {
+          model: "deepseek-chat",
+          choices: [
+            {
+              delta: {
                 content: "hello",
               },
               finish_reason: null,
@@ -352,12 +368,20 @@ describe("OpenAiCompatibleProvider", () => {
           usage: {
             prompt_tokens: 3,
             completion_tokens: 4,
+            completion_tokens_details: {
+              reasoning_tokens: 2,
+            },
             total_tokens: 7,
           },
         },
       ]),
     );
     const abortController = new AbortController();
+    const telemetry = {
+      onFirstContent: jest.fn(),
+      onFirstReasoningContent: jest.fn(),
+      onFirstUpstreamSse: jest.fn(),
+    };
 
     await expect(
       collectAsyncIterable(
@@ -365,7 +389,7 @@ describe("OpenAiCompatibleProvider", () => {
           {
             userPrompt: "hello",
           },
-          { signal: abortController.signal },
+          { signal: abortController.signal, telemetry },
         ),
       ),
     ).resolves.toEqual([
@@ -384,10 +408,16 @@ describe("OpenAiCompatibleProvider", () => {
         usage: {
           inputTokens: 3,
           outputTokens: 4,
+          reasoningTokens: 2,
           totalTokens: 7,
         },
       },
     ]);
+    expect(telemetry.onFirstUpstreamSse).toHaveBeenCalledTimes(1);
+    expect(telemetry.onFirstReasoningContent).toHaveBeenCalledTimes(1);
+    expect(telemetry.onFirstReasoningContent).toHaveBeenCalledWith(8);
+    expect(telemetry.onFirstContent).toHaveBeenCalledTimes(1);
+    expect(telemetry.onFirstContent).toHaveBeenCalledWith(5);
     expect(client.chat.completions.create.mock.calls[0]?.[0]).toEqual({
       model: "deepseek-chat",
       messages: [

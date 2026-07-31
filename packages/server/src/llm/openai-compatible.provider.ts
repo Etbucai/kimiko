@@ -28,7 +28,11 @@ import type {
   GenerateLlmTextStreamUsage,
   GenerateLlmTextUsage,
 } from "@kimiko/schema";
-import type { LlmProvider, LlmTextStreamEvent } from "./llm.provider";
+import type {
+  LlmProvider,
+  LlmStreamOptions,
+  LlmTextStreamEvent,
+} from "./llm.provider";
 
 export type OpenAiCompatibleProviderConfig = Readonly<{
   apiKey: string;
@@ -72,28 +76,50 @@ export class OpenAiCompatibleProvider implements LlmProvider {
 
   async *streamText(
     input: GenerateLlmTextRequest,
-    options: Readonly<{ signal: AbortSignal }>,
+    options: LlmStreamOptions,
   ): AsyncIterable<LlmTextStreamEvent> {
     const stream = await this.createChatCompletionStream(input, options);
     let model = "";
     let finishReason: string | undefined;
     let usage: GenerateLlmTextStreamUsage | undefined;
+    let hasObservedContent = false;
+    let hasObservedReasoningContent = false;
+    let hasObservedUpstreamSse = false;
 
     for await (const chunk of stream) {
+      if (!hasObservedUpstreamSse) {
+        hasObservedUpstreamSse = true;
+        options.telemetry?.onFirstUpstreamSse();
+      }
+
       if (chunk.model.length > 0) {
         model = chunk.model;
       }
 
       const chunkFinishReason = chunk.choices[0]?.finish_reason;
-      if (typeof chunkFinishReason === "string" && chunkFinishReason.length > 0) {
+      if (
+        typeof chunkFinishReason === "string" &&
+        chunkFinishReason.length > 0
+      ) {
         finishReason = chunkFinishReason;
       }
 
-      const delta = chunk.choices[0]?.delta.content;
-      if (typeof delta === "string" && delta.length > 0) {
+      const reasoningContent = getReasoningContent(chunk);
+      if (reasoningContent !== undefined && !hasObservedReasoningContent) {
+        hasObservedReasoningContent = true;
+        options.telemetry?.onFirstReasoningContent(reasoningContent.length);
+      }
+
+      const content = chunk.choices[0]?.delta.content;
+      if (typeof content === "string" && content.length > 0) {
+        if (!hasObservedContent) {
+          hasObservedContent = true;
+          options.telemetry?.onFirstContent(content.length);
+        }
+
         yield {
           type: "chunk",
-          delta,
+          delta: content,
         };
       }
 
@@ -138,7 +164,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
 
   private async createChatCompletionStream(
     input: GenerateLlmTextRequest,
-    options: Readonly<{ signal: AbortSignal }>,
+    options: LlmStreamOptions,
   ): Promise<AsyncIterable<ChatCompletionChunk>> {
     try {
       return await this.client.chat.completions.create(
@@ -268,9 +294,11 @@ function mapUsage(
     return undefined;
   }
 
+  const reasoningTokens = getReasoningTokens(usage);
   return {
     inputTokens: usage.prompt_tokens,
     outputTokens: usage.completion_tokens,
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
     totalTokens: usage.total_tokens,
   };
 }
@@ -282,11 +310,32 @@ function mapRequiredUsage(
     return undefined;
   }
 
+  const reasoningTokens = getReasoningTokens(usage);
   return {
     inputTokens: usage.prompt_tokens,
     outputTokens: usage.completion_tokens,
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
     totalTokens: usage.total_tokens,
   };
+}
+
+function getReasoningContent(chunk: ChatCompletionChunk): string | undefined {
+  const delta = chunk.choices[0]?.delta as
+    | (ChatCompletionChunk["choices"][number]["delta"] & {
+        reasoning_content?: unknown;
+      })
+    | undefined;
+  const reasoningContent = delta?.reasoning_content;
+  return typeof reasoningContent === "string" && reasoningContent.length > 0
+    ? reasoningContent
+    : undefined;
+}
+
+function getReasoningTokens(
+  usage: NonNullable<ChatCompletion["usage"]>,
+): number | undefined {
+  const reasoningTokens = usage.completion_tokens_details?.reasoning_tokens;
+  return typeof reasoningTokens === "number" ? reasoningTokens : undefined;
 }
 
 function mapOpenAiError(error: unknown): Error {

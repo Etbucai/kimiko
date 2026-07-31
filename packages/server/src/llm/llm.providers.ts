@@ -4,6 +4,7 @@ import { Env } from "../env";
 import {
   LLM_PROVIDER,
   type LlmProvider,
+  type LlmStreamOptions,
   type LlmTextStreamEvent,
 } from "./llm.provider";
 import type { GenerateLlmTextRequest } from "@kimiko/schema";
@@ -21,7 +22,7 @@ class UnspecifiedProvider implements LlmProvider {
 
   streamText(
     _input: GenerateLlmTextRequest,
-    _options: Readonly<{ signal: AbortSignal }>,
+    _options: LlmStreamOptions,
   ): AsyncIterable<LlmTextStreamEvent> {
     return createUnavailableStream();
   }

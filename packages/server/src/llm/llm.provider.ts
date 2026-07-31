@@ -15,6 +15,17 @@ export type LlmTextStreamEvent =
       usage: GenerateLlmTextStreamUsage;
     }>;
 
+export interface LlmStreamTelemetry {
+  onFirstContent: (deltaChars: number) => void;
+  onFirstReasoningContent: (deltaChars: number) => void;
+  onFirstUpstreamSse: () => void;
+}
+
+export type LlmStreamOptions = Readonly<{
+  signal: AbortSignal;
+  telemetry?: LlmStreamTelemetry;
+}>;
+
 export interface LlmProvider {
   generateText(
     input: GenerateLlmTextRequest,
@@ -23,6 +34,6 @@ export interface LlmProvider {
 
   streamText(
     input: GenerateLlmTextRequest,
-    options: Readonly<{ signal: AbortSignal }>,
+    options: LlmStreamOptions,
   ): AsyncIterable<LlmTextStreamEvent>;
 }

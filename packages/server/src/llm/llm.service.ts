@@ -24,6 +24,7 @@ import {
 import {
   LLM_PROVIDER,
   type LlmProvider,
+  type LlmStreamTelemetry,
   type LlmTextStreamEvent,
 } from "./llm.provider";
 
@@ -162,12 +163,37 @@ export class LlmService {
       callType: "stream",
       request: providerRequest,
     });
+    const telemetry: LlmStreamTelemetry = {
+      onFirstContent: (deltaChars) => {
+        this.logLlmStreamMilestone({
+          callId,
+          deltaChars,
+          elapsedMs: getElapsedMs(startedAt),
+          event: "llm_stream_first_content",
+        });
+      },
+      onFirstReasoningContent: (deltaChars) => {
+        this.logLlmStreamMilestone({
+          callId,
+          deltaChars,
+          elapsedMs: getElapsedMs(startedAt),
+          event: "llm_stream_first_reasoning_content",
+        });
+      },
+      onFirstUpstreamSse: () => {
+        this.logLlmStreamMilestone({
+          callId,
+          elapsedMs: getElapsedMs(startedAt),
+          event: "llm_stream_first_upstream_sse",
+        });
+      },
+    };
 
     try {
-      for await (const event of this.llmProvider.streamText(
-        providerRequest,
-        options,
-      )) {
+      for await (const event of this.llmProvider.streamText(providerRequest, {
+        signal: options.signal,
+        telemetry,
+      })) {
         if (!hasReceivedFirstEvent) {
           hasReceivedFirstEvent = true;
           this.logLlmStreamFirstEvent({
@@ -362,6 +388,29 @@ export class LlmService {
     );
   }
 
+  private logLlmStreamMilestone(
+    input: Readonly<{
+      callId: string;
+      deltaChars?: number;
+      elapsedMs: number;
+      event:
+        | "llm_stream_first_content"
+        | "llm_stream_first_reasoning_content"
+        | "llm_stream_first_upstream_sse";
+    }>,
+  ): void {
+    this.logger.log(
+      JSON.stringify({
+        callId: input.callId,
+        ...(input.deltaChars !== undefined
+          ? { deltaChars: input.deltaChars }
+          : {}),
+        elapsedMs: input.elapsedMs,
+        event: input.event,
+      }),
+    );
+  }
+
   private logLlmCallFailed(
     input: Readonly<{
       callId: string;
@@ -432,6 +481,7 @@ function normalizeLoggedUsage(
   return {
     inputTokens: usage?.inputTokens ?? null,
     outputTokens: usage?.outputTokens ?? null,
+    reasoningTokens: usage?.reasoningTokens ?? null,
     totalTokens: usage?.totalTokens ?? null,
   };
 }

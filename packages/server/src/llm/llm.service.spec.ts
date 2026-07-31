@@ -6,7 +6,11 @@ import type {
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { LlmProvider, LlmTextStreamEvent } from "./llm.provider";
+import type {
+  LlmProvider,
+  LlmStreamOptions,
+  LlmTextStreamEvent,
+} from "./llm.provider";
 import { LlmService } from "./llm.service";
 
 describe("LlmService", () => {
@@ -22,7 +26,7 @@ describe("LlmService", () => {
       >(),
       streamText: jest.fn<
         AsyncIterable<LlmTextStreamEvent>,
-        [GenerateLlmTextRequest, Readonly<{ signal: AbortSignal }>]
+        [GenerateLlmTextRequest, LlmStreamOptions]
       >(),
     };
     llmService = new LlmService(llmProvider);
@@ -145,6 +149,7 @@ describe("LlmService", () => {
         usage: {
           inputTokens: 10,
           outputTokens: 5,
+          reasoningTokens: null,
           totalTokens: 15,
         },
       }),
@@ -155,8 +160,11 @@ describe("LlmService", () => {
     const logSpy = jest
       .spyOn(Logger.prototype, "log")
       .mockImplementation(() => undefined);
-    llmProvider.streamText.mockReturnValue(
-      createLlmStream([
+    llmProvider.streamText.mockImplementation((_request, options) => {
+      options.telemetry?.onFirstUpstreamSse();
+      options.telemetry?.onFirstReasoningContent(8);
+      options.telemetry?.onFirstContent(5);
+      return createLlmStream([
         { type: "chunk", delta: "hello" },
         {
           type: "completed",
@@ -165,11 +173,12 @@ describe("LlmService", () => {
           usage: {
             inputTokens: 7,
             outputTokens: 3,
+            reasoningTokens: 2,
             totalTokens: 10,
           },
         },
-      ]),
-    );
+      ]);
+    });
 
     const iterator = llmService
       .streamTextFromParsedRequest(
@@ -193,6 +202,20 @@ describe("LlmService", () => {
       }),
       expect.objectContaining({
         elapsedMs: expect.any(Number),
+        event: "llm_stream_first_upstream_sse",
+      }),
+      expect.objectContaining({
+        deltaChars: 8,
+        elapsedMs: expect.any(Number),
+        event: "llm_stream_first_reasoning_content",
+      }),
+      expect.objectContaining({
+        deltaChars: 5,
+        elapsedMs: expect.any(Number),
+        event: "llm_stream_first_content",
+      }),
+      expect.objectContaining({
+        elapsedMs: expect.any(Number),
         event: "llm_stream_first_event",
         eventType: "chunk",
       }),
@@ -213,6 +236,7 @@ describe("LlmService", () => {
           usage: {
             inputTokens: 7,
             outputTokens: 3,
+            reasoningTokens: 2,
             totalTokens: 10,
           },
         },
@@ -228,6 +252,7 @@ describe("LlmService", () => {
         usage: {
           inputTokens: 7,
           outputTokens: 3,
+          reasoningTokens: 2,
           totalTokens: 10,
         },
       }),
@@ -281,6 +306,7 @@ describe("LlmService", () => {
             usage: {
               inputTokens: 10,
               outputTokens: 5,
+              reasoningTokens: null,
               totalTokens: 15,
             },
           }),
@@ -311,6 +337,7 @@ describe("LlmService", () => {
           usage: {
             inputTokens: 7,
             outputTokens: 3,
+            reasoningTokens: 2,
             totalTokens: 10,
           },
         },
@@ -343,6 +370,7 @@ describe("LlmService", () => {
             usage: {
               inputTokens: 7,
               outputTokens: 3,
+              reasoningTokens: 2,
               totalTokens: 10,
             },
           }),

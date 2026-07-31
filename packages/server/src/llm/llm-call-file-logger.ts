@@ -9,6 +9,7 @@ export type LlmCallType = "stream" | "text";
 export interface LlmCallFileUsage {
   readonly inputTokens: number | null;
   readonly outputTokens: number | null;
+  readonly reasoningTokens: number | null;
   readonly totalTokens: number | null;
 }
 

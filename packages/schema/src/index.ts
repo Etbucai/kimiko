@@ -124,6 +124,7 @@ export const GenerateLlmTextUsageSchema = z
   .object({
     inputTokens: z.number().int().nonnegative().optional(),
     outputTokens: z.number().int().nonnegative().optional(),
+    reasoningTokens: z.number().int().nonnegative().optional(),
     totalTokens: z.number().int().nonnegative().optional(),
   })
   .strict();
@@ -147,6 +148,7 @@ export const GenerateLlmTextStreamUsageSchema = z
   .object({
     inputTokens: z.number().int().nonnegative(),
     outputTokens: z.number().int().nonnegative(),
+    reasoningTokens: z.number().int().nonnegative().optional(),
     totalTokens: z.number().int().nonnegative(),
   })
   .strict();
