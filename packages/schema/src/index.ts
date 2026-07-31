@@ -277,9 +277,7 @@ export const StorySettingListItemSchema = z
   })
   .strict();
 
-export type StorySettingListItem = z.infer<
-  typeof StorySettingListItemSchema
->;
+export type StorySettingListItem = z.infer<typeof StorySettingListItemSchema>;
 
 export const ListStorySettingsResponseSchema = z
   .object({
@@ -301,11 +299,21 @@ export type GetStorySettingResponse = z.infer<
   typeof GetStorySettingResponseSchema
 >;
 
-export const CompleteStorySettingRequestSchema = z
-  .object({
-    inspiration: z.string().trim().min(1).max(8_000),
-  })
-  .strict();
+export const CompleteStorySettingRequestSchema = z.discriminatedUnion("mode", [
+  z
+    .object({
+      mode: z.literal("complete"),
+      inspiration: z.string().trim().min(1).max(8_000),
+    })
+    .strict(),
+  z
+    .object({
+      mode: z.literal("revise"),
+      currentSetting: StorySettingContentSchema,
+      revisionInstruction: z.string().trim().min(1).max(8_000),
+    })
+    .strict(),
+]);
 
 export type CompleteStorySettingRequest = z.infer<
   typeof CompleteStorySettingRequestSchema

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
 import type {
+  CompleteStorySettingRequest,
   StoryContinuePayload,
   StoryGenerationPhase,
   StoryGenerationTask,
@@ -129,6 +130,7 @@ const restoreFailureMessage = "恢复故事线失败，请稍后重试";
 const settingListFailureMessage = "加载设定列表失败，请稍后重试";
 const settingDetailFailureMessage = "加载设定失败，请稍后重试";
 const settingCompletionFailureMessage = "补全设定失败，请稍后重试";
+const settingRevisionFailureMessage = "修改设定失败，请稍后重试";
 const settingSaveFailureMessage = "保存设定失败，请稍后重试";
 const notFoundFailureTitle = "故事线不可用";
 const bottomScrollThresholdPx = 140;
@@ -784,7 +786,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   }
 
   function handleCompleteSetting(): void {
-    if (settingCompletionStatus === "streaming") {
+    if (settingCompletionStatus !== "idle") {
       return;
     }
 
@@ -797,15 +799,53 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
       return;
     }
 
-    closeSettingCompletionStream();
-    setSettingCompletionText("");
-    setSettingCompletionStatus("streaming");
     setFieldErrors((previousFieldErrors) =>
       removeFieldError(previousFieldErrors, "settingInspiration"),
     );
 
+    startSettingCompletion({
+      mode: "complete",
+      inspiration,
+    });
+  }
+
+  function handleReviseSetting(revisionInstruction: string): void {
+    const currentSetting = settingCompletionText.trim();
+    const normalizedInstruction = revisionInstruction.trim();
+    if (
+      settingCompletionStatus !== "completed" ||
+      currentSetting.length === 0 ||
+      normalizedInstruction.length === 0
+    ) {
+      return;
+    }
+
+    startSettingCompletion(
+      {
+        mode: "revise",
+        currentSetting,
+        revisionInstruction: normalizedInstruction,
+      },
+      {
+        fallbackText: currentSetting,
+        failureMessage: settingRevisionFailureMessage,
+      },
+    );
+  }
+
+  function startSettingCompletion(
+    request: CompleteStorySettingRequest,
+    options?: Readonly<{
+      fallbackText: string;
+      failureMessage: string;
+    }>,
+  ): void {
+    closeSettingCompletionStream();
+    setSettingCompletionText("");
+    setSettingCompletionStatus("streaming");
+
     settingCompletionHandleRef.current = startStorySettingCompletionStream(
-      { inspiration },
+      request,
       {
         onStarted() {
           setSettingCompletionStatus("streaming");
@@ -819,20 +859,31 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
         },
         onCancelled() {
           settingCompletionHandleRef.current = null;
-          setSettingCompletionText("");
-          setSettingCompletionStatus("idle");
+          restoreSettingCompletionAfterFailure(options?.fallbackText);
         },
         onError(message) {
           settingCompletionHandleRef.current = null;
-          setSettingCompletionText("");
-          setSettingCompletionStatus("idle");
-          toast.error(message.length > 0 ? message : settingCompletionFailureMessage);
+          restoreSettingCompletionAfterFailure(options?.fallbackText);
+          toast.error(
+            message.length > 0
+              ? message
+              : (options?.failureMessage ?? settingCompletionFailureMessage),
+          );
         },
         onAuthRequired() {
           settingCompletionHandleRef.current = null;
           void navigate("/login", { replace: true });
         },
       },
+    );
+  }
+
+  function restoreSettingCompletionAfterFailure(
+    fallbackText: string | undefined,
+  ): void {
+    setSettingCompletionText(fallbackText ?? "");
+    setSettingCompletionStatus(
+      fallbackText === undefined ? "idle" : "completed",
     );
   }
 
@@ -1222,6 +1273,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
             onBack={handleBackToSettingList}
             onComplete={handleCompleteSetting}
             onInspirationChange={handleSettingInspirationChange}
+            onRevise={handleReviseSetting}
             onSave={() => {
               void handleSaveSetting();
             }}

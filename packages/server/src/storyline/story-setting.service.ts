@@ -18,7 +18,10 @@ import {
 import { and, desc, eq } from "drizzle-orm";
 import { DatabaseService } from "../database/database.service";
 import { storySettings } from "../database/schema";
-import { StorySettingNotFoundError, StorySettingSaveFailedError } from "./story-setting.errors";
+import {
+  StorySettingNotFoundError,
+  StorySettingSaveFailedError,
+} from "./story-setting.errors";
 
 type StorySettingRow = typeof storySettings.$inferSelect;
 
@@ -42,6 +45,15 @@ export const STORY_SETTING_COMPLETION_SYSTEM_PROMPT = [
   "设定可以包含题材、世界观、人物、关系、冲突、氛围和关键规则。",
   "输出普通文本，不要输出 JSON、Markdown 表格或代码块。",
   "可以分段组织内容，但不要要求用户继续补充信息。",
+  "不要生成故事正文，只生成设定。",
+].join("\n");
+
+export const STORY_SETTING_REVISION_SYSTEM_PROMPT = [
+  "你是 StoryAgent，负责根据用户的修改意见修订一份已有故事设定。",
+  "完整理解已有设定和修改意见，保留未被要求改变且不冲突的内容。",
+  "当修改意见与已有设定冲突时，以修改意见为准。",
+  "输出修改后的完整设定，不要只输出差异、说明或修改摘要。",
+  "输出普通文本，不要输出 JSON、Markdown 表格或代码块。",
   "不要生成故事正文，只生成设定。",
 ].join("\n");
 
@@ -136,6 +148,21 @@ export class StorySettingService {
     const request = parseRequest<CompleteStorySettingRequest>(
       CompleteStorySettingRequestSchema.safeParse(body),
     );
+
+    if (request.mode === "revise") {
+      return {
+        systemPrompt: STORY_SETTING_REVISION_SYSTEM_PROMPT,
+        userPrompt: [
+          "已有故事设定：",
+          request.currentSetting,
+          "",
+          "用户修改意见：",
+          request.revisionInstruction,
+          "",
+          "请根据修改意见重新生成一份完整、可复用的故事设定。",
+        ].join("\n"),
+      };
+    }
 
     return {
       systemPrompt: STORY_SETTING_COMPLETION_SYSTEM_PROMPT,

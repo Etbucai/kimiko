@@ -134,8 +134,9 @@ describe("StorySettingService", () => {
     ).resolves.toBeNull();
   });
 
-  it("builds completion LLM requests from inspiration only", () => {
+  it("builds completion LLM requests from inspiration", () => {
     const request = storySettingService.buildCompletionLlmRequest({
+      mode: "complete",
       inspiration: "蒸汽城市，女侦探和失忆机械师。",
     });
 
@@ -143,5 +144,21 @@ describe("StorySettingService", () => {
     expect(request.systemPrompt).not.toContain("蒸汽城市");
     expect(request.userPrompt).toContain("蒸汽城市，女侦探和失忆机械师。");
     expect(request.userPrompt).toContain("生成一份详细、可复用的故事设定");
+  });
+
+  it("builds revision LLM requests from the current setting and user feedback", () => {
+    const request = storySettingService.buildCompletionLlmRequest({
+      mode: "revise",
+      currentSetting: "主角是生活在蒸汽城市的女侦探。",
+      revisionInstruction: "加入一位失忆机械师，并让两人互相猜忌。",
+    });
+
+    expect(request.systemPrompt).toContain("修改意见");
+    expect(request.systemPrompt).toContain("输出修改后的完整设定");
+    expect(request.userPrompt).toContain("主角是生活在蒸汽城市的女侦探。");
+    expect(request.userPrompt).toContain(
+      "加入一位失忆机械师，并让两人互相猜忌。",
+    );
+    expect(request.userPrompt).toContain("重新生成一份完整、可复用的故事设定");
   });
 });
