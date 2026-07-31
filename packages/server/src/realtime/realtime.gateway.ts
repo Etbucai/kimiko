@@ -320,6 +320,13 @@ export class RealtimeGateway
           requestId,
         });
       },
+      sendContextFailed: (message) => {
+        sendEvent(client, {
+          type: "story.context.failed",
+          requestId,
+          message,
+        });
+      },
       sendCompleted: (event) => {
         sendEvent(client, {
           type: "story.completed",

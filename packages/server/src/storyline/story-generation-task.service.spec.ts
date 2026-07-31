@@ -42,6 +42,7 @@ describe("StoryGenerationTaskService", () => {
       createStorylineStream([
         { type: "chunk", delta: "林夏", sequence: 1 },
         { type: "contextStarted" },
+        { type: "contextFailed", message: "上下文提取失败" },
         {
           type: "completed",
           generatedSegmentId: "3",
@@ -66,6 +67,7 @@ describe("StoryGenerationTaskService", () => {
       sequence: 1,
     });
     expect(observer.sendContextStarted).toHaveBeenCalledTimes(1);
+    expect(observer.sendContextFailed).toHaveBeenCalledWith("上下文提取失败");
     expect(observer.sendCompleted).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "completed",
@@ -260,6 +262,7 @@ function createObserver(
     sendStarted: jest.fn(),
     sendChunk: jest.fn(),
     sendContextStarted: jest.fn(),
+    sendContextFailed: jest.fn(),
     sendCompleted: jest.fn(),
     sendCancelled: jest.fn(),
     sendError: jest.fn(),

@@ -2,6 +2,8 @@ import type {
   CancelStoryGenerationResponse,
   StoryGenerationStatusResponse,
   StoryContextSnapshot,
+  StoryContextExtractionState,
+  StoryContextExtractionTask,
   StorylineListItem,
   StorylineId,
   StorylineSnapshot,
@@ -13,6 +15,7 @@ import {
   GetRecentStorylineResponseSchema,
   ListStorylinesResponseSchema,
   StoryGenerationStatusResponseSchema,
+  StoryContextExtractionTaskResponseSchema,
 } from "@kimiko/schema";
 import { clearAuthSession, getStoredAuthSession } from "../auth/authApi";
 
@@ -21,6 +24,7 @@ const defaultListErrorMessage = "加载故事列表失败，请稍后重试";
 const defaultRestoreErrorMessage = "恢复故事线失败，请稍后重试";
 const defaultNotFoundErrorMessage = "故事线不存在或已不可用";
 const defaultContextErrorMessage = "获取故事上下文失败，请稍后重试";
+const defaultContextExtractionErrorMessage = "上下文提取失败，请稍后重试";
 const defaultGenerationStatusErrorMessage = "获取后台生成状态失败，请稍后重试";
 const defaultGenerationCancelErrorMessage = "取消后台生成失败，请稍后重试";
 
@@ -197,6 +201,7 @@ export type GetStorylineContextResult =
   | Readonly<{
       status: "success";
       context: StoryContextSnapshot | null;
+      extraction: StoryContextExtractionState;
     }>
   | Readonly<{ status: "authRequired" }>
   | Readonly<{ status: "notFound"; message: string }>
@@ -252,11 +257,92 @@ export async function getStorylineContext(
     return {
       status: "success",
       context: result.data.context,
+      extraction: result.data.extraction,
     };
   } catch {
     return {
       status: "failed",
       message: defaultContextErrorMessage,
+    };
+  }
+}
+
+export type StoryContextExtractionTaskResult =
+  | Readonly<{ status: "success"; task: StoryContextExtractionTask | null }>
+  | Readonly<{ status: "authRequired" }>
+  | Readonly<{ status: "busy"; message: string }>
+  | Readonly<{ status: "notFound"; message: string }>
+  | Readonly<{ status: "failed"; message: string }>;
+
+export async function startStoryContextExtraction(
+  storylineId: StorylineId,
+): Promise<StoryContextExtractionTaskResult> {
+  return requestStoryContextExtractionTask(
+    "POST",
+    `${API_BASE_URL}/storylines/${encodeURIComponent(storylineId)}/context/extraction`,
+  );
+}
+
+export async function getStoryContextExtractionStatus(
+  storylineId: StorylineId,
+): Promise<StoryContextExtractionTaskResult> {
+  return requestStoryContextExtractionTask(
+    "GET",
+    `${API_BASE_URL}/storylines/${encodeURIComponent(storylineId)}/context/extraction/status`,
+  );
+}
+
+async function requestStoryContextExtractionTask(
+  method: "GET" | "POST",
+  url: string,
+): Promise<StoryContextExtractionTaskResult> {
+  const authSession = getStoredAuthSession();
+  if (authSession === null) {
+    return { status: "authRequired" };
+  }
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${authSession.session.accessToken}`,
+      },
+      method,
+    });
+    if (response.status === 401) {
+      clearAuthSession();
+      return { status: "authRequired" };
+    }
+    if (response.status === 404) {
+      return { status: "notFound", message: defaultNotFoundErrorMessage };
+    }
+    if (response.status === 409) {
+      return {
+        status: "busy",
+        message: "当前故事正在处理中，请稍后重试",
+      };
+    }
+
+    const responseBody = await readJsonResponse(response);
+    if (!response.ok) {
+      return {
+        status: "failed",
+        message: defaultContextExtractionErrorMessage,
+      };
+    }
+    const result =
+      StoryContextExtractionTaskResponseSchema.safeParse(responseBody);
+    if (!result.success) {
+      return {
+        status: "failed",
+        message: defaultContextExtractionErrorMessage,
+      };
+    }
+
+    return { status: "success", task: result.data.task };
+  } catch {
+    return {
+      status: "failed",
+      message: defaultContextExtractionErrorMessage,
     };
   }
 }

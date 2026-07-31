@@ -24,6 +24,7 @@ export interface StoryRealtimeGenerationCallbacks {
   onStarted: () => void;
   onChunk: (delta: string, sequence: number) => void;
   onContextStarted: () => void;
+  onContextFailed: (message: string) => void;
   onCompleted: (event: StoryCompletedServerEvent) => void;
   onCancelled: () => void;
   onError: (error: StoryRealtimeGenerationError) => void;
@@ -87,6 +88,9 @@ export function startStoryRealtimeGeneration(
         return;
       case "story.context.started":
         callbacks.onContextStarted();
+        return;
+      case "story.context.failed":
+        callbacks.onContextFailed(serverEvent.message);
         return;
       case "story.completed":
         isSettled = true;

@@ -599,6 +599,17 @@ export const StoryContextSnapshotSchema = z
 
 export type StoryContextSnapshot = z.infer<typeof StoryContextSnapshotSchema>;
 
+export const StoryContextExtractionStateSchema = z
+  .object({
+    autoTriggerRoundCount: z.number().int().positive(),
+    pendingRoundCount: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export type StoryContextExtractionState = z.infer<
+  typeof StoryContextExtractionStateSchema
+>;
+
 export const GetStorylineSummaryResponseSchema = z
   .object({
     summary: StoryCharacterSummarySnapshotSchema.nullable(),
@@ -612,11 +623,42 @@ export type GetStorylineSummaryResponse = z.infer<
 export const GetStorylineContextResponseSchema = z
   .object({
     context: StoryContextSnapshotSchema.nullable(),
+    extraction: StoryContextExtractionStateSchema,
   })
   .strict();
 
 export type GetStorylineContextResponse = z.infer<
   typeof GetStorylineContextResponseSchema
+>;
+
+export const StoryContextExtractionTaskStatusSchema = z.enum([
+  "running",
+  "completed",
+  "failed",
+]);
+
+export const StoryContextExtractionTaskSchema = z
+  .object({
+    status: StoryContextExtractionTaskStatusSchema,
+    processedRoundCount: z.number().int().nonnegative(),
+    totalRoundCount: z.number().int().nonnegative(),
+    pendingRoundCount: z.number().int().nonnegative(),
+    message: z.string().min(1).nullable(),
+  })
+  .strict();
+
+export type StoryContextExtractionTask = z.infer<
+  typeof StoryContextExtractionTaskSchema
+>;
+
+export const StoryContextExtractionTaskResponseSchema = z
+  .object({
+    task: StoryContextExtractionTaskSchema.nullable(),
+  })
+  .strict();
+
+export type StoryContextExtractionTaskResponse = z.infer<
+  typeof StoryContextExtractionTaskResponseSchema
 >;
 
 export const StoryContinueCreatePayloadSchema = z
@@ -769,6 +811,18 @@ export type StoryContextStartedServerEvent = z.infer<
   typeof StoryContextStartedServerEventSchema
 >;
 
+export const StoryContextFailedServerEventSchema = z
+  .object({
+    type: z.literal("story.context.failed"),
+    requestId: StoryRealtimeRequestIdSchema,
+    message: z.string().min(1),
+  })
+  .strict();
+
+export type StoryContextFailedServerEvent = z.infer<
+  typeof StoryContextFailedServerEventSchema
+>;
+
 export const StoryCompletedServerEventSchema = z
   .object({
     type: z.literal("story.completed"),
@@ -898,6 +952,7 @@ export const StoryRealtimeServerEventSchema = z.discriminatedUnion("type", [
   StoryChunkServerEventSchema,
   StorySummaryStartedServerEventSchema,
   StoryContextStartedServerEventSchema,
+  StoryContextFailedServerEventSchema,
   StoryCompletedServerEventSchema,
   StoryCancelledServerEventSchema,
   StoryErrorServerEventSchema,

@@ -70,6 +70,7 @@ export const storylineSegments = sqliteTable(
     totalTokens: integer("total_tokens"),
     targetLength: integer("target_length"),
     previousContextJson: text("previous_context_json"),
+    previousContextOrderIndex: integer("previous_context_order_index"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .$defaultFn(() => new Date())
       .notNull(),
@@ -91,6 +92,9 @@ export const storylineContexts = sqliteTable(
       .notNull()
       .references(() => storylines.id, { onDelete: "cascade" }),
     contextJson: text("context_json").notNull(),
+    extractedThroughOrderIndex: integer("extracted_through_order_index")
+      .notNull()
+      .default(0),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .$defaultFn(() => new Date())
       .notNull(),

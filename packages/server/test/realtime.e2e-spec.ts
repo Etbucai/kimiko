@@ -17,6 +17,7 @@ import {
   GetStorylineResponseSchema,
   LoginUserResponseSchema,
   ListStorylinesResponseSchema,
+  StoryContextExtractionTaskResponseSchema,
   StoryGenerationStatusResponseSchema,
   StoryRealtimeServerEventSchema,
 } from "@kimiko/schema";
@@ -68,13 +69,14 @@ describe("RealtimeGateway (e2e)", () => {
   it("streams story events over websocket", async () => {
     const llmProvider = createStreamingProvider();
     app = await createApp(llmProvider);
+    const runningApp = app;
     const accessToken = await registerAndLogin(app, "stream_story");
     const socket = await connectWebSocket(
       `${getRealtimeUrl(app)}?accessToken=${accessToken}`,
     );
     await waitOneTick();
 
-    const eventsPromise = readEvents(socket, 5);
+    const eventsPromise = readEvents(socket, 4);
 
     socket.send(
       JSON.stringify({
@@ -90,7 +92,7 @@ describe("RealtimeGateway (e2e)", () => {
 
     const events = await eventsPromise;
 
-    expect(events.slice(0, 4)).toEqual([
+    expect(events.slice(0, 3)).toEqual([
       {
         type: "story.started",
         requestId: "request-1",
@@ -107,12 +109,8 @@ describe("RealtimeGateway (e2e)", () => {
         sequence: 2,
         delta: "走向钟楼。",
       },
-      {
-        type: "story.context.started",
-        requestId: "request-1",
-      },
     ]);
-    expect(events[4]).toMatchObject({
+    expect(events[3]).toMatchObject({
       type: "story.completed",
       requestId: "request-1",
       generatedSegmentId: expect.stringMatching(/^[1-9]\d*$/) as string,
@@ -149,12 +147,7 @@ describe("RealtimeGateway (e2e)", () => {
     expect(llmProvider.streamText.mock.calls[0]?.[0].userPrompt).toContain(
       "雨停以后。",
     );
-    expect(llmProvider.generateText.mock.calls[0]?.[0].systemPrompt).toContain(
-      "故事上下文增量维护器",
-    );
-    expect(llmProvider.generateText.mock.calls[0]?.[0].userPrompt).toContain(
-      "林夏走向钟楼。",
-    );
+    expect(llmProvider.generateText).not.toHaveBeenCalled();
 
     const recentResponse = await request(app.getHttpServer())
       .get("/storylines/recent")
@@ -189,11 +182,46 @@ describe("RealtimeGateway (e2e)", () => {
       contextResponse.body as unknown,
     );
 
-    expect(contextResult.context?.characters[0]).toMatchObject({
-      id: "char_1",
-      name: "林夏",
-      identity: "调查旧钟楼的记者",
+    expect(contextResult).toEqual({
+      context: null,
+      extraction: {
+        autoTriggerRoundCount: 10,
+        pendingRoundCount: 1,
+      },
     });
+
+    const extractionResponse = await request(app.getHttpServer())
+      .post(`/storylines/${createdStorylineId}/context/extraction`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect(201);
+    expect(
+      StoryContextExtractionTaskResponseSchema.parse(
+        extractionResponse.body as unknown,
+      ).task,
+    ).toMatchObject({
+      status: "running",
+      totalRoundCount: 1,
+    });
+    await waitForCondition(async () => {
+      const response = await request(runningApp.getHttpServer())
+        .get(`/storylines/${createdStorylineId}/context/extraction/status`)
+        .set("Authorization", `Bearer ${accessToken}`)
+        .expect(200);
+      const task = StoryContextExtractionTaskResponseSchema.parse(
+        response.body as unknown,
+      ).task;
+      return task?.status === "completed";
+    });
+
+    const updatedContextResponse = await request(app.getHttpServer())
+      .get(`/storylines/${createdStorylineId}/context`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect(200);
+    const updatedContext = GetStorylineContextResponseSchema.parse(
+      updatedContextResponse.body as unknown,
+    );
+    expect(updatedContext.extraction.pendingRoundCount).toBe(0);
+    expect(updatedContext.context?.characters[0]?.name).toBe("林夏");
 
     socket.close();
   });
@@ -284,7 +312,7 @@ describe("RealtimeGateway (e2e)", () => {
       .expect(404);
   });
 
-  it("returns STORY_CONTEXT_FAILED and does not save the generated story when context generation fails", async () => {
+  it("keeps generated text when automatic context extraction fails", async () => {
     const llmProvider = createStreamingProvider({
       contextText: "not json",
     });
@@ -295,32 +323,41 @@ describe("RealtimeGateway (e2e)", () => {
     );
     await waitOneTick();
 
-    const eventsPromise = readEvents(socket, 5);
-
-    socket.send(
-      JSON.stringify({
-        type: "story.continue",
-        requestId: "request-1",
-        payload: {
-          mode: "create",
-          initialStoryText: "雨停以后。",
-          instruction: "继续调查。",
-        },
-      }),
-    );
-
-    const events = await eventsPromise;
-
-    expect(events[3]).toEqual({
-      type: "story.context.started",
+    const createdStoryline = await createStorylineOverSocket(socket, {
       requestId: "request-1",
+      initialStoryText: "雨停以后。",
+      instruction: "继续调查。",
     });
-    expect(events[4]).toEqual({
-      type: "story.error",
-      requestId: "request-1",
-      code: "STORY_CONTEXT_FAILED",
-      message: "生成失败，请稍后重试",
-      retryable: true,
+    let finalEvents: readonly StoryRealtimeServerEvent[] = [];
+    for (let round = 2; round <= 10; round += 1) {
+      const requestId = `request-${round}`;
+      const eventsPromise = readEvents(socket, round === 10 ? 6 : 4);
+      socket.send(
+        JSON.stringify({
+          type: "story.continue",
+          requestId,
+          payload: {
+            mode: "append",
+            storylineId: createdStoryline.storyline.id,
+            instruction: `继续第 ${round} 轮。`,
+            targetLength: 250,
+          },
+        }),
+      );
+      finalEvents = await eventsPromise;
+    }
+
+    expect(finalEvents.at(-3)).toMatchObject({
+      type: "story.context.started",
+    });
+    expect(finalEvents.at(-2)).toEqual({
+      type: "story.context.failed",
+      requestId: "request-10",
+      message: "正文已保存，但上下文提取失败，可在调试页手动重试",
+    });
+    expect(finalEvents.at(-1)).toMatchObject({
+      type: "story.completed",
+      requestId: "request-10",
     });
 
     const recentResponse = await request(app.getHttpServer())
@@ -331,7 +368,7 @@ describe("RealtimeGateway (e2e)", () => {
       recentResponse.body as unknown,
     );
 
-    expect(recentStoryline.storyline).toBeNull();
+    expect(recentStoryline.storyline?.segments).toHaveLength(11);
 
     socket.close();
   });
@@ -702,7 +739,7 @@ async function createStorylineOverSocket(
     instruction: string;
   }>,
 ): Promise<StoryCompletedServerEvent> {
-  const eventsPromise = readEvents(socket, 5);
+  const eventsPromise = readEvents(socket, 4);
 
   socket.send(
     JSON.stringify({

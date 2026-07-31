@@ -33,11 +33,13 @@ export class StoryGenerationTaskService {
   ) {}
 
   start(input: StartStoryGenerationTaskInput): StartStoryGenerationTaskResult {
-    if (isStorylineTaskPayload(input.payload) &&
+    if (
+      isStorylineTaskPayload(input.payload) &&
       this.registry.hasActiveStorylineTask({
         storylineId: input.payload.storylineId,
         userId: input.userId,
-      })) {
+      })
+    ) {
       return { status: "busy", code: "STORYLINE_BUSY" };
     }
 
@@ -233,6 +235,11 @@ export class StoryGenerationTaskService {
 
     if (event.type === "contextStarted") {
       task.observer?.sendContextStarted();
+      return;
+    }
+
+    if (event.type === "contextFailed") {
+      task.observer?.sendContextFailed(event.message);
       return;
     }
 

@@ -1,8 +1,18 @@
 import type { JSX } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
-import type { StoryContextSnapshot, StorylineId } from "@kimiko/schema";
-import { getStorylineContext } from "../../story/storylineApi";
+import { toast } from "sonner";
+import type {
+  StoryContextExtractionState,
+  StoryContextExtractionTask,
+  StoryContextSnapshot,
+  StorylineId,
+} from "@kimiko/schema";
+import {
+  getStoryContextExtractionStatus,
+  getStorylineContext,
+  startStoryContextExtraction,
+} from "../../story/storylineApi";
 import { StoryContextDebugView } from "./StoryContextDebugView";
 
 type StoryContextDebugPageStatus =
@@ -22,6 +32,10 @@ export function StoryContextDebugPage({
   const requestIdRef = useRef<number>(0);
   const [status, setStatus] = useState<StoryContextDebugPageStatus>("loading");
   const [context, setContext] = useState<StoryContextSnapshot | null>(null);
+  const [extraction, setExtraction] =
+    useState<StoryContextExtractionState | null>(null);
+  const [extractionTask, setExtractionTask] =
+    useState<StoryContextExtractionTask | null>(null);
   const [errorMessage, setErrorMessage] = useState(defaultContextErrorMessage);
 
   const storyPath = `/storylines/${encodeURIComponent(storylineId)}`;
@@ -31,6 +45,7 @@ export function StoryContextDebugPage({
     requestIdRef.current = requestId;
     setStatus("loading");
     setContext(null);
+    setExtraction(null);
     setErrorMessage(defaultContextErrorMessage);
 
     const result = await getStorylineContext(storylineId);
@@ -56,20 +71,93 @@ export function StoryContextDebugPage({
     }
 
     setContext(result.context);
+    setExtraction(result.extraction);
     setStatus(result.context === null ? "empty" : "success");
   }, [navigate, storylineId]);
+
+  const pollExtractionTask = useCallback(async (): Promise<void> => {
+    const result = await getStoryContextExtractionStatus(storylineId);
+    if (!isMountedRef.current) {
+      return;
+    }
+    if (result.status === "authRequired") {
+      void navigate("/login", { replace: true });
+      return;
+    }
+    if (result.status !== "success" || result.task === null) {
+      return;
+    }
+
+    setExtractionTask(result.task);
+    if (result.task.status === "running") {
+      return;
+    }
+
+    await loadContext();
+    if (result.task.status === "completed") {
+      toast.success("上下文提取完成");
+      return;
+    }
+
+    toast.error(result.task.message ?? "上下文提取失败，请稍后重试");
+  }, [loadContext, navigate, storylineId]);
 
   useEffect(() => {
     isMountedRef.current = true;
     const timeoutId = window.setTimeout(() => {
       void loadContext();
+      void pollExtractionTask();
     }, 0);
 
     return () => {
       window.clearTimeout(timeoutId);
       isMountedRef.current = false;
     };
-  }, [loadContext]);
+  }, [loadContext, pollExtractionTask]);
+
+  useEffect(() => {
+    if (extractionTask?.status !== "running") {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void pollExtractionTask();
+    }, 2_000);
+    return () => window.clearInterval(intervalId);
+  }, [extractionTask?.status, pollExtractionTask]);
+
+  async function handleStartExtraction(): Promise<void> {
+    const result = await startStoryContextExtraction(storylineId);
+    if (!isMountedRef.current) {
+      return;
+    }
+    if (result.status === "authRequired") {
+      void navigate("/login", { replace: true });
+      return;
+    }
+    if (result.status === "busy") {
+      toast.error(result.message);
+      return;
+    }
+    if (result.status === "notFound") {
+      setStatus("notFound");
+      return;
+    }
+    if (result.status === "failed" || result.task === null) {
+      toast.error(
+        result.status === "failed"
+          ? result.message
+          : "上下文提取失败，请稍后重试",
+      );
+      return;
+    }
+
+    setExtractionTask(result.task);
+    if (result.task.status === "completed") {
+      await loadContext();
+      toast.success("当前没有待提取的正文");
+    }
+  }
 
   function handleBackToStory(): void {
     void navigate(storyPath);
@@ -93,8 +181,17 @@ export function StoryContextDebugPage({
             故事上下文调试
           </h1>
           <p className="mt-2 mb-5 text-sm leading-6 text-(--text)">
-            只读查看当前服务端保存的 StoryContextSnapshot。
+            查看当前服务端保存的故事上下文，并按需手动提取最新正文。
           </p>
+          {extraction !== null ? (
+            <p className="mt-0 mb-5 rounded-2xl bg-(--accent-bg) px-4 py-3 text-sm leading-6 text-(--text-h)">
+              待提取 {extraction.pendingRoundCount} 轮；每累计{" "}
+              {extraction.autoTriggerRoundCount} 轮自动提取。
+              {extractionTask?.status === "running"
+                ? ` 当前进度 ${extractionTask.processedRoundCount}/${extractionTask.totalRoundCount}。`
+                : ""}
+            </p>
+          ) : null}
           <div className="flex flex-wrap gap-3">
             <button
               className="min-h-10 rounded-full border border-(--border) bg-transparent px-4 py-2 text-sm font-bold text-(--text-h)"
@@ -104,13 +201,29 @@ export function StoryContextDebugPage({
               返回故事
             </button>
             <button
-              className="min-h-10 rounded-full border-0 bg-(--accent) px-4 py-2 text-sm font-bold text-white"
+              className="min-h-10 rounded-full border border-(--border) bg-transparent px-4 py-2 text-sm font-bold text-(--text-h)"
               onClick={() => {
                 void loadContext();
               }}
               type="button"
             >
               刷新
+            </button>
+            <button
+              className="min-h-10 rounded-full border-0 bg-(--accent) px-4 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={
+                extraction === null ||
+                extraction.pendingRoundCount === 0 ||
+                extractionTask?.status === "running"
+              }
+              onClick={() => {
+                void handleStartExtraction();
+              }}
+              type="button"
+            >
+              {extractionTask?.status === "running"
+                ? "正在提取..."
+                : "提取上下文"}
             </button>
           </div>
         </header>
@@ -178,7 +291,7 @@ function ContextEmpty({
     <section className="rounded-3xl border border-(--border) bg-(--panel-bg) p-6 text-center shadow-(--shadow) md:p-8">
       <h2 className="m-0 text-xl font-bold text-(--text-h)">暂无故事上下文</h2>
       <p className="mt-3 mb-6 text-sm leading-6 text-(--text)">
-        下一次成功生成后，服务端会建立 StoryContextSnapshot。
+        累计 10 轮有效正文后会自动建立，也可以返回顶部手动提取。
       </p>
       <button
         className="min-h-11 rounded-2xl border-0 bg-(--accent) px-5 py-3 font-bold text-white"

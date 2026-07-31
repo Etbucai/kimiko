@@ -87,15 +87,6 @@ export function StoryContextDebugView({
           ))}
         </div>
       </ContextSection>
-
-      <ContextSection
-        description="服务端返回的原始 StoryContextSnapshot。"
-        title="原始 JSON"
-      >
-        <pre className="m-0 overflow-x-auto rounded-2xl border border-(--border) bg-(--input-bg) p-4 text-xs leading-5 text-(--text-h)">
-          {JSON.stringify(context, null, 2)}
-        </pre>
-      </ContextSection>
     </div>
   );
 }

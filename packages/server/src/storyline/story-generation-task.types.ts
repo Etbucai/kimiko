@@ -20,6 +20,7 @@ export interface StoryGenerationObserver {
   sendStarted(): void;
   sendChunk(event: Extract<StorylineStreamEvent, { type: "chunk" }>): void;
   sendContextStarted(): void;
+  sendContextFailed(message: string): void;
   sendCompleted(
     event: Extract<StorylineStreamEvent, { type: "completed" }>,
   ): void;

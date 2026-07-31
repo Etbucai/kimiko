@@ -1040,6 +1040,9 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
             intent.type !== "rewrite" && isNearBottom();
           setStatus("updatingContext");
         },
+        onContextFailed(message) {
+          toast.error(message);
+        },
         onCompleted(event) {
           generationHandleRef.current = null;
           shouldFollowScrollRef.current =

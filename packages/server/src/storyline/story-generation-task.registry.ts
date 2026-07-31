@@ -152,7 +152,10 @@ export class StoryGenerationTaskRegistry {
       };
     }
 
-    if (input.task.phase === "saving") {
+    if (
+      input.task.phase === "saving" ||
+      input.task.phase === "updatingContext"
+    ) {
       return {
         cancelled: false,
         response: {

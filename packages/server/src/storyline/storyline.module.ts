@@ -3,6 +3,8 @@ import { DatabaseModule } from "../database/database.module";
 import { LlmModule } from "../llm/llm.module";
 import { StoryModule } from "../story/story.module";
 import { StorylineController } from "./storyline.controller";
+import { StoryContextExtractionTaskService } from "./story-context-extraction-task.service";
+import { StorylineContextExtractionService } from "./storyline-context-extraction.service";
 import { StorylineContextService } from "./storyline-context.service";
 import { StorySettingController } from "./story-setting.controller";
 import { StorySettingService } from "./story-setting.service";
@@ -18,8 +20,10 @@ import { StorylineService } from "./storyline.service";
   providers: [
     StoryGenerationTaskRegistry,
     StoryGenerationTaskService,
+    StoryContextExtractionTaskService,
     StorySettingService,
     StorylineGenerationService,
+    StorylineContextExtractionService,
     StorylineContextService,
     StorylineLockService,
     StorylineService,

@@ -184,6 +184,11 @@ describe("StorylineService", () => {
       created.id,
     );
     expect(contextAfterNoOp).toEqual(previousContext);
+    await expect(
+      storylineService.getStoryContextExtractionState("1", created.id),
+    ).resolves.toMatchObject({
+      pendingRoundCount: 0,
+    });
     expect(afterNoOp.segments.at(-1)).toMatchObject({
       type: "generated",
       generationMode: "dialogue",
@@ -299,6 +304,128 @@ describe("StorylineService", () => {
       )?.targetLength,
     ).toBe(250);
   });
+
+  it("accumulates ten effective rounds before advancing the context cursor", async () => {
+    const created = await storylineService.saveCreatedStoryline({
+      userId: "1",
+      initialStoryText: "雨停以后。",
+      instruction: "第一轮。",
+      generatedText: "林夏走向钟楼。",
+      model: "story-model",
+      elapsedMs: 10,
+      usage: {
+        inputTokens: 1,
+        outputTokens: 2,
+        totalTokens: 3,
+      },
+    });
+
+    for (let round = 2; round <= 10; round += 1) {
+      await storylineService.saveAppendedSegment({
+        userId: "1",
+        storylineId: created.id,
+        instruction: `第 ${round} 轮。`,
+        targetLength: 250,
+        generatedText: `第 ${round} 轮正文。`,
+        model: "story-model",
+        elapsedMs: 10,
+        usage: {
+          inputTokens: 1,
+          outputTokens: 2,
+          totalTokens: 3,
+        },
+      });
+    }
+
+    const beforeExtraction =
+      await storylineService.getStoryContextExtractionState("1", created.id);
+    expect(beforeExtraction).toMatchObject({
+      context: null,
+      extractedThroughOrderIndex: 0,
+      pendingRoundCount: 10,
+    });
+
+    const batch = await storylineService.getStoryContextExtractionBatch({
+      userId: "1",
+      storylineId: created.id,
+      maxRoundCount: 10,
+    });
+    expect(batch?.rounds).toHaveLength(10);
+    if (batch === null) {
+      throw new Error("Expected context extraction batch");
+    }
+
+    await storylineService.applyStoryContextExtractionBatch({
+      userId: "1",
+      storylineId: created.id,
+      batch,
+      contextPatch: createEmptyContextPatch(),
+    });
+
+    const afterExtraction =
+      await storylineService.getStoryContextExtractionState("1", created.id);
+    expect(afterExtraction).toMatchObject({
+      extractedThroughOrderIndex: 10,
+      pendingRoundCount: 0,
+    });
+    expect(afterExtraction.context).toEqual({
+      worldFacts: [],
+      characters: [],
+      currentScene: {
+        location: "",
+        timeLabel: "",
+        presentCharacterIds: [],
+        observableFactIds: [],
+        sceneStatus: "",
+        sourceSegmentIds: [batch.rounds.at(-1)?.segmentId],
+      },
+    });
+  });
+
+  it("rolls back extracted context when its latest segment is rewritten", async () => {
+    const created = await storylineService.saveCreatedStorylineWithContext({
+      userId: "1",
+      initialStoryText: "雨停以后。",
+      instruction: "前往钟楼。",
+      generatedText: "林夏拿到了钥匙。",
+      model: "story-model",
+      elapsedMs: 10,
+      usage: {
+        inputTokens: 1,
+        outputTokens: 2,
+        totalTokens: 3,
+      },
+      contextPatch: createContextPatch({
+        characterName: "林夏",
+        factText: "林夏拿到了钥匙。",
+      }),
+    });
+
+    await storylineService.saveRewrittenSegment({
+      userId: "1",
+      storylineId: created.id,
+      segmentId: created.latestGeneration.segmentId,
+      instruction: "改成没有拿到钥匙。",
+      generatedText: "林夏没能拿到钥匙。",
+      model: "rewrite-model",
+      elapsedMs: 10,
+      usage: {
+        inputTokens: 1,
+        outputTokens: 2,
+        totalTokens: 3,
+      },
+    });
+
+    const state = await storylineService.getStoryContextExtractionState(
+      "1",
+      created.id,
+    );
+    expect(state).toMatchObject({
+      context: null,
+      extractedThroughOrderIndex: 0,
+      pendingRoundCount: 1,
+    });
+  });
 });
 
 function createContextPatch(input: {
@@ -345,6 +472,22 @@ function createContextPatch(input: {
       observableFactRefs: ["main_fact"],
       sceneStatus: input.factText,
     },
+  };
+}
+
+function createEmptyContextPatch(): StoryContextPatchDraft {
+  return {
+    defaultSourceRefs: ["current"],
+    worldFacts: {
+      add: [],
+      update: [],
+      resolve: [],
+    },
+    characters: {
+      add: [],
+      update: [],
+    },
+    currentScene: {},
   };
 }
 

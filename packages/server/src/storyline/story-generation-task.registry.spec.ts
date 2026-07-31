@@ -272,6 +272,7 @@ function createObserver(requestId: string): StoryGenerationObserver {
     sendStarted: jest.fn(),
     sendChunk: jest.fn(),
     sendContextStarted: jest.fn(),
+    sendContextFailed: jest.fn(),
     sendCompleted: jest.fn(),
     sendCancelled: jest.fn(),
     sendError: jest.fn(),

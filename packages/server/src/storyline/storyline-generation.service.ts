@@ -1,19 +1,20 @@
 import { Injectable, Logger } from "@nestjs/common";
-import type { StoryGenerationPhase, StoryTargetLength } from "@kimiko/schema";
+import type {
+  CompletedStorylineSnapshot,
+  StoryGenerationPhase,
+  StoryTargetLength,
+} from "@kimiko/schema";
 import { Env } from "../env";
 import { StoryService } from "../story/story.service";
-import type {
-  StoryHistoryRound,
-  StoryLlmContext,
-} from "../story/story.service";
+import type { StoryLlmContext } from "../story/story.service";
 import {
   StorySegmentNotRewritableError,
   StorylineNotFoundError,
 } from "./storyline.errors";
 import { StorySettingService } from "./story-setting.service";
-import { StorylineContextService } from "./storyline-context.service";
+import { StorylineContextExtractionService } from "./storyline-context-extraction.service";
+import { STORY_CONTEXT_AUTO_TRIGGER_ROUND_COUNT } from "./storyline-context-extraction.types";
 import { emptyStoryContextSnapshot } from "./storyline-context.types";
-import type { StoryContextSourceRefMapping } from "./storyline-context.types";
 import { StorylineLockService } from "./storyline-lock.service";
 import { StorylineService } from "./storyline.service";
 import type {
@@ -34,7 +35,7 @@ export class StorylineGenerationService {
     private readonly storyService: StoryService,
     private readonly storySettingService: StorySettingService,
     private readonly storylineLockService: StorylineLockService,
-    private readonly storylineContextService: StorylineContextService,
+    private readonly storylineContextExtractionService: StorylineContextExtractionService,
   ) {}
 
   async *streamContinueStoryline(
@@ -160,68 +161,17 @@ export class StorylineGenerationService {
           requestUserId: input.userId,
           storylineId: null,
         });
-        yield { type: "contextStarted" };
-        if (options.signal.aborted) {
-          return;
-        }
-
-        emitPhase(options, "updatingContext");
-        this.logGenerationPhase({
-          elapsedMs: getElapsedMs(startedAt),
-          mode: "create",
-          phase: "context_started",
-          requestId: input.requestId,
-          requestUserId: input.userId,
-          storylineId: null,
-        });
-        const contextPatch =
-          await this.storylineContextService.generateStoryContextPatch(
-            {
-              operation: "create",
-              previousContext: null,
-              sourceRefMappings: [
-                {
-                  ref: "initial",
-                  label: "初始故事正文",
-                  text: input.payload.initialStoryText,
-                },
-                {
-                  ref: "current",
-                  label: "本轮生成正文",
-                  text: event.continuedStory,
-                },
-              ],
-              initialStoryText: input.payload.initialStoryText,
-              recentHistoryRounds: [],
-              currentInstruction: input.payload.instruction,
-              generatedText: event.continuedStory,
-            },
-            options,
-          );
-        if (options.signal.aborted) {
-          return;
-        }
-        this.logGenerationPhase({
-          elapsedMs: getElapsedMs(startedAt),
-          mode: "create",
-          phase: "context_completed",
-          requestId: input.requestId,
-          requestUserId: input.userId,
-          storylineId: null,
-        });
 
         emitPhase(options, "saving");
-        const storyline =
-          await this.storylineService.saveCreatedStorylineWithContext({
-            userId: input.userId,
-            initialStoryText: input.payload.initialStoryText,
-            instruction: input.payload.instruction,
-            generatedText: event.continuedStory,
-            model: event.model,
-            elapsedMs: event.elapsedMs,
-            usage: event.usage,
-            contextPatch,
-          });
+        const storyline = await this.storylineService.saveCreatedStoryline({
+          userId: input.userId,
+          initialStoryText: input.payload.initialStoryText,
+          instruction: input.payload.instruction,
+          generatedText: event.continuedStory,
+          model: event.model,
+          elapsedMs: event.elapsedMs,
+          usage: event.usage,
+        });
         this.logGenerationPhase({
           elapsedMs: getElapsedMs(startedAt),
           generatedSegmentId: storyline.latestGeneration.segmentId,
@@ -232,11 +182,14 @@ export class StorylineGenerationService {
           storylineId: storyline.id,
         });
 
-        yield {
-          type: "completed",
+        yield* this.finishSavedGeneration({
+          elapsedStartedAt: startedAt,
+          mode: "create",
+          options,
+          requestId: input.requestId,
+          requestUserId: input.userId,
           storyline,
-          generatedSegmentId: storyline.latestGeneration.segmentId,
-        };
+        });
       }
     } finally {
       releaseLock();
@@ -350,70 +303,17 @@ export class StorylineGenerationService {
           settingId: setting.id,
           storylineId: null,
         });
-        yield { type: "contextStarted" };
-        if (options.signal.aborted) {
-          return;
-        }
-
-        emitPhase(options, "updatingContext");
-        this.logGenerationPhase({
-          elapsedMs: getElapsedMs(startedAt),
-          mode: "createFromSetting",
-          phase: "context_started",
-          requestId: input.requestId,
-          requestUserId: input.userId,
-          settingId: setting.id,
-          storylineId: null,
-        });
-        const contextPatch =
-          await this.storylineContextService.generateStoryContextPatch(
-            {
-              operation: "create",
-              previousContext: null,
-              sourceRefMappings: [
-                {
-                  ref: "initial",
-                  label: "设定与开场",
-                  text: initialStoryText,
-                },
-                {
-                  ref: "current",
-                  label: "本轮生成正文",
-                  text: event.continuedStory,
-                },
-              ],
-              initialStoryText,
-              recentHistoryRounds: [],
-              currentInstruction: input.payload.opening,
-              generatedText: event.continuedStory,
-            },
-            options,
-          );
-        if (options.signal.aborted) {
-          return;
-        }
-        this.logGenerationPhase({
-          elapsedMs: getElapsedMs(startedAt),
-          mode: "createFromSetting",
-          phase: "context_completed",
-          requestId: input.requestId,
-          requestUserId: input.userId,
-          settingId: setting.id,
-          storylineId: null,
-        });
 
         emitPhase(options, "saving");
-        const storyline =
-          await this.storylineService.saveCreatedStorylineWithContext({
-            userId: input.userId,
-            initialStoryText,
-            instruction: input.payload.opening,
-            generatedText: event.continuedStory,
-            model: event.model,
-            elapsedMs: event.elapsedMs,
-            usage: event.usage,
-            contextPatch,
-          });
+        const storyline = await this.storylineService.saveCreatedStoryline({
+          userId: input.userId,
+          initialStoryText,
+          instruction: input.payload.opening,
+          generatedText: event.continuedStory,
+          model: event.model,
+          elapsedMs: event.elapsedMs,
+          usage: event.usage,
+        });
         this.logGenerationPhase({
           elapsedMs: getElapsedMs(startedAt),
           generatedSegmentId: storyline.latestGeneration.segmentId,
@@ -425,11 +325,15 @@ export class StorylineGenerationService {
           storylineId: storyline.id,
         });
 
-        yield {
-          type: "completed",
+        yield* this.finishSavedGeneration({
+          elapsedStartedAt: startedAt,
+          mode: "createFromSetting",
+          options,
+          requestId: input.requestId,
+          requestUserId: input.userId,
+          settingId: setting.id,
           storyline,
-          generatedSegmentId: storyline.latestGeneration.segmentId,
-        };
+        });
       }
     } finally {
       releaseLock();
@@ -502,7 +406,6 @@ export class StorylineGenerationService {
         targetLength: appendTargetLength,
         historyScoreConfig: getHistoryScoreConfig(),
       });
-      const previousContext = context.contextBundle.storyContext;
       this.logGenerationPhase({
         elapsedMs: getElapsedMs(startedAt),
         mode: "append",
@@ -566,68 +469,18 @@ export class StorylineGenerationService {
           storylineId: storyline.externalId,
           targetLength: appendTargetLength,
         });
-        yield { type: "contextStarted" };
-        if (options.signal.aborted) {
-          return;
-        }
-
-        emitPhase(options, "updatingContext");
-        this.logGenerationPhase({
-          elapsedMs: getElapsedMs(startedAt),
-          mode: "append",
-          phase: "context_started",
-          requestId: input.requestId,
-          requestUserId: input.userId,
-          storylineId: storyline.externalId,
-          targetLength: appendTargetLength,
-        });
-        const contextPatch =
-          await this.storylineContextService.generateStoryContextPatch(
-            {
-              operation: "append",
-              previousContext,
-              sourceRefMappings: buildSourceRefMappings({
-                initialStoryText: context.initialStoryText,
-                recentHistoryRounds: context.contextBundle.recentHistoryRounds,
-                currentLabel: "本轮生成正文",
-                generatedText: event.continuedStory,
-              }),
-              ...(context.initialStoryText !== undefined
-                ? { initialStoryText: context.initialStoryText }
-                : {}),
-              recentHistoryRounds: context.contextBundle.recentHistoryRounds,
-              currentInstruction: input.payload.instruction,
-              generatedText: event.continuedStory,
-            },
-            options,
-          );
-        if (options.signal.aborted) {
-          return;
-        }
-        this.logGenerationPhase({
-          elapsedMs: getElapsedMs(startedAt),
-          mode: "append",
-          phase: "context_completed",
-          requestId: input.requestId,
-          requestUserId: input.userId,
-          storylineId: storyline.externalId,
-          targetLength: appendTargetLength,
-        });
 
         emitPhase(options, "saving");
-        const savedStoryline =
-          await this.storylineService.saveAppendedSegmentWithContext({
-            userId: input.userId,
-            storylineId: storyline.externalId,
-            instruction: input.payload.instruction,
-            targetLength: appendTargetLength,
-            generatedText: event.continuedStory,
-            model: event.model,
-            elapsedMs: event.elapsedMs,
-            usage: event.usage,
-            previousContext,
-            contextPatch,
-          });
+        const savedStoryline = await this.storylineService.saveAppendedSegment({
+          userId: input.userId,
+          storylineId: storyline.externalId,
+          instruction: input.payload.instruction,
+          targetLength: appendTargetLength,
+          generatedText: event.continuedStory,
+          model: event.model,
+          elapsedMs: event.elapsedMs,
+          usage: event.usage,
+        });
         this.logGenerationPhase({
           elapsedMs: getElapsedMs(startedAt),
           generatedSegmentId: savedStoryline.latestGeneration.segmentId,
@@ -639,11 +492,15 @@ export class StorylineGenerationService {
           targetLength: appendTargetLength,
         });
 
-        yield {
-          type: "completed",
+        yield* this.finishSavedGeneration({
+          elapsedStartedAt: startedAt,
+          mode: "append",
+          options,
+          requestId: input.requestId,
+          requestUserId: input.userId,
           storyline: savedStoryline,
-          generatedSegmentId: savedStoryline.latestGeneration.segmentId,
-        };
+          targetLength: appendTargetLength,
+        });
       }
     } finally {
       releaseLock();
@@ -790,59 +647,10 @@ export class StorylineGenerationService {
           targetLength: rewriteTargetLength,
           targetGenerationMode: context.targetGenerationMode,
         });
-        yield { type: "contextStarted" };
-        if (options.signal.aborted) {
-          return;
-        }
-
-        emitPhase(options, "updatingContext");
-        this.logGenerationPhase({
-          elapsedMs: getElapsedMs(startedAt),
-          mode: "rewrite",
-          phase: "context_started",
-          requestId: input.requestId,
-          requestUserId: input.userId,
-          storylineId: storyline.externalId,
-          targetLength: rewriteTargetLength,
-          targetGenerationMode: context.targetGenerationMode,
-        });
-        const contextPatch =
-          await this.storylineContextService.generateStoryContextPatch(
-            {
-              operation: "rewrite",
-              previousContext: context.previousContext,
-              sourceRefMappings: buildSourceRefMappings({
-                initialStoryText: context.initialStoryText,
-                recentHistoryRounds: context.contextHistoryRounds,
-                currentLabel: "重写后的目标段正文",
-                generatedText: event.continuedStory,
-              }),
-              ...(context.initialStoryText !== undefined
-                ? { initialStoryText: context.initialStoryText }
-                : {}),
-              recentHistoryRounds: context.contextHistoryRounds,
-              currentInstruction: input.payload.instruction,
-              generatedText: event.continuedStory,
-            },
-            options,
-          );
-        if (options.signal.aborted) {
-          return;
-        }
-        this.logGenerationPhase({
-          elapsedMs: getElapsedMs(startedAt),
-          mode: "rewrite",
-          phase: "context_completed",
-          requestId: input.requestId,
-          requestUserId: input.userId,
-          storylineId: storyline.externalId,
-          targetLength: rewriteTargetLength,
-          targetGenerationMode: context.targetGenerationMode,
-        });
 
         emitPhase(options, "saving");
-        const savedStoryline =
-          await this.storylineService.saveRewrittenSegmentWithContext({
+        const savedStoryline = await this.storylineService.saveRewrittenSegment(
+          {
             userId: input.userId,
             storylineId: storyline.externalId,
             segmentId: context.targetSegmentId,
@@ -851,9 +659,8 @@ export class StorylineGenerationService {
             model: event.model,
             elapsedMs: event.elapsedMs,
             usage: event.usage,
-            previousContext: context.previousContext,
-            contextPatch,
-          });
+          },
+        );
         this.logGenerationPhase({
           elapsedMs: getElapsedMs(startedAt),
           generatedSegmentId: savedStoryline.latestGeneration.segmentId,
@@ -866,11 +673,16 @@ export class StorylineGenerationService {
           targetGenerationMode: context.targetGenerationMode,
         });
 
-        yield {
-          type: "completed",
+        yield* this.finishSavedGeneration({
+          elapsedStartedAt: startedAt,
+          mode: "rewrite",
+          options,
+          requestId: input.requestId,
+          requestUserId: input.userId,
           storyline: savedStoryline,
-          generatedSegmentId: savedStoryline.latestGeneration.segmentId,
-        };
+          targetLength: rewriteTargetLength,
+          targetGenerationMode: context.targetGenerationMode,
+        });
       }
     } finally {
       releaseLock();
@@ -996,91 +808,9 @@ export class StorylineGenerationService {
           requestUserId: input.userId,
           storylineId: storyline.externalId,
         });
-        if (isNoOpDialogueText(event.continuedStory)) {
-          emitPhase(options, "saving");
-          const savedStoryline =
-            await this.storylineService.saveDialogueSegmentWithoutContextUpdate(
-              {
-                userId: input.userId,
-                storylineId: storyline.externalId,
-                input: input.payload.input,
-                generatedText: event.continuedStory,
-                model: event.model,
-                elapsedMs: event.elapsedMs,
-                usage: event.usage,
-                previousContext: context.previousContext,
-              },
-            );
-          if (options.signal.aborted) {
-            return;
-          }
-          this.logGenerationPhase({
-            elapsedMs: getElapsedMs(startedAt),
-            generatedSegmentId: savedStoryline.latestGeneration.segmentId,
-            mode: "dialogue",
-            phase: "noop_save_completed",
-            requestId: input.requestId,
-            requestUserId: input.userId,
-            storylineId: storyline.externalId,
-          });
-
-          yield {
-            type: "completed",
-            storyline: savedStoryline,
-            generatedSegmentId: savedStoryline.latestGeneration.segmentId,
-          };
-          continue;
-        }
-
-        yield { type: "contextStarted" };
-        if (options.signal.aborted) {
-          return;
-        }
-
-        emitPhase(options, "updatingContext");
-        this.logGenerationPhase({
-          elapsedMs: getElapsedMs(startedAt),
-          mode: "dialogue",
-          phase: "context_started",
-          requestId: input.requestId,
-          requestUserId: input.userId,
-          storylineId: storyline.externalId,
-        });
-        const contextPatch =
-          await this.storylineContextService.generateStoryContextPatch(
-            {
-              operation: "dialogue",
-              previousContext: context.previousContext,
-              sourceRefMappings: buildSourceRefMappings({
-                initialStoryText: context.initialStoryText,
-                recentHistoryRounds: context.contextHistoryRounds,
-                currentLabel: "本轮互动正文",
-                generatedText: event.continuedStory,
-              }),
-              ...(context.initialStoryText !== undefined
-                ? { initialStoryText: context.initialStoryText }
-                : {}),
-              recentHistoryRounds: context.contextHistoryRounds,
-              currentInstruction: input.payload.input,
-              generatedText: event.continuedStory,
-            },
-            options,
-          );
-        if (options.signal.aborted) {
-          return;
-        }
-        this.logGenerationPhase({
-          elapsedMs: getElapsedMs(startedAt),
-          mode: "dialogue",
-          phase: "context_completed",
-          requestId: input.requestId,
-          requestUserId: input.userId,
-          storylineId: storyline.externalId,
-        });
-
         emitPhase(options, "saving");
         const savedStoryline =
-          await this.storylineService.saveDialogueSegmentWithContext({
+          await this.storylineService.saveDialogueSegmentWithoutContextUpdate({
             userId: input.userId,
             storylineId: storyline.externalId,
             input: input.payload.input,
@@ -1089,27 +819,103 @@ export class StorylineGenerationService {
             elapsedMs: event.elapsedMs,
             usage: event.usage,
             previousContext: context.previousContext,
-            contextPatch,
           });
         this.logGenerationPhase({
           elapsedMs: getElapsedMs(startedAt),
           generatedSegmentId: savedStoryline.latestGeneration.segmentId,
           mode: "dialogue",
-          phase: "save_completed",
+          phase: isNoOpDialogueText(event.continuedStory)
+            ? "noop_save_completed"
+            : "save_completed",
           requestId: input.requestId,
           requestUserId: input.userId,
           storylineId: storyline.externalId,
         });
 
-        yield {
-          type: "completed",
+        yield* this.finishSavedGeneration({
+          elapsedStartedAt: startedAt,
+          mode: "dialogue",
+          options,
+          requestId: input.requestId,
+          requestUserId: input.userId,
           storyline: savedStoryline,
-          generatedSegmentId: savedStoryline.latestGeneration.segmentId,
-        };
+        });
       }
     } finally {
       releaseLock();
     }
+  }
+
+  private async *finishSavedGeneration(input: {
+    readonly elapsedStartedAt: number;
+    readonly mode: ContinueStorylineInput["payload"]["mode"];
+    readonly options: StorylineGenerationOptions;
+    readonly requestId?: string | undefined;
+    readonly requestUserId: string;
+    readonly settingId?: string | undefined;
+    readonly storyline: CompletedStorylineSnapshot;
+    readonly targetLength?: StoryTargetLength | undefined;
+    readonly targetGenerationMode?: string | undefined;
+  }): AsyncIterable<StorylineStreamEvent> {
+    try {
+      const state = await this.storylineContextExtractionService.getState(
+        input.requestUserId,
+        input.storyline.id,
+      );
+      if (state.pendingRoundCount >= STORY_CONTEXT_AUTO_TRIGGER_ROUND_COUNT) {
+        yield { type: "contextStarted" };
+        emitPhase(input.options, "updatingContext");
+        this.logGenerationPhase({
+          elapsedMs: getElapsedMs(input.elapsedStartedAt),
+          mode: input.mode,
+          phase: "context_started",
+          requestId: input.requestId,
+          requestUserId: input.requestUserId,
+          settingId: input.settingId,
+          storylineId: input.storyline.id,
+          targetLength: input.targetLength,
+          targetGenerationMode: input.targetGenerationMode,
+        });
+        await this.storylineContextExtractionService.extractNextBatch({
+          userId: input.requestUserId,
+          storylineId: input.storyline.id,
+          signal: input.options.signal,
+        });
+        this.logGenerationPhase({
+          elapsedMs: getElapsedMs(input.elapsedStartedAt),
+          mode: input.mode,
+          phase: "context_completed",
+          requestId: input.requestId,
+          requestUserId: input.requestUserId,
+          settingId: input.settingId,
+          storylineId: input.storyline.id,
+          targetLength: input.targetLength,
+          targetGenerationMode: input.targetGenerationMode,
+        });
+      }
+    } catch {
+      this.logGenerationPhase({
+        elapsedMs: getElapsedMs(input.elapsedStartedAt),
+        mode: input.mode,
+        phase: "context_failed",
+        requestId: input.requestId,
+        requestUserId: input.requestUserId,
+        settingId: input.settingId,
+        storylineId: input.storyline.id,
+        targetLength: input.targetLength,
+        targetGenerationMode: input.targetGenerationMode,
+      });
+      yield {
+        type: "contextFailed",
+        message: "正文已保存，但上下文提取失败，可在调试页手动重试",
+      };
+    }
+
+    yield {
+      type: "completed",
+      storyline: input.storyline,
+      generatedSegmentId: input.storyline.latestGeneration.segmentId,
+    };
   }
 
   private logGenerationPhase(
@@ -1134,6 +940,7 @@ export class StorylineGenerationService {
         | "writer_completed"
         | "context_started"
         | "context_completed"
+        | "context_failed"
         | "save_completed"
         | "noop_save_completed";
       requestId?: string | undefined;
@@ -1163,41 +970,6 @@ export class StorylineGenerationService {
       }),
     );
   }
-}
-
-function buildSourceRefMappings(input: {
-  readonly initialStoryText: string | undefined;
-  readonly recentHistoryRounds: readonly StoryHistoryRound[];
-  readonly currentLabel: string;
-  readonly generatedText: string;
-}): StoryContextSourceRefMapping[] {
-  const mappings: StoryContextSourceRefMapping[] = [];
-  if (input.initialStoryText !== undefined) {
-    mappings.push({
-      ref: "initial",
-      label: "初始故事正文",
-      text: input.initialStoryText,
-    });
-  }
-
-  for (const round of input.recentHistoryRounds) {
-    mappings.push({
-      ref: `segment:${round.segmentId}`,
-      label:
-        round.generationMode === "dialogue"
-          ? `第 ${round.roundIndex} 轮互动正文`
-          : `第 ${round.roundIndex} 轮续写正文`,
-      text: round.generatedText,
-    });
-  }
-
-  mappings.push({
-    ref: "current",
-    label: input.currentLabel,
-    text: input.generatedText,
-  });
-
-  return mappings;
 }
 
 function getHistoryScoreConfig(): HistoryScoreConfig {

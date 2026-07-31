@@ -64,6 +64,11 @@ export interface SaveRewrittenSegmentWithContextInput {
   readonly contextPatch: StoryContextPatchDraft;
 }
 
+export type SaveRewrittenSegmentInput = Omit<
+  SaveRewrittenSegmentWithContextInput,
+  "contextPatch" | "previousContext"
+>;
+
 export interface SaveDialogueSegmentInput {
   readonly userId: string;
   readonly storylineId: string;
@@ -117,6 +122,7 @@ export interface StorylineDialogueContext {
 export type StorylineStreamEvent =
   | Readonly<{ type: "chunk"; delta: string; sequence: number }>
   | Readonly<{ type: "contextStarted" }>
+  | Readonly<{ type: "contextFailed"; message: string }>
   | Readonly<{
       type: "completed";
       storyline: CompletedStorylineSnapshot;
