@@ -46,3 +46,24 @@ export class StoryContextFailedError extends Error {
     this.name = "StoryContextFailedError";
   }
 }
+
+export class StoryChapterNotFoundError extends Error {
+  constructor(message = "Story chapter was not found") {
+    super(message);
+    this.name = "StoryChapterNotFoundError";
+  }
+}
+
+export class StoryChatContextTooLargeError extends Error {
+  constructor(message = "Story chat context is too large") {
+    super(message);
+    this.name = "StoryChatContextTooLargeError";
+  }
+}
+
+export class StoryChatEmptyResponseError extends Error {
+  constructor(message = "Story chat returned an empty response") {
+    super(message);
+    this.name = "StoryChatEmptyResponseError";
+  }
+}

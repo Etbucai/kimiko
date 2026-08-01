@@ -5,6 +5,8 @@ import type {
   StorylineSegmentId,
   StorylineSnapshot,
 } from "@kimiko/schema";
+import { StoryChatBlock } from "./StoryChatBlock";
+import type { StoryChatEntry } from "./storyChatTypes";
 
 export interface RewriteDraftState {
   readonly targetSegmentId: StorylineSegmentId;
@@ -70,7 +72,10 @@ type StorylineReaderPageBuilder =
     };
 
 interface StorylineReaderProps {
+  chatEntries: readonly StoryChatEntry[];
   initialInstruction?: string | undefined;
+  onChatExpandedChange: (chatId: string, expanded: boolean) => void;
+  onChatReasoningExpandedChange: (chatId: string, expanded: boolean) => void;
   onViewportChange: (state: StorylineReaderViewportState) => void;
   pageIndex: number | null;
   storyline: StorylineSnapshot;
@@ -83,7 +88,10 @@ interface StorylineReaderProps {
 }
 
 export function StorylineReader({
+  chatEntries,
   initialInstruction,
+  onChatExpandedChange,
+  onChatReasoningExpandedChange,
   onViewportChange,
   pageIndex,
   storyline,
@@ -137,7 +145,10 @@ export function StorylineReader({
     <article aria-label="故事正文">
       {currentPage !== undefined ? (
         <StorylinePagePanel
+          chatEntries={chatEntries}
           initialInstruction={initialInstruction}
+          onChatExpandedChange={onChatExpandedChange}
+          onChatReasoningExpandedChange={onChatReasoningExpandedChange}
           page={currentPage}
           pageIndex={safeCurrentPageIndex}
           pageTotal={pageCount}
@@ -223,7 +234,10 @@ function buildReaderPages({
 }
 
 interface StorylinePagePanelProps {
+  chatEntries: readonly StoryChatEntry[];
   initialInstruction?: string | undefined;
+  onChatExpandedChange: (chatId: string, expanded: boolean) => void;
+  onChatReasoningExpandedChange: (chatId: string, expanded: boolean) => void;
   page: StorylineReaderPage;
   pageIndex: number;
   pageTotal: number;
@@ -234,7 +248,10 @@ interface StorylinePagePanelProps {
 }
 
 function StorylinePagePanel({
+  chatEntries,
   initialInstruction,
+  onChatExpandedChange,
+  onChatReasoningExpandedChange,
   page,
   pageIndex,
   pageTotal,
@@ -281,6 +298,18 @@ function StorylinePagePanel({
               />
             ) : null}
           </section>
+        ))}
+        {chatEntries.map((entry) => (
+          <StoryChatBlock
+            entry={entry}
+            key={entry.id}
+            onExpandedChange={(expanded) =>
+              onChatExpandedChange(entry.id, expanded)
+            }
+            onReasoningExpandedChange={(expanded) =>
+              onChatReasoningExpandedChange(entry.id, expanded)
+            }
+          />
         ))}
         {temporaryDialogueVisible ? (
           <section aria-label="正在生成的互动" className="flex flex-col gap-4">

@@ -3,18 +3,24 @@ import { useEffect, useRef, useState } from "react";
 import { Ellipsis } from "lucide-react";
 
 interface StoryPageHeaderProps {
+  readonly chatDisabledReason?: string | undefined;
+  readonly isChatDisabled: boolean;
   readonly isCopyDisabled: boolean;
   readonly onBackToList: () => void;
   readonly onCopyStoryline: () => void;
+  readonly onOpenChat: () => void;
   readonly onOpenContext: () => void;
   readonly showStoryActions: boolean;
   readonly title: string;
 }
 
 export function StoryPageHeader({
+  chatDisabledReason,
+  isChatDisabled,
   isCopyDisabled,
   onBackToList,
   onCopyStoryline,
+  onOpenChat,
   onOpenContext,
   showStoryActions,
   title,
@@ -84,6 +90,19 @@ export function StoryPageHeader({
                   className="absolute top-12 right-0 z-30 flex min-w-36 flex-col overflow-hidden rounded-2xl border border-(--border) bg-(--panel-bg) p-1.5 shadow-(--shadow)"
                   role="menu"
                 >
+                  <button
+                    className="min-h-10 rounded-xl border-0 bg-transparent px-3 py-2 text-left text-sm font-bold text-(--text-h) transition-colors hover:bg-(--accent-bg) disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+                    disabled={isChatDisabled}
+                    onClick={() => {
+                      setIsMenuOpen(false);
+                      onOpenChat();
+                    }}
+                    role="menuitem"
+                    title={isChatDisabled ? chatDisabledReason : undefined}
+                    type="button"
+                  >
+                    与 AI 聊聊
+                  </button>
                   <button
                     className="min-h-10 rounded-xl border-0 bg-transparent px-3 py-2 text-left text-sm font-bold text-(--text-h) transition-colors hover:bg-(--accent-bg) disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
                     disabled={isCopyDisabled}

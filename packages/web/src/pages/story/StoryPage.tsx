@@ -19,6 +19,10 @@ import type {
   StoryRealtimeGenerationError,
   StoryRealtimeGenerationHandle,
 } from "../../story/storyRealtimeApi";
+import {
+  startStoryChapterChat,
+  type StoryChapterChatHandle,
+} from "../../story/storyChatApi";
 import { getStoredAuthSession } from "../../auth/authApi";
 import { startStoryRealtimeGeneration } from "../../story/storyRealtimeApi";
 import {
@@ -45,6 +49,8 @@ import { StoryInitialInput } from "./StoryInitialInput";
 import { StoryActionDrawer } from "./StoryActionDrawer";
 import { StoryActionFab } from "./StoryActionFab";
 import type { StoryActionKind } from "./StoryActionFab";
+import { StoryChatDrawer } from "./StoryChatDrawer";
+import { StoryChatFloatingStatus } from "./StoryChatFloatingStatus";
 import { StoryPageHeader } from "./StoryPageHeader";
 import { StorylineCopyDialog } from "./StorylineCopyDialog";
 import type { StorylineCopyDialogSubmitValue } from "./StorylineCopyDialog";
@@ -71,6 +77,14 @@ import type { StorySettingDetailStatus } from "./StorySettingDetailView";
 import { StorySettingEntryButton } from "./StorySettingEntryButton";
 import { StorySettingListView } from "./StorySettingListView";
 import type { StorySettingListStatus } from "./StorySettingListView";
+import {
+  appendStoryChat,
+  hasStoryChatDrafts,
+  updateStoryChat,
+  type ActiveStoryChat,
+  type StoryChatDraftsByChapter,
+  type StoryChatsByChapter,
+} from "./storyChatTypes";
 import {
   findStorylineChapter,
   getMissingChapterPages,
@@ -162,6 +176,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   const generationHandleRef = useRef<StoryRealtimeGenerationHandle | null>(
     null,
   );
+  const chatHandleRef = useRef<StoryChapterChatHandle | null>(null);
   const hasReceivedStoryContentRef = useRef(false);
   const hasReceivedStoryReasoningRef = useRef(false);
   const settingCompletionHandleRef =
@@ -196,6 +211,16 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     useState<StorylineComposerMode>("append");
   const [activeDrawerMode, setActiveDrawerMode] =
     useState<StoryActionKind | null>(null);
+  const [chatDraftsByChapter, setChatDraftsByChapter] =
+    useState<StoryChatDraftsByChapter>({});
+  const [chatsByChapter, setChatsByChapter] = useState<StoryChatsByChapter>({});
+  const [chatDrawerChapterNumber, setChatDrawerChapterNumber] = useState<
+    number | null
+  >(null);
+  const [chatDrawerError, setChatDrawerError] = useState<string | undefined>();
+  const [isChatSubmitting, setIsChatSubmitting] = useState(false);
+  const [activeStoryChat, setActiveStoryChat] =
+    useState<ActiveStoryChat | null>(null);
   const [isCopyDialogOpen, setIsCopyDialogOpen] = useState(false);
   const [isCopySubmitting, setIsCopySubmitting] = useState(false);
   const [copyError, setCopyError] = useState<string | undefined>();
@@ -265,6 +290,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     status === "streaming" ||
     status === "updatingContext" ||
     status === "saving";
+  const isChatBusy = isChatSubmitting || activeStoryChat !== null;
   const temporaryTextStatus = getTemporaryTextStatus(status);
   const latestGeneratedSegmentId =
     storyline?.latestGeneration?.segmentId ?? null;
@@ -275,7 +301,9 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   const isActionFabVisible =
     storyline !== null &&
     activeDrawerMode === null &&
+    chatDrawerChapterNumber === null &&
     !isCopyDialogOpen &&
+    !isChatBusy &&
     chapterLoadStatus === "idle" &&
     (isGenerating || readerViewport?.isViewingLatestPage === true);
   const contentBottomPaddingClassName =
@@ -536,6 +564,8 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     backgroundPollFailureNotifiedRef.current = false;
     generationHandleRef.current?.close();
     generationHandleRef.current = null;
+    chatHandleRef.current?.close();
+    chatHandleRef.current = null;
     settingCompletionHandleRef.current?.close();
     settingCompletionHandleRef.current = null;
     previousReaderPageIndexRef.current = null;
@@ -553,6 +583,12 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     setTemporaryDialogueText("");
     setTemporaryRewrite(null);
     setActiveDrawerMode(null);
+    setChatDraftsByChapter({});
+    setChatsByChapter({});
+    setChatDrawerChapterNumber(null);
+    setChatDrawerError(undefined);
+    setIsChatSubmitting(false);
+    setActiveStoryChat(null);
     setIsCopyDialogOpen(false);
     setIsCopySubmitting(false);
     setCopyError(undefined);
@@ -831,10 +867,26 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
       clearBackgroundPoll();
       generationHandleRef.current?.close();
       generationHandleRef.current = null;
+      chatHandleRef.current?.close();
+      chatHandleRef.current = null;
       settingCompletionHandleRef.current?.close();
       settingCompletionHandleRef.current = null;
     };
   }, [clearBackgroundPoll, restoreStoryline]);
+
+  useEffect(() => {
+    if (activeStoryChat === null && !isChatSubmitting) {
+      return undefined;
+    }
+
+    function handleBeforeUnload(event: BeforeUnloadEvent): void {
+      event.preventDefault();
+      event.returnValue = "";
+    }
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [activeStoryChat, isChatSubmitting]);
 
   useEffect(() => {
     if (mode !== "new" || newStoryView.type !== "settingList") {
@@ -908,6 +960,278 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     setSettingOpening(value);
     setFieldErrors((previousFieldErrors) =>
       removeFieldError(previousFieldErrors, "settingOpening"),
+    );
+  }
+
+  function handleOpenStoryChat(): void {
+    const currentPageIndex = readerPageIndexRef.current;
+    if (
+      storyline === null ||
+      currentPageIndex === null ||
+      isGenerating ||
+      isCopySubmitting ||
+      isChatBusy ||
+      chatDrawerChapterNumber !== null ||
+      chapterLoadStatus !== "idle"
+    ) {
+      return;
+    }
+
+    const chapterNumber = currentPageIndex + 1;
+    if (
+      chapterNumber > storyline.chapterCount ||
+      findStorylineChapter(storyline, chapterNumber) === undefined
+    ) {
+      return;
+    }
+
+    setChatDrawerError(undefined);
+    setChatDrawerChapterNumber(chapterNumber);
+  }
+
+  function handleChatDraftChange(value: string): void {
+    if (chatDrawerChapterNumber === null) {
+      return;
+    }
+
+    setChatDraftsByChapter((previousDrafts) => ({
+      ...previousDrafts,
+      [chatDrawerChapterNumber]: value,
+    }));
+    setChatDrawerError(undefined);
+  }
+
+  function handleCloseChatDrawer(): void {
+    if (isChatSubmitting) {
+      return;
+    }
+
+    setChatDrawerChapterNumber(null);
+    setChatDrawerError(undefined);
+  }
+
+  function handleSubmitStoryChat(): void {
+    const chapterNumber = chatDrawerChapterNumber;
+    if (
+      storyline === null ||
+      chapterNumber === null ||
+      isGenerating ||
+      isCopySubmitting ||
+      activeStoryChat !== null ||
+      chatHandleRef.current !== null
+    ) {
+      return;
+    }
+
+    const topic = (chatDraftsByChapter[chapterNumber] ?? "").trim();
+    if (topic.length === 0) {
+      setChatDrawerError("请输入想聊的话题");
+      return;
+    }
+    if (
+      chapterNumber > storyline.chapterCount ||
+      findStorylineChapter(storyline, chapterNumber) === undefined
+    ) {
+      setChatDrawerError("当前章节不可用，请刷新后重试");
+      return;
+    }
+
+    const chatId = crypto.randomUUID();
+    let hasStarted = false;
+    let didSettleSynchronously = false;
+    setIsChatSubmitting(true);
+    setChatDrawerError(undefined);
+
+    const handle = startStoryChapterChat(
+      storyline.id,
+      { chapterNumber, topic },
+      {
+        onStarted() {
+          if (!isMountedRef.current) {
+            return;
+          }
+
+          hasStarted = true;
+          setChatsByChapter((previousChats) =>
+            appendStoryChat(previousChats, {
+              id: chatId,
+              chapterNumber,
+              topic,
+              reasoningText: "",
+              answerText: "",
+              status: "connecting",
+              isExpanded: true,
+              isReasoningExpanded: true,
+            }),
+          );
+          setActiveStoryChat({ chatId, chapterNumber });
+          setChatDraftsByChapter((previousDrafts) => {
+            const nextDrafts = { ...previousDrafts };
+            delete nextDrafts[chapterNumber];
+            return nextDrafts;
+          });
+          setChatDrawerChapterNumber(null);
+          setChatDrawerError(undefined);
+          setIsChatSubmitting(false);
+        },
+        onReasoningChunk(delta) {
+          if (!isMountedRef.current) {
+            return;
+          }
+
+          setChatsByChapter((previousChats) =>
+            updateStoryChat(previousChats, chapterNumber, chatId, (entry) => ({
+              ...entry,
+              reasoningText: `${entry.reasoningText}${delta}`,
+              status: entry.answerText.length > 0 ? "answering" : "thinking",
+            })),
+          );
+        },
+        onAnswerChunk(delta) {
+          if (!isMountedRef.current) {
+            return;
+          }
+
+          setChatsByChapter((previousChats) =>
+            updateStoryChat(previousChats, chapterNumber, chatId, (entry) => ({
+              ...entry,
+              answerText: `${entry.answerText}${delta}`,
+              status: "answering",
+            })),
+          );
+        },
+        onCompleted() {
+          didSettleSynchronously = true;
+          chatHandleRef.current = null;
+          if (!isMountedRef.current) {
+            return;
+          }
+
+          setChatsByChapter((previousChats) =>
+            updateStoryChat(previousChats, chapterNumber, chatId, (entry) => ({
+              ...entry,
+              status: "completed",
+            })),
+          );
+          setActiveStoryChat((currentChat) =>
+            currentChat?.chatId === chatId ? null : currentChat,
+          );
+        },
+        onCancelled() {
+          didSettleSynchronously = true;
+          chatHandleRef.current = null;
+          if (!isMountedRef.current) {
+            return;
+          }
+
+          if (hasStarted) {
+            setChatsByChapter((previousChats) =>
+              updateStoryChat(
+                previousChats,
+                chapterNumber,
+                chatId,
+                (entry) => ({
+                  ...entry,
+                  status: "cancelled",
+                }),
+              ),
+            );
+            setActiveStoryChat((currentChat) =>
+              currentChat?.chatId === chatId ? null : currentChat,
+            );
+          } else {
+            setIsChatSubmitting(false);
+          }
+        },
+        onError(error) {
+          didSettleSynchronously = true;
+          chatHandleRef.current = null;
+          if (!isMountedRef.current) {
+            return;
+          }
+
+          if (!hasStarted) {
+            setIsChatSubmitting(false);
+            setChatDrawerError(error.message);
+            return;
+          }
+
+          setChatsByChapter((previousChats) =>
+            updateStoryChat(previousChats, chapterNumber, chatId, (entry) => ({
+              ...entry,
+              status: "failed",
+              errorMessage: error.message,
+            })),
+          );
+          setActiveStoryChat((currentChat) =>
+            currentChat?.chatId === chatId ? null : currentChat,
+          );
+          toast.error(error.message);
+        },
+        onAuthRequired() {
+          didSettleSynchronously = true;
+          chatHandleRef.current = null;
+          if (!isMountedRef.current) {
+            return;
+          }
+
+          setIsChatSubmitting(false);
+          setChatDrawerChapterNumber(null);
+          setActiveStoryChat(null);
+          void navigate("/login", { replace: true });
+        },
+      },
+    );
+
+    if (didSettleSynchronously) {
+      handle.close();
+    } else {
+      chatHandleRef.current = handle;
+    }
+  }
+
+  function handleCancelStoryChat(): void {
+    chatHandleRef.current?.cancel();
+  }
+
+  function confirmAndCloseStoryChat(): boolean {
+    const shouldLeave = window.confirm(
+      "AI 正在回答，离开会取消回答并丢失本页聊天记录。确定离开吗？",
+    );
+    if (!shouldLeave) {
+      return false;
+    }
+
+    chatHandleRef.current?.close();
+    chatHandleRef.current = null;
+    setIsChatSubmitting(false);
+    setActiveStoryChat(null);
+    return true;
+  }
+
+  function handleChatExpandedChange(
+    chapterNumber: number,
+    chatId: string,
+    expanded: boolean,
+  ): void {
+    setChatsByChapter((previousChats) =>
+      updateStoryChat(previousChats, chapterNumber, chatId, (entry) => ({
+        ...entry,
+        isExpanded: expanded,
+      })),
+    );
+  }
+
+  function handleChatReasoningExpandedChange(
+    chapterNumber: number,
+    chatId: string,
+    expanded: boolean,
+  ): void {
+    setChatsByChapter((previousChats) =>
+      updateStoryChat(previousChats, chapterNumber, chatId, (entry) => ({
+        ...entry,
+        isReasoningExpanded: expanded,
+      })),
     );
   }
 
@@ -1053,7 +1377,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   }
 
   function handleSelectStoryAction(action: StoryActionKind): void {
-    if (isGenerating || storyline === null) {
+    if (isGenerating || isChatBusy || storyline === null) {
       return;
     }
 
@@ -1645,6 +1969,15 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   }
 
   function handleGoToStorylineList(): void {
+    if (isChatBusy) {
+      if (!confirmAndCloseStoryChat()) {
+        return;
+      }
+
+      void navigate("/storylines");
+      return;
+    }
+
     if (isGenerating) {
       generationHandleRef.current?.close();
       generationHandleRef.current = null;
@@ -1658,6 +1991,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
         appendInstruction,
         rewriteInstruction,
         dialogueInput,
+        hasStoryChatDrafts(chatDraftsByChapter),
       )
     ) {
       const shouldLeave = window.confirm(
@@ -1676,6 +2010,15 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
       return;
     }
 
+    if (isChatBusy) {
+      if (!confirmAndCloseStoryChat()) {
+        return;
+      }
+
+      void navigate(`/storylines/${encodeURIComponent(storyline.id)}/context`);
+      return;
+    }
+
     if (isGenerating) {
       generationHandleRef.current?.close();
       generationHandleRef.current = null;
@@ -1689,6 +2032,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
         appendInstruction,
         rewriteInstruction,
         dialogueInput,
+        hasStoryChatDrafts(chatDraftsByChapter),
       )
     ) {
       const shouldLeave = window.confirm(
@@ -1703,7 +2047,12 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   }
 
   function handleOpenCopyDialog(): void {
-    if (storyline === null || isGenerating || chapterLoadStatus !== "idle") {
+    if (
+      storyline === null ||
+      isGenerating ||
+      isChatBusy ||
+      chapterLoadStatus !== "idle"
+    ) {
       return;
     }
 
@@ -1713,6 +2062,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
         appendInstruction,
         rewriteInstruction,
         dialogueInput,
+        hasStoryChatDrafts(chatDraftsByChapter),
       )
     ) {
       const shouldContinue = window.confirm(
@@ -1739,7 +2089,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   async function handleCopyStoryline(
     value: StorylineCopyDialogSubmitValue,
   ): Promise<void> {
-    if (storyline === null || isCopySubmitting) {
+    if (storyline === null || isCopySubmitting || isChatBusy) {
       return;
     }
 
@@ -1916,6 +2266,27 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     findStorylineChapter(storyline, currentReaderPageNumber) !== undefined ||
     (activeGenerationIntent?.type === "append" &&
       currentReaderPageNumber === storyline.chapterCount + 1);
+  const isCurrentChatChapterAvailable =
+    storyline !== null &&
+    currentReaderPageNumber !== null &&
+    currentReaderPageNumber <= storyline.chapterCount &&
+    findStorylineChapter(storyline, currentReaderPageNumber) !== undefined;
+  const currentChapterChatEntries =
+    currentReaderPageNumber === null
+      ? []
+      : (chatsByChapter[currentReaderPageNumber] ?? []);
+  const isChatDisabled =
+    !isCurrentChatChapterAvailable ||
+    chapterLoadStatus !== "idle" ||
+    isGenerating ||
+    isCopySubmitting ||
+    isChatBusy ||
+    chatDrawerChapterNumber !== null;
+  const chatDisabledReason = !isCurrentChatChapterAvailable
+    ? "当前章节尚未加载完成"
+    : isGenerating || isCopySubmitting || isChatBusy
+      ? "当前故事正在处理中，请稍后重试"
+      : undefined;
 
   return (
     <main
@@ -1923,10 +2294,15 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
       className="story-page-viewport flex flex-col overflow-hidden [background:radial-gradient(circle_at_top_left,var(--accent-bg),transparent_28rem),var(--bg)]"
     >
       <StoryPageHeader
-        isCopyDisabled={isGenerating || chapterLoadStatus !== "idle"}
+        chatDisabledReason={chatDisabledReason}
+        isChatDisabled={isChatDisabled}
+        isCopyDisabled={
+          isGenerating || isChatBusy || chapterLoadStatus !== "idle"
+        }
         key={storyline?.id ?? "story-workbench"}
         onBackToList={handleGoToStorylineList}
         onCopyStoryline={handleOpenCopyDialog}
+        onOpenChat={handleOpenStoryChat}
         onOpenContext={handleOpenContextDebug}
         showStoryActions={storyline !== null}
         title={storyline?.title ?? "故事工作台"}
@@ -1967,6 +2343,25 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
                 <StoryChapterLoading />
               ) : storyline !== null ? (
                 <StorylineReader
+                  chatEntries={currentChapterChatEntries}
+                  onChatExpandedChange={(chatId, expanded) => {
+                    if (currentReaderPageNumber !== null) {
+                      handleChatExpandedChange(
+                        currentReaderPageNumber,
+                        chatId,
+                        expanded,
+                      );
+                    }
+                  }}
+                  onChatReasoningExpandedChange={(chatId, expanded) => {
+                    if (currentReaderPageNumber !== null) {
+                      handleChatReasoningExpandedChange(
+                        currentReaderPageNumber,
+                        chatId,
+                        expanded,
+                      );
+                    }
+                  }}
                   onViewportChange={handleReaderViewportChange}
                   pageIndex={readerPageIndex}
                   storyline={storyline}
@@ -1984,7 +2379,10 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
               ) : submittedCreateDraft !== null &&
                 submittedCreateStoryline !== null ? (
                 <StorylineReader
+                  chatEntries={[]}
                   initialInstruction={submittedCreateDraft.instruction}
+                  onChatExpandedChange={ignoreChatExpansionChange}
+                  onChatReasoningExpandedChange={ignoreChatExpansionChange}
                   onViewportChange={handleReaderViewportChange}
                   pageIndex={readerPageIndex}
                   storyline={submittedCreateStoryline}
@@ -2089,14 +2487,34 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
         />
       ) : null}
 
-      <StoryActionFab
-        availableActions={availableActions}
-        hasBottomBar={isPaginationBarVisible}
-        isGenerating={isGenerating}
-        isVisible={isActionFabVisible}
-        onCancelGeneration={handleCancel}
-        onSelectAction={handleSelectStoryAction}
-      />
+      {chatDrawerChapterNumber !== null ? (
+        <StoryChatDrawer
+          chapterNumber={chatDrawerChapterNumber}
+          error={chatDrawerError}
+          isSubmitting={isChatSubmitting}
+          onChange={handleChatDraftChange}
+          onClose={handleCloseChatDrawer}
+          onSubmit={handleSubmitStoryChat}
+          value={chatDraftsByChapter[chatDrawerChapterNumber] ?? ""}
+        />
+      ) : null}
+
+      {activeStoryChat !== null ? (
+        <StoryChatFloatingStatus
+          chapterNumber={activeStoryChat.chapterNumber}
+          hasBottomBar={isPaginationBarVisible}
+          onCancel={handleCancelStoryChat}
+        />
+      ) : (
+        <StoryActionFab
+          availableActions={availableActions}
+          hasBottomBar={isPaginationBarVisible}
+          isGenerating={isGenerating}
+          isVisible={isActionFabVisible}
+          onCancelGeneration={handleCancel}
+          onSelectAction={handleSelectStoryAction}
+        />
+      )}
     </main>
   );
 }
@@ -2420,13 +2838,19 @@ function hasUnsavedDraft(
   appendInstruction: string,
   rewriteInstruction: string,
   dialogueInput: string,
+  hasChatDraft: boolean,
 ): boolean {
   return (
     initialStoryText.trim().length > 0 ||
     appendInstruction.trim().length > 0 ||
     rewriteInstruction.trim().length > 0 ||
-    dialogueInput.trim().length > 0
+    dialogueInput.trim().length > 0 ||
+    hasChatDraft
   );
+}
+
+function ignoreChatExpansionChange(_chatId: string, _expanded: boolean): void {
+  return undefined;
 }
 
 function getDrawerError(

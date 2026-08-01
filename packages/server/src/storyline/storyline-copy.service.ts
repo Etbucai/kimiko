@@ -6,7 +6,6 @@ import {
 import type {
   CopyStorylineRequest,
   CopyStorylineResponse,
-  StoryContextSnapshot,
 } from "@kimiko/schema";
 import { and, eq } from "drizzle-orm";
 import { DatabaseService } from "../database/database.service";
@@ -20,6 +19,7 @@ import {
   parseStoryContextJson,
   serializeStoryContext,
 } from "./storyline-context-normalize";
+import { selectStoryContextSnapshotAtCutoff } from "./story-context-snapshot-selection";
 import {
   StorylineCopyChapterOutOfRangeError,
   StorylineCopyFailedError,
@@ -28,18 +28,10 @@ import {
 import { StorylineLockService } from "./storyline-lock.service";
 import { StorylineService } from "./storyline.service";
 
-type StorylineSegmentRow = typeof storylineSegments.$inferSelect;
-type StorylineContextRow = typeof storylineContexts.$inferSelect;
-
 interface CopyTransactionResult {
   readonly copiedSegmentCount: number;
   readonly copiedStorylineId: number;
   readonly throughChapter: number;
-}
-
-interface PrefixContext {
-  readonly context: StoryContextSnapshot;
-  readonly extractedThroughOrderIndex: number;
 }
 
 @Injectable()
@@ -266,10 +258,10 @@ export class StorylineCopyService {
             .run();
         }
 
-        const prefixContext = selectPrefixContext({
+        const prefixContext = selectStoryContextSnapshotAtCutoff({
+          contextRow: sourceContext,
           cutoffOrderIndex: lastPrefixSegment.orderIndex,
-          sourceContext,
-          sourceSegments,
+          segments: sourceSegments,
         });
         if (prefixContext !== null) {
           const copiedContext = remapStoryContextSegmentIds({
@@ -307,61 +299,6 @@ export class StorylineCopyService {
       throw new StorylineCopyFailedError(toErrorMessage(error));
     }
   }
-}
-
-function selectPrefixContext(input: {
-  readonly cutoffOrderIndex: number;
-  readonly sourceContext: StorylineContextRow | undefined;
-  readonly sourceSegments: readonly StorylineSegmentRow[];
-}): PrefixContext | null {
-  if (input.sourceContext === undefined) {
-    return null;
-  }
-
-  if (
-    input.sourceContext.extractedThroughOrderIndex <= input.cutoffOrderIndex
-  ) {
-    if (input.sourceContext.extractedThroughOrderIndex === 0) {
-      return null;
-    }
-
-    return {
-      context: parseStoryContextJson(input.sourceContext.contextJson),
-      extractedThroughOrderIndex:
-        input.sourceContext.extractedThroughOrderIndex,
-    };
-  }
-
-  const firstExcludedSegment = input.sourceSegments.find(
-    (segment) =>
-      segment.orderIndex > input.cutoffOrderIndex &&
-      segment.type === "generated",
-  );
-  if (firstExcludedSegment === undefined) {
-    throw new StorylineCopyFailedError(
-      "Story context is ahead of the copied prefix",
-    );
-  }
-
-  const previousContextOrderIndex =
-    firstExcludedSegment.previousContextOrderIndex ?? 0;
-  if (
-    previousContextOrderIndex === 0 ||
-    firstExcludedSegment.previousContextJson === null
-  ) {
-    return null;
-  }
-
-  if (previousContextOrderIndex > input.cutoffOrderIndex) {
-    throw new StorylineCopyFailedError(
-      "Safe story context is ahead of the copied prefix",
-    );
-  }
-
-  return {
-    context: parseStoryContextJson(firstExcludedSegment.previousContextJson),
-    extractedThroughOrderIndex: previousContextOrderIndex,
-  };
 }
 
 function parseCopyRequest(body: unknown): CopyStorylineRequest {

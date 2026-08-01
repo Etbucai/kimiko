@@ -346,6 +346,94 @@ export type StorySettingCompletionStreamEvent = z.infer<
   typeof StorySettingCompletionStreamEventSchema
 >;
 
+export const StoryChapterChatRequestSchema = z
+  .object({
+    chapterNumber: z.number().int().positive(),
+    topic: z.string().trim().min(1).max(4_000),
+  })
+  .strict();
+
+export type StoryChapterChatRequest = z.infer<
+  typeof StoryChapterChatRequestSchema
+>;
+
+export const StoryChapterChatStartedEventSchema = z
+  .object({
+    type: z.literal("started"),
+  })
+  .strict();
+
+export type StoryChapterChatStartedEvent = z.infer<
+  typeof StoryChapterChatStartedEventSchema
+>;
+
+export const StoryChapterChatReasoningChunkEventSchema = z
+  .object({
+    type: z.literal("reasoning_chunk"),
+    sequence: z.number().int().positive(),
+    delta: z.string().min(1),
+  })
+  .strict();
+
+export type StoryChapterChatReasoningChunkEvent = z.infer<
+  typeof StoryChapterChatReasoningChunkEventSchema
+>;
+
+export const StoryChapterChatAnswerChunkEventSchema = z
+  .object({
+    type: z.literal("answer_chunk"),
+    sequence: z.number().int().positive(),
+    delta: z.string().min(1),
+  })
+  .strict();
+
+export type StoryChapterChatAnswerChunkEvent = z.infer<
+  typeof StoryChapterChatAnswerChunkEventSchema
+>;
+
+export const StoryChapterChatCompletedEventSchema = z
+  .object({
+    type: z.literal("completed"),
+  })
+  .strict();
+
+export type StoryChapterChatCompletedEvent = z.infer<
+  typeof StoryChapterChatCompletedEventSchema
+>;
+
+export const StoryChapterChatErrorCodeSchema = z.enum([
+  "CHAT_FAILED",
+  "LLM_EMPTY_RESPONSE",
+]);
+
+export type StoryChapterChatErrorCode = z.infer<
+  typeof StoryChapterChatErrorCodeSchema
+>;
+
+export const StoryChapterChatErrorEventSchema = z
+  .object({
+    type: z.literal("error"),
+    code: StoryChapterChatErrorCodeSchema,
+    message: z.string().min(1),
+  })
+  .strict();
+
+export type StoryChapterChatErrorEvent = z.infer<
+  typeof StoryChapterChatErrorEventSchema
+>;
+
+export const StoryChapterChatStreamEventSchema = z.discriminatedUnion("type", [
+  StoryChapterChatStartedEventSchema,
+  StoryChapterChatReasoningChunkEventSchema,
+  StoryChapterChatAnswerChunkEventSchema,
+  StoryChapterChatCompletedEventSchema,
+  StoryChapterChatErrorEventSchema,
+]);
+
+export type StoryChapterChatStreamEvent = z.infer<
+  typeof StoryChapterChatStreamEventSchema
+>;
+
 export const CreateStorySettingRequestSchema = z
   .object({
     content: StorySettingContentSchema,

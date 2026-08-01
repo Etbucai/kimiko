@@ -35,6 +35,7 @@ import type {
   StoryWriterContextBundle,
 } from "../story/story.service";
 import {
+  StoryChapterNotFoundError,
   StoryContextFailedError,
   StorySegmentNotRewritableError,
   StorylineNotFoundError,
@@ -44,6 +45,7 @@ import {
   parseStoryContextJson,
   serializeStoryContext,
 } from "./storyline-context-normalize";
+import { selectStoryContextSnapshotAtCutoff } from "./story-context-snapshot-selection";
 import { applyStoryContextPatch } from "./storyline-context-patch";
 import {
   emptyStoryContextSnapshot,
@@ -56,6 +58,11 @@ import type {
   StoryContextExtractionRound,
   StoryContextExtractionState,
 } from "./storyline-context-extraction.types";
+import type {
+  StoryChapterChatContext,
+  StoryChatChapterMaterial,
+  StoryChatSegmentMaterial,
+} from "./storyline-chat.types";
 import type {
   SaveAppendedSegmentInput,
   SaveAppendedSegmentWithContextInput,
@@ -220,6 +227,76 @@ export class StorylineService {
       id: storyline.id,
       externalId: String(storyline.id),
       userId: storyline.userId,
+    };
+  }
+
+  async buildChapterChatContext(input: {
+    readonly chapterNumber: number;
+    readonly storylineId: string;
+    readonly userId: string;
+  }): Promise<StoryChapterChatContext> {
+    const storyline = await this.getRequiredStorylineForUser(
+      input.userId,
+      input.storylineId,
+    );
+    const [segments, contextRow] = await Promise.all([
+      this.getSegmentsByInternalStorylineId(storyline.id),
+      this.getStoryContextRowByInternalStorylineId(storyline.id),
+    ]);
+    const latestSegment = segments.at(-1);
+    const currentChapterSegments = segments.filter(
+      (segment) => segment.chapterIndex === input.chapterNumber,
+    );
+    if (
+      latestSegment === undefined ||
+      input.chapterNumber > latestSegment.chapterIndex ||
+      currentChapterSegments.length === 0 ||
+      !currentChapterSegments.some(isStoryChapterMainSegment)
+    ) {
+      throw new StoryChapterNotFoundError();
+    }
+
+    const cutoffSegment = currentChapterSegments.at(-1);
+    if (cutoffSegment === undefined) {
+      throw new StoryChapterNotFoundError();
+    }
+
+    const contextSelection = selectStoryContextSnapshotAtCutoff({
+      contextRow,
+      cutoffOrderIndex: cutoffSegment.orderIndex,
+      segments,
+    });
+    const startChapterNumber = Math.max(1, input.chapterNumber - 9);
+    const chapterBuilders = new Map<number, StoryChatSegmentMaterial[]>();
+    for (const segment of segments) {
+      if (
+        segment.chapterIndex < startChapterNumber ||
+        segment.chapterIndex > input.chapterNumber
+      ) {
+        continue;
+      }
+
+      const chapterSegments = chapterBuilders.get(segment.chapterIndex) ?? [];
+      chapterSegments.push(mapStoryChatSegmentMaterial(segment));
+      chapterBuilders.set(segment.chapterIndex, chapterSegments);
+    }
+    const chapters: StoryChatChapterMaterial[] = [...chapterBuilders.entries()]
+      .sort(([left], [right]) => left - right)
+      .map(([chapterNumber, chapterSegments]) => ({
+        chapterNumber,
+        isCurrent: chapterNumber === input.chapterNumber,
+        segments: chapterSegments,
+      }));
+
+    return {
+      storyline,
+      currentChapterNumber: input.chapterNumber,
+      startChapterNumber,
+      endChapterNumber: input.chapterNumber,
+      storyContext: contextSelection?.context ?? null,
+      contextExtractedThroughOrderIndex:
+        contextSelection?.extractedThroughOrderIndex ?? 0,
+      chapters,
     };
   }
 
@@ -1370,6 +1447,29 @@ function mapSegmentDto(segment: StorylineSegmentRow): StorylineSegmentDto {
     id: String(segment.id),
     type: "generated",
     generationMode: getRequiredGenerationMode(segment.generationMode),
+    text: segment.text,
+  };
+}
+
+function isStoryChapterMainSegment(segment: StorylineSegmentRow): boolean {
+  return (
+    segment.type === "initial" ||
+    getRequiredGenerationMode(segment.generationMode) === "append"
+  );
+}
+
+function mapStoryChatSegmentMaterial(
+  segment: StorylineSegmentRow,
+): StoryChatSegmentMaterial {
+  if (segment.type === "initial") {
+    return {
+      kind: "initial",
+      text: segment.text,
+    };
+  }
+
+  return {
+    kind: getRequiredGenerationMode(segment.generationMode),
     text: segment.text,
   };
 }

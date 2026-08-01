@@ -388,6 +388,89 @@ describe("LlmService", () => {
     }
   });
 
+  it("keeps metrics-only stream content out of call files", async () => {
+    const directory = await createTemporaryLogDirectory();
+    process.env.KIMIKO_LLM_CALL_LOG_DIR = directory;
+    jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
+    llmProvider.streamText.mockReturnValue(
+      createLlmStream([
+        { type: "reasoning", delta: "private thought" },
+        { type: "chunk", delta: "private answer" },
+        {
+          type: "completed",
+          model: "default-model",
+          usage: {
+            inputTokens: 7,
+            outputTokens: 3,
+            reasoningTokens: 2,
+            totalTokens: 10,
+          },
+        },
+      ]),
+    );
+
+    try {
+      await collectAsyncIterable(
+        llmService.streamTextFromParsedRequest(
+          {
+            systemPrompt: "private system prompt",
+            userPrompt: "private user prompt",
+          },
+          {
+            signal: new AbortController().signal,
+            recordingPolicy: "metrics-only",
+          },
+        ),
+      );
+
+      await expect(readdir(directory)).resolves.toEqual([]);
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("redacts metrics-only stream failure details and skips call files", async () => {
+    const directory = await createTemporaryLogDirectory();
+    process.env.KIMIKO_LLM_CALL_LOG_DIR = directory;
+    jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
+    const errorSpy = jest
+      .spyOn(Logger.prototype, "error")
+      .mockImplementation(() => undefined);
+    llmProvider.streamText.mockReturnValue(
+      createFailingLlmStream(new Error("private provider response")),
+    );
+
+    try {
+      await expect(
+        collectAsyncIterable(
+          llmService.streamTextFromParsedRequest(
+            {
+              userPrompt: "private user prompt",
+            },
+            {
+              signal: new AbortController().signal,
+              recordingPolicy: "metrics-only",
+            },
+          ),
+        ),
+      ).rejects.toThrow("private provider response");
+
+      await expect(readdir(directory)).resolves.toEqual([]);
+      const failurePayload = getLoggedPayloads(errorSpy).find(
+        (payload) => payload.event === "llm_call_failed",
+      );
+      expect(failurePayload).toMatchObject({
+        error: { name: "Error" },
+        event: "llm_call_failed",
+      });
+      expect(JSON.stringify(failurePayload)).not.toContain(
+        "private provider response",
+      );
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+
   it("rejects empty and oversized prompts", async () => {
     await expect(
       llmService.generateText({
@@ -429,6 +512,18 @@ async function* createLlmStream(
   for (const event of events) {
     yield event;
   }
+}
+
+function createFailingLlmStream(
+  error: Error,
+): AsyncIterable<LlmTextStreamEvent> {
+  return {
+    [Symbol.asyncIterator]() {
+      return {
+        next: () => Promise.reject(error),
+      };
+    },
+  };
 }
 
 function parseLoggedJson(value: unknown): Record<string, unknown> {

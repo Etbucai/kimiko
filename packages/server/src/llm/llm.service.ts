@@ -40,6 +40,13 @@ type SchemaParseResult<T> =
       };
     }>;
 
+export type LlmCallRecordingPolicy = "full" | "metrics-only";
+
+export interface LlmStreamExecutionOptions {
+  readonly signal: AbortSignal;
+  readonly recordingPolicy?: LlmCallRecordingPolicy;
+}
+
 @Injectable()
 export class LlmService {
   private readonly logger = new Logger(LlmService.name);
@@ -58,7 +65,7 @@ export class LlmService {
 
   streamText(
     body: unknown,
-    options: Readonly<{ signal: AbortSignal }>,
+    options: LlmStreamExecutionOptions,
   ): AsyncIterable<LlmTextStreamEvent> {
     const request = parseRequest<GenerateLlmTextRequest>(
       GenerateLlmTextRequestSchema.safeParse(body),
@@ -143,7 +150,7 @@ export class LlmService {
 
   async *streamTextFromParsedRequest(
     request: GenerateLlmTextRequest,
-    options: Readonly<{ signal: AbortSignal }>,
+    options: LlmStreamExecutionOptions,
   ): AsyncIterable<LlmTextStreamEvent> {
     const callId = createLlmCallId();
     const startedAt = performance.now();
@@ -153,7 +160,9 @@ export class LlmService {
       userPrompt: request.userPrompt.trim(),
       ...(systemPrompt !== undefined ? { systemPrompt } : {}),
     };
-    let outputText = "";
+    const recordingPolicy = options.recordingPolicy ?? "full";
+    let outputText = recordingPolicy === "full" ? "" : null;
+    let outputTextChars = 0;
     let completed = false;
     let hasReceivedFirstEvent = false;
     let hasReceivedFirstChunk = false;
@@ -208,20 +217,22 @@ export class LlmService {
           const completedAtIso = new Date().toISOString();
           const elapsedMs = getElapsedMs(startedAt);
           const usage = normalizeLoggedUsage(event.usage);
-          await this.writeLlmCallFile(
-            buildCompletedCallFileRecord({
-              callId,
-              callType: "stream",
-              completedAtIso,
-              elapsedMs,
-              finishReason: event.finishReason,
-              model: event.model,
-              outputText,
-              request: providerRequest,
-              startedAtIso,
-              usage,
-            }),
-          );
+          if (outputText !== null) {
+            await this.writeLlmCallFile(
+              buildCompletedCallFileRecord({
+                callId,
+                callType: "stream",
+                completedAtIso,
+                elapsedMs,
+                finishReason: event.finishReason,
+                model: event.model,
+                outputText,
+                request: providerRequest,
+                startedAtIso,
+                usage,
+              }),
+            );
+          }
           this.logLlmCallCompleted({
             callId,
             callType: "stream",
@@ -247,7 +258,10 @@ export class LlmService {
             elapsedMs: getElapsedMs(startedAt),
           });
         }
-        outputText += event.delta;
+        outputTextChars += event.delta.length;
+        if (outputText !== null) {
+          outputText += event.delta;
+        }
         yield event;
       }
 
@@ -257,7 +271,7 @@ export class LlmService {
             callId,
             callType: "stream",
             elapsedMs: getElapsedMs(startedAt),
-            outputTextChars: outputText.length,
+            outputTextChars,
           });
           return;
         }
@@ -271,29 +285,32 @@ export class LlmService {
           callId,
           callType: "stream",
           elapsedMs,
-          outputTextChars: outputText.length,
+          outputTextChars,
         });
         throw error;
       }
 
       const completedAtIso = new Date().toISOString();
-      await this.writeLlmCallFile(
-        buildFailedCallFileRecord({
-          callId,
-          callType: "stream",
-          completedAtIso,
-          elapsedMs,
-          error,
-          outputText,
-          request: providerRequest,
-          startedAtIso,
-        }),
-      );
+      if (outputText !== null) {
+        await this.writeLlmCallFile(
+          buildFailedCallFileRecord({
+            callId,
+            callType: "stream",
+            completedAtIso,
+            elapsedMs,
+            error,
+            outputText,
+            request: providerRequest,
+            startedAtIso,
+          }),
+        );
+      }
       this.logLlmCallFailed({
         callId,
         callType: "stream",
         elapsedMs,
         error,
+        includeErrorDetails: recordingPolicy === "full",
       });
       throw error;
     }
@@ -422,6 +439,7 @@ export class LlmService {
       callType: LlmCallType;
       elapsedMs: number;
       error: unknown;
+      includeErrorDetails?: boolean;
     }>,
   ): void {
     this.logger.error(
@@ -429,7 +447,10 @@ export class LlmService {
         callId: input.callId,
         callType: input.callType,
         elapsedMs: input.elapsedMs,
-        error: toLoggableError(input.error),
+        error:
+          input.includeErrorDetails === false
+            ? { name: getErrorName(input.error) }
+            : toLoggableError(input.error),
         event: "llm_call_failed",
         usage: normalizeLoggedUsage(undefined),
       }),
@@ -506,6 +527,10 @@ function toLoggableError(error: unknown): Readonly<{
     message: String(error),
     name: "UnknownError",
   };
+}
+
+function getErrorName(error: unknown): string {
+  return error instanceof Error ? error.name : "UnknownError";
 }
 
 function toLlmCallFileError(error: unknown): LlmCallFileError {
