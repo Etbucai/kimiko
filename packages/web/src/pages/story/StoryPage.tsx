@@ -196,6 +196,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   const storyReasoningTextRef = useRef(storyReasoningText);
   const [isStoryReasoningExpanded, setIsStoryReasoningExpanded] =
     useState(false);
+  const [readerPageIndex, setReaderPageIndex] = useState<number | null>(null);
   const [readerViewport, setReaderViewport] =
     useState<StorylineReaderViewportState | null>(null);
   const [fieldErrors, setFieldErrors] = useState<StorylineFieldErrors>({});
@@ -257,6 +258,15 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
         : buildSubmittedCreateStoryline(submittedCreateDraft),
     [submittedCreateDraft],
   );
+  const isStoryReaderVisible =
+    status !== "loading" &&
+    status !== "restoreFailed" &&
+    (storyline !== null ||
+      (submittedCreateDraft !== null && submittedCreateStoryline !== null));
+  const isPaginationBarVisible =
+    isStoryReaderVisible &&
+    readerViewport !== null &&
+    readerViewport.pageCount > 0;
 
   const clearBackgroundPoll = useCallback((): void => {
     if (backgroundPollTimerRef.current === null) {
@@ -463,7 +473,10 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     generationHandleRef.current = null;
     settingCompletionHandleRef.current?.close();
     settingCompletionHandleRef.current = null;
+    previousReaderPageIndexRef.current = null;
     setBackgroundTask(null);
+    setReaderPageIndex(null);
+    setReaderViewport(null);
     setStatus("loading");
     setTemporaryAppendText("");
     setTemporaryDialogueText("");
@@ -702,6 +715,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     (state: StorylineReaderViewportState): void => {
       const previousPageIndex = previousReaderPageIndexRef.current;
       previousReaderPageIndexRef.current = state.currentPageIndex;
+      setReaderPageIndex(state.currentPageIndex);
       setReaderViewport(state);
 
       if (
@@ -716,6 +730,22 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     },
     [],
   );
+
+  function handleReaderPageChange(nextPageIndex: number): void {
+    if (readerViewport === null) {
+      return;
+    }
+
+    const safePageIndex = Math.min(
+      Math.max(nextPageIndex, 0),
+      readerViewport.pageCount - 1,
+    );
+    if (safePageIndex === readerViewport.currentPageIndex) {
+      return;
+    }
+
+    setReaderPageIndex(safePageIndex);
+  }
 
   function handleSelectStoryAction(action: StoryActionKind): void {
     if (isGenerating || storyline === null) {
@@ -1062,6 +1092,11 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   }): void {
     const intent = input.intent;
     resetStoryReasoning();
+    if (storyline === null) {
+      previousReaderPageIndexRef.current = null;
+      setReaderPageIndex(null);
+      setReaderViewport(null);
+    }
     setSubmittedCreateDraft(input.submittedCreateDraft);
     setActiveDrawerMode(null);
     setActiveGenerationIntent(intent);
@@ -1496,6 +1531,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
               {storyline !== null ? (
                 <StorylineReader
                   onViewportChange={handleReaderViewportChange}
+                  pageIndex={readerPageIndex}
                   storyline={storyline}
                   temporaryAppendText={temporaryAppendText}
                   temporaryAppendVisible={
@@ -1513,6 +1549,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
                 <StorylineReader
                   initialInstruction={submittedCreateDraft.instruction}
                   onViewportChange={handleReaderViewportChange}
+                  pageIndex={readerPageIndex}
                   storyline={submittedCreateStoryline}
                   temporaryAppendText={temporaryAppendText}
                   temporaryAppendVisible={
@@ -1544,6 +1581,22 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
           ) : null}
         </div>
       </section>
+
+      {isPaginationBarVisible && readerViewport !== null ? (
+        <StoryPaginationBar
+          isNextDisabled={
+            readerViewport.currentPageIndex >= readerViewport.pageCount - 1
+          }
+          isPreviousDisabled={readerViewport.currentPageIndex === 0}
+          label={readerViewport.pageLabel}
+          onNext={() =>
+            handleReaderPageChange(readerViewport.currentPageIndex + 1)
+          }
+          onPrevious={() =>
+            handleReaderPageChange(readerViewport.currentPageIndex - 1)
+          }
+        />
+      ) : null}
 
       {activeDrawerMode !== null ? (
         <StoryActionDrawer
@@ -1580,6 +1633,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
 
       <StoryActionFab
         availableActions={availableActions}
+        hasBottomBar={isPaginationBarVisible}
         isGenerating={isGenerating}
         isVisible={isActionFabVisible}
         onCancelGeneration={handleCancel}
@@ -1905,6 +1959,51 @@ function getGenerationErrorMessage(
   }
 
   return error.message.length > 0 ? error.message : generationFailureMessage;
+}
+
+interface StoryPaginationBarProps {
+  isNextDisabled: boolean;
+  isPreviousDisabled: boolean;
+  label: string;
+  onNext: () => void;
+  onPrevious: () => void;
+}
+
+function StoryPaginationBar({
+  isNextDisabled,
+  isPreviousDisabled,
+  label,
+  onNext,
+  onPrevious,
+}: StoryPaginationBarProps): JSX.Element {
+  const buttonClassName =
+    "min-h-10 rounded-full border border-(--border) bg-transparent px-4 py-2 text-sm font-bold text-(--text-h) transition-[border-color,transform,opacity] duration-200 enabled:hover:-translate-y-px enabled:hover:border-(--accent-border) disabled:cursor-not-allowed disabled:opacity-40";
+
+  return (
+    <footer className="z-10 box-border h-[calc(4rem+env(safe-area-inset-bottom))] shrink-0 border-t border-(--border) bg-(--panel-bg) px-4 pb-[env(safe-area-inset-bottom)] shadow-[0_-10px_24px_rgba(0,0,0,0.08)] backdrop-blur md:px-6">
+      <div className="mx-auto grid h-full w-full max-w-3xl grid-cols-3 items-center gap-3">
+        <button
+          className={buttonClassName}
+          disabled={isPreviousDisabled}
+          onClick={onPrevious}
+          type="button"
+        >
+          上一页
+        </button>
+        <p className="m-0 truncate text-center text-xs font-semibold text-(--text)">
+          {label}
+        </p>
+        <button
+          className={buttonClassName}
+          disabled={isNextDisabled}
+          onClick={onNext}
+          type="button"
+        >
+          下一页
+        </button>
+      </div>
+    </footer>
+  );
 }
 
 interface StoryPageHeaderProps {

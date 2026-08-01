@@ -1,12 +1,5 @@
-import type { CSSProperties, JSX, KeyboardEvent } from "react";
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import type { JSX } from "react";
+import { useEffect, useMemo } from "react";
 import type {
   StorylineSegment,
   StorylineSegmentId,
@@ -22,6 +15,7 @@ export interface StorylineReaderViewportState {
   readonly currentPageIndex: number;
   readonly isViewingLatestPage: boolean;
   readonly pageCount: number;
+  readonly pageLabel: string;
 }
 
 interface StorylineDialogueSegmentView {
@@ -72,6 +66,7 @@ type StorylineReaderPageBuilder =
 interface StorylineReaderProps {
   initialInstruction?: string | undefined;
   onViewportChange: (state: StorylineReaderViewportState) => void;
+  pageIndex: number | null;
   storyline: StorylineSnapshot;
   temporaryAppendText: string;
   temporaryAppendVisible: boolean;
@@ -84,6 +79,7 @@ interface StorylineReaderProps {
 export function StorylineReader({
   initialInstruction,
   onViewportChange,
+  pageIndex,
   storyline,
   temporaryAppendText,
   temporaryAppendVisible,
@@ -92,10 +88,6 @@ export function StorylineReader({
   temporaryRewrite,
   temporaryTextStatus,
 }: StorylineReaderProps): JSX.Element {
-  const scrollerRef = useRef<HTMLDivElement | null>(null);
-  const pagePanelRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const lastPositionedPageIdentityRef = useRef<string | null>(null);
-  const previousTemporaryAppendVisibleRef = useRef(temporaryAppendVisible);
   const pages = useMemo(
     () =>
       buildReaderPages({
@@ -105,50 +97,16 @@ export function StorylineReader({
       }),
     [storyline.segments, temporaryAppendText, temporaryAppendVisible],
   );
-  const pageIdentity = useMemo(
-    () =>
-      pages
-        .map((page) =>
-          [
-            page.id,
-            ...page.dialogueSegments.map((dialogue) => dialogue.id),
-          ].join(":"),
-        )
-        .join("|"),
-    [pages],
-  );
-  const [currentPageIndex, setCurrentPageIndex] = useState(() =>
-    getLastPageIndex(pages.length),
-  );
-  const [scrollerHeight, setScrollerHeight] = useState<number | null>(null);
-  const safeCurrentPageIndex = clampPageIndex(currentPageIndex, pages.length);
+  const safeCurrentPageIndex =
+    pageIndex === null
+      ? getLastPageIndex(pages.length)
+      : clampPageIndex(pageIndex, pages.length);
   const currentPage = pages[safeCurrentPageIndex] ?? pages[0];
-  const scrollerStyle = useMemo<CSSProperties | undefined>(
-    () =>
-      scrollerHeight === null
-        ? undefined
-        : {
-            height: `${scrollerHeight}px`,
-          },
-    [scrollerHeight],
+  const pageLabel = formatPageLabel(
+    currentPage,
+    safeCurrentPageIndex,
+    pages.length,
   );
-
-  const updateScrollerHeight = useCallback((pageIndex: number): void => {
-    const panel = pagePanelRefs.current[pageIndex];
-    if (panel === null || panel === undefined) {
-      setScrollerHeight(null);
-      return;
-    }
-
-    const nextHeight = Math.ceil(panel.getBoundingClientRect().height);
-    setScrollerHeight((previousHeight) =>
-      previousHeight === nextHeight ? previousHeight : nextHeight,
-    );
-  }, []);
-
-  useEffect(() => {
-    pagePanelRefs.current.length = pages.length;
-  }, [pages.length]);
 
   useEffect(() => {
     onViewportChange({
@@ -156,169 +114,27 @@ export function StorylineReader({
       isViewingLatestPage:
         pages.length > 0 && safeCurrentPageIndex === pages.length - 1,
       pageCount: pages.length,
+      pageLabel,
     });
-  }, [onViewportChange, pages.length, safeCurrentPageIndex]);
-
-  useLayoutEffect(() => {
-    updateScrollerHeight(safeCurrentPageIndex);
-  }, [pages, safeCurrentPageIndex, updateScrollerHeight]);
-
-  useEffect(() => {
-    const panel = pagePanelRefs.current[safeCurrentPageIndex];
-    if (panel === null || panel === undefined) {
-      updateScrollerHeight(safeCurrentPageIndex);
-      return;
-    }
-
-    if (typeof ResizeObserver === "undefined") {
-      updateScrollerHeight(safeCurrentPageIndex);
-      return;
-    }
-
-    const resizeObserver = new ResizeObserver(() => {
-      updateScrollerHeight(safeCurrentPageIndex);
-    });
-    resizeObserver.observe(panel);
-
-    return () => resizeObserver.disconnect();
-  }, [safeCurrentPageIndex, updateScrollerHeight]);
-
-  useLayoutEffect(() => {
-    if (pages.length === 0) {
-      return undefined;
-    }
-
-    if (lastPositionedPageIdentityRef.current === pageIdentity) {
-      return undefined;
-    }
-
-    lastPositionedPageIdentityRef.current = pageIdentity;
-    if (scrollToPage(scrollerRef.current, safeCurrentPageIndex, "auto")) {
-      return undefined;
-    }
-
-    const frameId = requestAnimationFrame(() => {
-      scrollToPage(scrollerRef.current, safeCurrentPageIndex, "auto");
-    });
-
-    return () => cancelAnimationFrame(frameId);
-  }, [pageIdentity, pages.length, safeCurrentPageIndex, storyline.id]);
-
-  useEffect(() => {
-    if (!temporaryAppendVisible) {
-      return;
-    }
-
-    const targetIndex = pages.length - 1;
-    requestAnimationFrame(() => {
-      setCurrentPageIndex(targetIndex);
-      scrollToPage(scrollerRef.current, targetIndex, "smooth");
-    });
-  }, [pages.length, temporaryAppendVisible]);
-
-  useEffect(() => {
-    const wasTemporaryAppendVisible = previousTemporaryAppendVisibleRef.current;
-    previousTemporaryAppendVisibleRef.current = temporaryAppendVisible;
-
-    if (!wasTemporaryAppendVisible || temporaryAppendVisible) {
-      return;
-    }
-
-    const targetIndex = getLastPageIndex(pages.length);
-    requestAnimationFrame(() => {
-      setCurrentPageIndex(targetIndex);
-      scrollToPage(scrollerRef.current, targetIndex, "auto");
-    });
-  }, [pages.length, temporaryAppendVisible]);
-
-  useEffect(() => {
-    const rewriteTargetSegmentId = temporaryRewrite?.targetSegmentId;
-    if (rewriteTargetSegmentId === undefined) {
-      return;
-    }
-
-    const targetIndex = findPageIndexBySegmentId(pages, rewriteTargetSegmentId);
-    if (targetIndex < 0) {
-      return;
-    }
-
-    requestAnimationFrame(() => {
-      setCurrentPageIndex(targetIndex);
-      scrollToPage(scrollerRef.current, targetIndex, "auto");
-    });
-  }, [pages, temporaryRewrite?.targetSegmentId]);
-
-  function handleScroll(): void {
-    const scroller = scrollerRef.current;
-    if (scroller === null || scroller.clientWidth <= 0) {
-      return;
-    }
-
-    const nextIndex = clampPageIndex(
-      Math.round(scroller.scrollLeft / scroller.clientWidth),
-      pages.length,
-    );
-    setCurrentPageIndex(nextIndex);
-  }
-
-  function handleKeyDown(event: KeyboardEvent<HTMLElement>): void {
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
-      return;
-    }
-
-    event.preventDefault();
-    const direction = event.key === "ArrowLeft" ? -1 : 1;
-    const nextIndex = clampPageIndex(
-      currentPageIndex + direction,
-      pages.length,
-    );
-    if (nextIndex === currentPageIndex) {
-      return;
-    }
-
-    if (scrollToPage(scrollerRef.current, nextIndex, "auto")) {
-      setCurrentPageIndex(nextIndex);
-    }
-  }
+  }, [onViewportChange, pageLabel, pages.length, safeCurrentPageIndex]);
 
   return (
-    <article
-      aria-label="故事正文"
-      className="outline-none"
-      onKeyDown={handleKeyDown}
-      tabIndex={0}
-    >
-      <div className="mb-3 flex items-center justify-between gap-3 text-xs text-(--text)">
-        <span>
-          {formatPageLabel(currentPage, safeCurrentPageIndex, pages.length)}
-        </span>
-        <span>左右滑动切换</span>
-      </div>
-      <div
-        ref={scrollerRef}
-        className="scrollbar-hidden flex snap-x snap-mandatory items-start gap-0 overflow-x-auto overflow-y-hidden overscroll-x-none"
-        onScroll={handleScroll}
-        style={scrollerStyle}
-      >
-        {pages.map((page, index) => (
-          <StorylinePagePanel
-            key={page.id}
-            page={page}
-            pageIndex={index}
-            pageTotal={pages.length}
-            initialInstruction={initialInstruction}
-            panelRef={(element) => {
-              pagePanelRefs.current[index] = element;
-            }}
-            temporaryDialogueText={temporaryDialogueText}
-            temporaryDialogueVisible={
-              temporaryDialogueVisible && index === pages.length - 1
-            }
-            temporaryRewrite={temporaryRewrite}
-            temporaryTextStatus={temporaryTextStatus}
-          />
-        ))}
-      </div>
+    <article aria-label="故事正文">
+      {currentPage !== undefined ? (
+        <StorylinePagePanel
+          initialInstruction={initialInstruction}
+          page={currentPage}
+          pageIndex={safeCurrentPageIndex}
+          pageTotal={pages.length}
+          temporaryDialogueText={temporaryDialogueText}
+          temporaryDialogueVisible={
+            temporaryDialogueVisible &&
+            safeCurrentPageIndex === pages.length - 1
+          }
+          temporaryRewrite={temporaryRewrite}
+          temporaryTextStatus={temporaryTextStatus}
+        />
+      ) : null}
     </article>
   );
 }
@@ -388,7 +204,6 @@ interface StorylinePagePanelProps {
   page: StorylineReaderPage;
   pageIndex: number;
   pageTotal: number;
-  panelRef: (element: HTMLDivElement | null) => void;
   temporaryDialogueText: string;
   temporaryDialogueVisible: boolean;
   temporaryRewrite: RewriteDraftState | null;
@@ -400,7 +215,6 @@ function StorylinePagePanel({
   page,
   pageIndex,
   pageTotal,
-  panelRef,
   temporaryDialogueText,
   temporaryDialogueVisible,
   temporaryRewrite,
@@ -409,12 +223,9 @@ function StorylinePagePanel({
   return (
     <section
       aria-label={formatPageLabel(page, pageIndex, pageTotal)}
-      className="box-border w-full min-w-0 flex-none snap-center"
+      className="box-border w-full min-w-0"
     >
-      <div
-        ref={panelRef}
-        className="box-border flex w-full min-w-0 flex-col gap-4"
-      >
+      <div className="box-border flex w-full min-w-0 flex-col gap-4">
         <SegmentDivider label={getPageKindLabel(page)} />
         <StoryText text={page.text} />
         {page.kind === "initial" && initialInstruction !== undefined ? (
@@ -531,17 +342,6 @@ function formatPageLabel(
   return `第 ${safePageIndex + 1} / ${safeTotal} 页 · ${kindLabel}`;
 }
 
-function findPageIndexBySegmentId(
-  pages: readonly StorylineReaderPage[],
-  segmentId: StorylineSegmentId,
-): number {
-  return pages.findIndex(
-    (page) =>
-      page.id === segmentId ||
-      page.dialogueSegments.some((dialogue) => dialogue.id === segmentId),
-  );
-}
-
 function clampPageIndex(index: number, pageTotal: number): number {
   if (pageTotal <= 0) {
     return 0;
@@ -552,26 +352,6 @@ function clampPageIndex(index: number, pageTotal: number): number {
 
 function getLastPageIndex(pageTotal: number): number {
   return clampPageIndex(pageTotal - 1, pageTotal);
-}
-
-function scrollToPage(
-  scroller: HTMLDivElement | null,
-  pageIndex: number,
-  behavior: ScrollBehavior,
-): boolean {
-  if (scroller === null) {
-    return false;
-  }
-
-  if (scroller.clientWidth <= 0) {
-    return false;
-  }
-
-  scroller.scrollTo({
-    behavior,
-    left: pageIndex * scroller.clientWidth,
-  });
-  return true;
 }
 
 interface SegmentDividerProps {

@@ -14,6 +14,7 @@ export type StoryActionKind = "append" | "rewrite" | "dialogue";
 
 interface StoryActionFabProps {
   availableActions: readonly StoryActionKind[];
+  hasBottomBar: boolean;
   isGenerating: boolean;
   isVisible: boolean;
   onCancelGeneration: () => void;
@@ -40,6 +41,7 @@ const actionConfig: Record<
 
 export function StoryActionFab({
   availableActions,
+  hasBottomBar,
   isGenerating,
   isVisible,
   onCancelGeneration,
@@ -47,6 +49,9 @@ export function StoryActionFab({
 }: StoryActionFabProps): JSX.Element | null {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const shouldShowMenu = isVisible && !isGenerating && isMenuOpen;
+  const bottomClassName = hasBottomBar
+    ? "bottom-[calc(5rem+env(safe-area-inset-bottom))]"
+    : "bottom-[calc(1rem+env(safe-area-inset-bottom))]";
 
   useEffect(() => {
     if (!shouldShowMenu) {
@@ -71,7 +76,7 @@ export function StoryActionFab({
     return (
       <button
         aria-label="取消生成"
-        className="fixed right-4 bottom-[calc(1rem+env(safe-area-inset-bottom))] z-30 flex h-14 w-14 items-center justify-center rounded-full border-0 bg-(--danger) text-white shadow-(--shadow) transition-[filter,transform] duration-200 hover:-translate-y-px hover:brightness-[1.06]"
+        className={`fixed right-4 ${bottomClassName} z-30 flex h-14 w-14 items-center justify-center rounded-full border-0 bg-(--danger) text-white shadow-(--shadow) transition-[filter,transform] duration-200 hover:-translate-y-px hover:brightness-[1.06]`}
         onClick={onCancelGeneration}
         type="button"
       >
@@ -91,7 +96,9 @@ export function StoryActionFab({
         />
       ) : null}
 
-      <div className="fixed right-4 bottom-[calc(1rem+env(safe-area-inset-bottom))] z-30 flex flex-col items-center gap-3">
+      <div
+        className={`fixed right-4 ${bottomClassName} z-30 flex flex-col items-center gap-3`}
+      >
         {shouldShowMenu
           ? availableActions.map((action) => {
               const { Icon, label } = actionConfig[action];
