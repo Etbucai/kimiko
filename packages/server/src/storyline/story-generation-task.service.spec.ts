@@ -318,8 +318,22 @@ function createCompletedStoryline(
   segmentId: string,
 ): CompletedStorylineSnapshot {
   return {
+    anchorPage: 1,
+    chapterCount: 1,
+    chapters: [
+      {
+        pageNumber: 1,
+        segments: [
+          {
+            id: segmentId,
+            type: "generated",
+            generationMode: "append",
+            text: "正文",
+          },
+        ],
+      },
+    ],
     id: "10",
-    segments: [],
     latestGeneration: {
       segmentId,
       model: "story-model",

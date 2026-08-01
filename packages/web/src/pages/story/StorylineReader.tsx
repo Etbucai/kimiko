@@ -1,7 +1,7 @@
 import type { JSX } from "react";
 import { useEffect, useMemo } from "react";
 import type {
-  StorylineSegment,
+  StorylineChapter,
   StorylineSegmentId,
   StorylineSnapshot,
 } from "@kimiko/schema";
@@ -28,18 +28,21 @@ type StorylineReaderPage =
       dialogueSegments: readonly StorylineDialogueSegmentView[];
       id: StorylineSegmentId;
       kind: "initial";
+      pageNumber: number;
       text: string;
     }>
   | Readonly<{
       dialogueSegments: readonly StorylineDialogueSegmentView[];
       id: StorylineSegmentId;
       kind: "append";
+      pageNumber: number;
       text: string;
     }>
   | Readonly<{
       dialogueSegments: readonly StorylineDialogueSegmentView[];
       id: "temporary-append";
       kind: "temporaryAppend";
+      pageNumber: number;
       text: string;
     }>;
 
@@ -48,18 +51,21 @@ type StorylineReaderPageBuilder =
       dialogueSegments: StorylineDialogueSegmentView[];
       id: StorylineSegmentId;
       kind: "initial";
+      pageNumber: number;
       text: string;
     }
   | {
       dialogueSegments: StorylineDialogueSegmentView[];
       id: StorylineSegmentId;
       kind: "append";
+      pageNumber: number;
       text: string;
     }
   | {
       dialogueSegments: StorylineDialogueSegmentView[];
       id: "temporary-append";
       kind: "temporaryAppend";
+      pageNumber: number;
       text: string;
     };
 
@@ -91,32 +97,41 @@ export function StorylineReader({
   const pages = useMemo(
     () =>
       buildReaderPages({
-        segments: storyline.segments,
+        chapters: storyline.chapters,
+        chapterCount: storyline.chapterCount,
         temporaryAppendText,
         temporaryAppendVisible,
       }),
-    [storyline.segments, temporaryAppendText, temporaryAppendVisible],
+    [
+      storyline.chapterCount,
+      storyline.chapters,
+      temporaryAppendText,
+      temporaryAppendVisible,
+    ],
   );
+  const pageCount = storyline.chapterCount + (temporaryAppendVisible ? 1 : 0);
   const safeCurrentPageIndex =
     pageIndex === null
-      ? getLastPageIndex(pages.length)
-      : clampPageIndex(pageIndex, pages.length);
-  const currentPage = pages[safeCurrentPageIndex] ?? pages[0];
+      ? getLastPageIndex(pageCount)
+      : clampPageIndex(pageIndex, pageCount);
+  const currentPage = pages.find(
+    (page) => page.pageNumber === safeCurrentPageIndex + 1,
+  );
   const pageLabel = formatPageLabel(
     currentPage,
     safeCurrentPageIndex,
-    pages.length,
+    pageCount,
   );
 
   useEffect(() => {
     onViewportChange({
       currentPageIndex: safeCurrentPageIndex,
       isViewingLatestPage:
-        pages.length > 0 && safeCurrentPageIndex === pages.length - 1,
-      pageCount: pages.length,
+        pageCount > 0 && safeCurrentPageIndex === pageCount - 1,
+      pageCount,
       pageLabel,
     });
-  }, [onViewportChange, pageLabel, pages.length, safeCurrentPageIndex]);
+  }, [onViewportChange, pageCount, pageLabel, safeCurrentPageIndex]);
 
   return (
     <article aria-label="故事正文">
@@ -125,11 +140,11 @@ export function StorylineReader({
           initialInstruction={initialInstruction}
           page={currentPage}
           pageIndex={safeCurrentPageIndex}
-          pageTotal={pages.length}
+          pageTotal={pageCount}
           temporaryDialogueText={temporaryDialogueText}
           temporaryDialogueVisible={
             temporaryDialogueVisible &&
-            safeCurrentPageIndex === pages.length - 1
+            safeCurrentPageIndex === storyline.chapterCount - 1
           }
           temporaryRewrite={temporaryRewrite}
           temporaryTextStatus={temporaryTextStatus}
@@ -140,48 +155,55 @@ export function StorylineReader({
 }
 
 interface BuildReaderPagesInput {
-  segments: readonly StorylineSegment[];
+  chapters: readonly StorylineChapter[];
+  chapterCount: number;
   temporaryAppendText: string;
   temporaryAppendVisible: boolean;
 }
 
 function buildReaderPages({
-  segments,
+  chapters,
+  chapterCount,
   temporaryAppendText,
   temporaryAppendVisible,
 }: BuildReaderPagesInput): StorylineReaderPage[] {
   const pageBuilders: StorylineReaderPageBuilder[] = [];
 
-  for (const segment of segments) {
-    if (segment.type === "initial") {
-      pageBuilders.push({
-        dialogueSegments: [],
-        id: segment.id,
-        kind: "initial",
-        text: segment.text,
-      });
-      continue;
-    }
+  for (const chapter of chapters) {
+    let pageBuilder: StorylineReaderPageBuilder | undefined;
 
-    if (segment.generationMode === "dialogue") {
-      const latestPage = pageBuilders.at(-1);
-      if (latestPage === undefined) {
+    for (const segment of chapter.segments) {
+      if (segment.type === "initial") {
+        pageBuilder = {
+          dialogueSegments: [],
+          id: segment.id,
+          kind: "initial",
+          pageNumber: chapter.pageNumber,
+          text: segment.text,
+        };
         continue;
       }
 
-      latestPage.dialogueSegments.push({
+      if (segment.generationMode === "append") {
+        pageBuilder = {
+          dialogueSegments: [],
+          id: segment.id,
+          kind: "append",
+          pageNumber: chapter.pageNumber,
+          text: segment.text,
+        };
+        continue;
+      }
+
+      pageBuilder?.dialogueSegments.push({
         id: segment.id,
         text: segment.text,
       });
-      continue;
     }
 
-    pageBuilders.push({
-      dialogueSegments: [],
-      id: segment.id,
-      kind: "append",
-      text: segment.text,
-    });
+    if (pageBuilder !== undefined) {
+      pageBuilders.push(pageBuilder);
+    }
   }
 
   if (temporaryAppendVisible) {
@@ -189,6 +211,7 @@ function buildReaderPages({
       dialogueSegments: [],
       id: "temporary-append",
       kind: "temporaryAppend",
+      pageNumber: chapterCount + 1,
       text: temporaryAppendText,
     });
   }
@@ -339,7 +362,7 @@ function formatPageLabel(
   const safeTotal = Math.max(pageTotal, 1);
   const safePageIndex = clampPageIndex(pageIndex, safeTotal);
   const kindLabel = page === undefined ? "故事正文" : getPageKindLabel(page);
-  return `第 ${safePageIndex + 1} / ${safeTotal} 页 · ${kindLabel}`;
+  return `第 ${safePageIndex + 1} / ${safeTotal} 章 · ${kindLabel}`;
 }
 
 function clampPageIndex(index: number, pageTotal: number): number {

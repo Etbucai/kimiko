@@ -417,10 +417,26 @@ export type StorylineGenerationMetadata = z.infer<
   typeof StorylineGenerationMetadataSchema
 >;
 
+export const STORYLINE_CHAPTER_CACHE_RADIUS = 3;
+
+export const StorylineChapterSchema = z
+  .object({
+    pageNumber: z.number().int().positive(),
+    segments: z.array(StorylineSegmentSchema).min(1),
+  })
+  .strict();
+
+export type StorylineChapter = z.infer<typeof StorylineChapterSchema>;
+
 export const StorylineSnapshotSchema = z
   .object({
     id: StorylineIdSchema,
-    segments: z.array(StorylineSegmentSchema).min(1),
+    chapters: z
+      .array(StorylineChapterSchema)
+      .min(1)
+      .max(STORYLINE_CHAPTER_CACHE_RADIUS * 2 + 1),
+    chapterCount: z.number().int().positive(),
+    anchorPage: z.number().int().positive(),
     latestGeneration: StorylineGenerationMetadataSchema.nullable(),
     updatedAt: z.string().datetime(),
   })

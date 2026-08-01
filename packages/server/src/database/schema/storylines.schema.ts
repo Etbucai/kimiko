@@ -55,6 +55,7 @@ export const storylineSegments = sqliteTable(
       .notNull()
       .references(() => storylines.id, { onDelete: "cascade" }),
     orderIndex: integer("order_index").notNull(),
+    chapterIndex: integer("chapter_index").notNull().default(1),
     type: text("type", { enum: ["initial", "generated"] }).notNull(),
     generationMode: text("generation_mode", {
       enum: ["append", "dialogue"],
@@ -81,6 +82,11 @@ export const storylineSegments = sqliteTable(
       table.orderIndex,
     ),
     index("storyline_segment_storyline_id_idx").on(table.storylineId),
+    index("storyline_segment_storyline_chapter_order_idx").on(
+      table.storylineId,
+      table.chapterIndex,
+      table.orderIndex,
+    ),
   ],
 );
 

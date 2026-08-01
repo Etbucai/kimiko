@@ -1,9 +1,11 @@
 import {
+  BadRequestException,
   ConflictException,
   Controller,
   Get,
   NotFoundException,
   Post,
+  Query,
   UseGuards,
   Param,
 } from "@nestjs/common";
@@ -16,6 +18,7 @@ import type {
   StoryGenerationStatusResponse,
   StoryContextExtractionTaskResponse,
 } from "@kimiko/schema";
+import { STORYLINE_CHAPTER_CACHE_RADIUS } from "@kimiko/schema";
 import type { AuthenticatedUser } from "../auth/auth.types";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
@@ -23,7 +26,10 @@ import { StorylineBusyError, StorylineNotFoundError } from "./storyline.errors";
 import { STORY_CONTEXT_AUTO_TRIGGER_ROUND_COUNT } from "./storyline-context-extraction.types";
 import { StoryContextExtractionTaskService } from "./story-context-extraction-task.service";
 import { StoryGenerationTaskService } from "./story-generation-task.service";
-import { StorylineService } from "./storyline.service";
+import {
+  StorylineService,
+  type StorylineWindowOptions,
+} from "./storyline.service";
 
 @Controller("storylines")
 export class StorylineController {
@@ -45,8 +51,14 @@ export class StorylineController {
   @UseGuards(JwtAuthGuard)
   getRecent(
     @CurrentUser() user: AuthenticatedUser,
+    @Query("anchorPage") anchorPage: string | undefined,
+    @Query("before") before: string | undefined,
+    @Query("after") after: string | undefined,
   ): Promise<GetRecentStorylineResponse> {
-    return this.storylineService.getRecentStoryline(user.userId);
+    return this.storylineService.getRecentStoryline(
+      user.userId,
+      parseStorylineWindowOptions({ anchorPage, before, after }),
+    );
   }
 
   @Get(":storylineId/generation/status")
@@ -138,10 +150,14 @@ export class StorylineController {
   async getById(
     @CurrentUser() user: AuthenticatedUser,
     @Param("storylineId") storylineId: string,
+    @Query("anchorPage") anchorPage: string | undefined,
+    @Query("before") before: string | undefined,
+    @Query("after") after: string | undefined,
   ): Promise<GetStorylineResponse> {
     const storyline = await this.storylineService.getStorylineSnapshotForUser(
       user.userId,
       storylineId,
+      parseStorylineWindowOptions({ anchorPage, before, after }),
     );
 
     if (storyline === null) {
@@ -163,6 +179,56 @@ export class StorylineController {
       throw new NotFoundException("Storyline not found");
     }
   }
+}
+
+function parseStorylineWindowOptions(input: {
+  readonly anchorPage: string | undefined;
+  readonly before: string | undefined;
+  readonly after: string | undefined;
+}): StorylineWindowOptions {
+  return {
+    anchorPage: parseAnchorPage(input.anchorPage),
+    before: parseWindowDistance(input.before),
+    after: parseWindowDistance(input.after),
+  };
+}
+
+function parseAnchorPage(value: string | undefined): number | "latest" {
+  if (value === undefined || value.length === 0 || value === "latest") {
+    return "latest";
+  }
+
+  if (!/^-?\d+$/.test(value)) {
+    throw new BadRequestException("Invalid anchorPage");
+  }
+
+  const page = Number(value);
+  if (!Number.isSafeInteger(page)) {
+    throw new BadRequestException("Invalid anchorPage");
+  }
+
+  return page;
+}
+
+function parseWindowDistance(value: string | undefined): number {
+  if (value === undefined || value.length === 0) {
+    return STORYLINE_CHAPTER_CACHE_RADIUS;
+  }
+
+  if (!/^\d+$/.test(value)) {
+    throw new BadRequestException("Invalid chapter window distance");
+  }
+
+  const distance = Number(value);
+  if (
+    !Number.isSafeInteger(distance) ||
+    distance < 0 ||
+    distance > STORYLINE_CHAPTER_CACHE_RADIUS
+  ) {
+    throw new BadRequestException("Invalid chapter window distance");
+  }
+
+  return distance;
 }
 
 function mapStorylineHttpError(error: unknown): Error {

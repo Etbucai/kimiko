@@ -3,6 +3,7 @@ import {
   InternalServerErrorException,
   UnauthorizedException,
 } from "@nestjs/common";
+import { STORYLINE_CHAPTER_CACHE_RADIUS } from "@kimiko/schema";
 import type {
   CompletedStorylineSnapshot,
   GetRecentStorylineResponse,
@@ -12,12 +13,13 @@ import type {
   StoryTargetLength,
   StorylineGenerationMetadata,
   StorylineGenerationMode,
+  StorylineChapter,
   StorylineListItem,
   StorylineSegment as StorylineSegmentDto,
   StorylineSnapshot,
   StoryWorldFact,
 } from "@kimiko/schema";
-import { and, desc, eq } from "drizzle-orm";
+import { and, count, desc, eq, gte, lte, max } from "drizzle-orm";
 import { DatabaseService } from "../database/database.service";
 import {
   storylineContexts,
@@ -69,7 +71,6 @@ import type {
   StorylineRecord,
 } from "./storyline.types";
 
-type StorylineRow = typeof storylines.$inferSelect;
 type StorylineSegmentRow = typeof storylineSegments.$inferSelect;
 type StorylineContextRow = typeof storylineContexts.$inferSelect;
 
@@ -77,6 +78,18 @@ const storylineListLimit = 50;
 const storylineListTitleMaxLength = 80;
 const storylineListPreviewMaxLength = 240;
 const noOpDialogueText = "无事发生";
+
+export interface StorylineWindowOptions {
+  readonly anchorPage: number | "latest";
+  readonly before: number;
+  readonly after: number;
+}
+
+const defaultStorylineWindowOptions: StorylineWindowOptions = {
+  anchorPage: "latest",
+  before: STORYLINE_CHAPTER_CACHE_RADIUS,
+  after: STORYLINE_CHAPTER_CACHE_RADIUS,
+};
 
 @Injectable()
 export class StorylineService {
@@ -90,14 +103,45 @@ export class StorylineService {
       .where(eq(storylines.userId, internalUserId))
       .orderBy(desc(storylines.updatedAt), desc(storylines.id))
       .limit(storylineListLimit);
-
     const items = await Promise.all(
       storylineRows.map(async (storyline) => {
-        const segments = await this.getSegmentsByInternalStorylineId(
-          storyline.id,
+        const [[initialSegment], [latestSegment], [counts]] = await Promise.all(
+          [
+            this.databaseService.db
+              .select({ text: storylineSegments.text })
+              .from(storylineSegments)
+              .where(
+                and(
+                  eq(storylineSegments.storylineId, storyline.id),
+                  eq(storylineSegments.type, "initial"),
+                ),
+              )
+              .orderBy(storylineSegments.orderIndex)
+              .limit(1),
+            this.databaseService.db
+              .select({ text: storylineSegments.text })
+              .from(storylineSegments)
+              .where(eq(storylineSegments.storylineId, storyline.id))
+              .orderBy(desc(storylineSegments.orderIndex))
+              .limit(1),
+            this.databaseService.db
+              .select({
+                segmentCount: count(),
+                chapterCount: max(storylineSegments.chapterIndex),
+              })
+              .from(storylineSegments)
+              .where(eq(storylineSegments.storylineId, storyline.id)),
+          ],
         );
 
-        return mapListItemDto(storyline, segments);
+        return mapListItemDto({
+          id: storyline.id,
+          updatedAt: storyline.updatedAt,
+          initialText: initialSegment?.text ?? "",
+          latestText: latestSegment?.text ?? "",
+          segmentCount: counts?.segmentCount ?? 0,
+          chapterCount: counts?.chapterCount ?? 0,
+        });
       }),
     );
 
@@ -106,6 +150,7 @@ export class StorylineService {
 
   async getRecentStoryline(
     userId: string,
+    options: StorylineWindowOptions = defaultStorylineWindowOptions,
   ): Promise<GetRecentStorylineResponse> {
     const internalUserId = parseAuthenticatedUserId(userId);
     const [storyline] = await this.databaseService.db
@@ -119,7 +164,7 @@ export class StorylineService {
       return { storyline: null };
     }
 
-    const snapshot = await this.getSnapshotByInternalId(storyline.id);
+    const snapshot = await this.getSnapshotByInternalId(storyline.id, options);
     if (snapshot === null) {
       throw new InternalServerErrorException("Storyline snapshot is missing");
     }
@@ -130,13 +175,14 @@ export class StorylineService {
   async getStorylineSnapshotForUser(
     userId: string,
     storylineId: string,
+    options: StorylineWindowOptions = defaultStorylineWindowOptions,
   ): Promise<StorylineSnapshot | null> {
     const storyline = await this.getStorylineForUser(userId, storylineId);
     if (storyline === null) {
       return null;
     }
 
-    const snapshot = await this.getSnapshotByInternalId(storyline.id);
+    const snapshot = await this.getSnapshotByInternalId(storyline.id, options);
     if (snapshot === null) {
       throw new InternalServerErrorException("Storyline snapshot is missing");
     }
@@ -547,6 +593,7 @@ export class StorylineService {
           .values({
             storylineId: createdStoryline.id,
             orderIndex: 0,
+            chapterIndex: 1,
             type: "initial",
             generationMode: "append",
             text: input.initialStoryText.trim(),
@@ -558,6 +605,7 @@ export class StorylineService {
           .values({
             storylineId: createdStoryline.id,
             orderIndex: 1,
+            chapterIndex: 2,
             type: "generated",
             generationMode: "append",
             text: input.generatedText.trim(),
@@ -619,6 +667,7 @@ export class StorylineService {
           .values({
             storylineId: createdStoryline.id,
             orderIndex: 0,
+            chapterIndex: 1,
             type: "initial",
             generationMode: "append",
             text: input.initialStoryText.trim(),
@@ -636,6 +685,7 @@ export class StorylineService {
           .values({
             storylineId: createdStoryline.id,
             orderIndex: 1,
+            chapterIndex: 2,
             type: "generated",
             generationMode: "append",
             text: input.generatedText.trim(),
@@ -741,6 +791,7 @@ export class StorylineService {
           .values({
             storylineId: internalStorylineId,
             orderIndex: generatedOrderIndex,
+            chapterIndex: latestSegment.chapterIndex + 1,
             type: "generated",
             generationMode: "append",
             text: input.generatedText.trim(),
@@ -827,6 +878,7 @@ export class StorylineService {
           .values({
             storylineId: internalStorylineId,
             orderIndex: generatedOrderIndex,
+            chapterIndex: latestSegment.chapterIndex,
             type: "generated",
             generationMode: "dialogue",
             text: input.generatedText.trim(),
@@ -1098,6 +1150,10 @@ export class StorylineService {
           .values({
             storylineId: internalStorylineId,
             orderIndex: latestSegment.orderIndex + 1,
+            chapterIndex:
+              input.generationMode === "append"
+                ? latestSegment.chapterIndex + 1
+                : latestSegment.chapterIndex,
             type: "generated",
             generationMode: input.generationMode,
             text: input.generatedText.trim(),
@@ -1153,7 +1209,11 @@ export class StorylineService {
   private async getCompletedSnapshot(
     savedIds: Readonly<{ storylineId: number; generatedSegmentId: number }>,
   ): Promise<CompletedStorylineSnapshot> {
-    const snapshot = await this.getSnapshotByInternalId(savedIds.storylineId);
+    const snapshot = await this.getSnapshotByInternalId(savedIds.storylineId, {
+      anchorPage: "latest",
+      before: STORYLINE_CHAPTER_CACHE_RADIUS,
+      after: 0,
+    });
     if (snapshot === null) {
       throw new StorylineSaveFailedError(
         "Completed storyline snapshot missing",
@@ -1181,26 +1241,64 @@ export class StorylineService {
 
   private async getSnapshotByInternalId(
     storylineId: number,
+    options: StorylineWindowOptions,
   ): Promise<StorylineSnapshot | null> {
-    const [storyline] = await this.databaseService.db
-      .select()
-      .from(storylines)
-      .where(eq(storylines.id, storylineId))
-      .limit(1);
+    const [[storyline], [latestSegment]] = await Promise.all([
+      this.databaseService.db
+        .select()
+        .from(storylines)
+        .where(eq(storylines.id, storylineId))
+        .limit(1),
+      this.databaseService.db
+        .select()
+        .from(storylineSegments)
+        .where(eq(storylineSegments.storylineId, storylineId))
+        .orderBy(desc(storylineSegments.orderIndex))
+        .limit(1),
+    ]);
 
     if (storyline === undefined) {
       return null;
     }
 
-    const segments = await this.getSegmentsByInternalStorylineId(storyline.id);
-    if (segments.length === 0) {
+    if (latestSegment === undefined) {
       throw new InternalServerErrorException("Storyline has no segments");
     }
 
+    const chapterCount = latestSegment.chapterIndex;
+    const anchorPage = clampChapterPage(
+      options.anchorPage === "latest" ? chapterCount : options.anchorPage,
+      chapterCount,
+    );
+    const startPage = Math.max(
+      1,
+      anchorPage - clampWindowDistance(options.before),
+    );
+    const endPage = Math.min(
+      chapterCount,
+      anchorPage + clampWindowDistance(options.after),
+    );
+    const segments = await this.databaseService.db
+      .select()
+      .from(storylineSegments)
+      .where(
+        and(
+          eq(storylineSegments.storylineId, storyline.id),
+          gte(storylineSegments.chapterIndex, startPage),
+          lte(storylineSegments.chapterIndex, endPage),
+        ),
+      )
+      .orderBy(storylineSegments.orderIndex);
+
     return {
       id: String(storyline.id),
-      segments: segments.map(mapSegmentDto),
-      latestGeneration: getLatestGenerationMetadata(segments),
+      chapters: mapChapterDtos(segments),
+      chapterCount,
+      anchorPage,
+      latestGeneration:
+        latestSegment.type === "generated"
+          ? mapGenerationMetadata(latestSegment)
+          : null,
       updatedAt: dateToIsoString(storyline.updatedAt),
     };
   }
@@ -1254,54 +1352,74 @@ function mapSegmentDto(segment: StorylineSegmentRow): StorylineSegmentDto {
   };
 }
 
-function mapListItemDto(
-  storyline: StorylineRow,
+function mapChapterDtos(
   segments: readonly StorylineSegmentRow[],
-): StorylineListItem {
-  if (segments.length === 0) {
-    throw new InternalServerErrorException("Storyline has no segments");
+): StorylineChapter[] {
+  const chapters = new Map<number, StorylineSegmentDto[]>();
+
+  for (const segment of segments) {
+    const chapterSegments = chapters.get(segment.chapterIndex) ?? [];
+    chapterSegments.push(mapSegmentDto(segment));
+    chapters.set(segment.chapterIndex, chapterSegments);
   }
 
-  const initialSegment = segments.find((segment) => segment.type === "initial");
-  if (initialSegment === undefined) {
+  return [...chapters.entries()].map(([pageNumber, chapterSegments]) => ({
+    pageNumber,
+    segments: chapterSegments,
+  }));
+}
+
+function mapListItemDto(
+  storyline: Readonly<{
+    id: number;
+    updatedAt: Date;
+    initialText: string;
+    latestText: string;
+    segmentCount: number;
+    chapterCount: number;
+  }>,
+): StorylineListItem {
+  if (
+    typeof storyline.initialText !== "string" ||
+    storyline.initialText.length === 0
+  ) {
     throw new InternalServerErrorException(
       "Storyline initial segment is missing",
     );
   }
 
-  const latestSegment = segments[segments.length - 1];
-  if (latestSegment === undefined) {
+  if (
+    typeof storyline.latestText !== "string" ||
+    storyline.latestText.length === 0
+  ) {
     throw new InternalServerErrorException("Storyline has no latest segment");
+  }
+
+  const segmentCount = Number(storyline.segmentCount);
+  const chapterCount = Number(storyline.chapterCount);
+  if (
+    !Number.isInteger(segmentCount) ||
+    segmentCount < 1 ||
+    !Number.isInteger(chapterCount) ||
+    chapterCount < 1
+  ) {
+    throw new InternalServerErrorException("Storyline counts are invalid");
   }
 
   return {
     id: String(storyline.id),
     title: truncateSnippet(
-      getFirstNonEmptyLine(getStorylineTitleSourceText(initialSegment.text)),
+      getFirstNonEmptyLine(getStorylineTitleSourceText(storyline.initialText)),
       storylineListTitleMaxLength,
     ),
     preview: truncateSnippet(
-      normalizeSnippet(latestSegment.text),
+      normalizeSnippet(storyline.latestText),
       storylineListPreviewMaxLength,
     ),
     updatedAt: dateToIsoString(storyline.updatedAt),
-    segmentCount: segments.length,
-    chapterCount: countChapters(segments),
+    segmentCount,
+    chapterCount,
   };
-}
-
-function getLatestGenerationMetadata(
-  segments: readonly StorylineSegmentRow[],
-): StorylineGenerationMetadata | null {
-  const latestGeneratedSegment = [...segments]
-    .reverse()
-    .find((segment) => segment.type === "generated");
-
-  if (latestGeneratedSegment === undefined) {
-    return null;
-  }
-
-  return mapGenerationMetadata(latestGeneratedSegment);
 }
 
 function validateRewritableSegment(
@@ -1761,13 +1879,23 @@ function getRequiredGenerationMode(
   return value;
 }
 
-function countChapters(segments: readonly StorylineSegmentRow[]): number {
-  return segments.filter(
-    (segment) =>
-      segment.type === "initial" ||
-      (segment.type === "generated" &&
-        getRequiredGenerationMode(segment.generationMode) === "append"),
-  ).length;
+function clampChapterPage(page: number, chapterCount: number): number {
+  if (!Number.isFinite(page)) {
+    return chapterCount;
+  }
+
+  return Math.min(Math.max(Math.trunc(page), 1), chapterCount);
+}
+
+function clampWindowDistance(distance: number): number {
+  if (!Number.isFinite(distance)) {
+    return STORYLINE_CHAPTER_CACHE_RADIUS;
+  }
+
+  return Math.min(
+    Math.max(Math.trunc(distance), 0),
+    STORYLINE_CHAPTER_CACHE_RADIUS,
+  );
 }
 
 function parseAuthenticatedUserId(userId: string): number {

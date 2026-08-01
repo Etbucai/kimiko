@@ -123,19 +123,31 @@ describe("RealtimeGateway (e2e)", () => {
       requestId: "request-1",
       generatedSegmentId: expect.stringMatching(/^[1-9]\d*$/) as string,
       storyline: {
-        id: expect.stringMatching(/^[1-9]\d*$/) as string,
-        segments: [
+        anchorPage: 2,
+        chapterCount: 2,
+        chapters: [
           {
-            id: expect.stringMatching(/^[1-9]\d*$/) as string,
-            type: "initial",
-            text: "雨停以后。",
+            pageNumber: 1,
+            segments: [
+              {
+                id: expect.stringMatching(/^[1-9]\d*$/) as string,
+                type: "initial",
+                text: "雨停以后。",
+              },
+            ],
           },
           {
-            id: expect.stringMatching(/^[1-9]\d*$/) as string,
-            type: "generated",
-            text: "林夏走向钟楼。",
+            pageNumber: 2,
+            segments: [
+              {
+                id: expect.stringMatching(/^[1-9]\d*$/) as string,
+                type: "generated",
+                text: "林夏走向钟楼。",
+              },
+            ],
           },
         ],
+        id: expect.stringMatching(/^[1-9]\d*$/) as string,
         latestGeneration: {
           segmentId: expect.stringMatching(/^[1-9]\d*$/) as string,
           model: "story-model",
@@ -167,14 +179,25 @@ describe("RealtimeGateway (e2e)", () => {
 
     expect(recentStoryline.storyline).toMatchObject({
       id: expect.stringMatching(/^[1-9]\d*$/) as string,
-      segments: [
+      chapterCount: 2,
+      chapters: [
         {
-          type: "initial",
-          text: "雨停以后。",
+          pageNumber: 1,
+          segments: [
+            {
+              type: "initial",
+              text: "雨停以后。",
+            },
+          ],
         },
         {
-          type: "generated",
-          text: "林夏走向钟楼。",
+          pageNumber: 2,
+          segments: [
+            {
+              type: "generated",
+              text: "林夏走向钟楼。",
+            },
+          ],
         },
       ],
     });
@@ -292,6 +315,27 @@ describe("RealtimeGateway (e2e)", () => {
 
     expect(detailResult.storyline).toEqual(secondStoryline.storyline);
 
+    const firstChapterResponse = await request(app.getHttpServer())
+      .get(
+        `/storylines/${secondStoryline.storyline.id}?anchorPage=1&before=0&after=0`,
+      )
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect(200);
+    const firstChapterResult = GetStorylineResponseSchema.parse(
+      firstChapterResponse.body as unknown,
+    );
+    expect(firstChapterResult.storyline).toMatchObject({
+      anchorPage: 1,
+      chapterCount: 2,
+    });
+    expect(firstChapterResult.storyline.chapters).toHaveLength(1);
+    expect(firstChapterResult.storyline.chapters[0]?.pageNumber).toBe(1);
+
+    await request(app.getHttpServer())
+      .get(`/storylines/${secondStoryline.storyline.id}?before=4`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect(400);
+
     socket.close();
   });
 
@@ -376,7 +420,11 @@ describe("RealtimeGateway (e2e)", () => {
       recentResponse.body as unknown,
     );
 
-    expect(recentStoryline.storyline?.segments).toHaveLength(11);
+    expect(recentStoryline.storyline).toMatchObject({
+      anchorPage: 11,
+      chapterCount: 11,
+    });
+    expect(recentStoryline.storyline?.chapters).toHaveLength(4);
 
     socket.close();
   });
@@ -517,7 +565,9 @@ describe("RealtimeGateway (e2e)", () => {
     const detailResult = GetStorylineResponseSchema.parse(
       detailResponse.body as unknown,
     );
-    expect(detailResult.storyline.segments.at(-1)).toMatchObject({
+    expect(
+      detailResult.storyline.chapters.at(-1)?.segments.at(-1),
+    ).toMatchObject({
       type: "generated",
       text: "林夏走向钟楼。",
     });

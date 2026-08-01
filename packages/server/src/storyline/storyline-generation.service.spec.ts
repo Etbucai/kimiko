@@ -698,23 +698,39 @@ function createCompletedStoryline(input: {
   readonly latestText: string;
   readonly latestGenerationMode?: "append" | "dialogue";
 }): CompletedStorylineSnapshot {
+  const latestSegment = {
+    id: "3",
+    type: "generated" as const,
+    generationMode: input.latestGenerationMode ?? "append",
+    text: input.latestText,
+  };
+  const latestIsDialogue = latestSegment.generationMode === "dialogue";
+
   return {
-    id: "10",
-    segments: [
-      { id: "1", type: "initial", text: "雨停以后。" },
+    anchorPage: latestIsDialogue ? 2 : 3,
+    chapterCount: latestIsDialogue ? 2 : 3,
+    chapters: [
       {
-        id: "2",
-        type: "generated",
-        generationMode: "append",
-        text: "林夏走向钟楼。",
+        pageNumber: 1,
+        segments: [{ id: "1", type: "initial", text: "雨停以后。" }],
       },
       {
-        id: "3",
-        type: "generated",
-        generationMode: input.latestGenerationMode ?? "append",
-        text: input.latestText,
+        pageNumber: 2,
+        segments: [
+          {
+            id: "2",
+            type: "generated",
+            generationMode: "append",
+            text: "林夏走向钟楼。",
+          },
+          ...(latestIsDialogue ? [latestSegment] : []),
+        ],
       },
+      ...(latestIsDialogue
+        ? []
+        : [{ pageNumber: 3, segments: [latestSegment] }]),
     ],
+    id: "10",
     latestGeneration: {
       segmentId: "3",
       model: "model",

@@ -26,6 +26,7 @@ import {
   getRecentStoryline,
   getStoryGenerationStatus,
   getStoryline,
+  type StorylineWindowQuery,
 } from "../../story/storylineApi";
 import {
   clearStoryReasoningHandoff,
@@ -66,7 +67,13 @@ import type { StorySettingDetailStatus } from "./StorySettingDetailView";
 import { StorySettingEntryButton } from "./StorySettingEntryButton";
 import { StorySettingListView } from "./StorySettingListView";
 import type { StorySettingListStatus } from "./StorySettingListView";
-import { getLatestGeneratedSegmentId } from "./storylineSegmentUtils";
+import {
+  findStorylineChapter,
+  getMissingChapterPages,
+  mergeStorylineWindow,
+  STORYLINE_CHAPTER_CACHE_RADIUS,
+  trimStorylineWindow,
+} from "./storylineChapterCache";
 
 type StorylinePageStatus =
   | "loading"
@@ -100,6 +107,7 @@ type PayloadValidationResult =
   | Readonly<{ success: false; fieldErrors: StorylineFieldErrors }>;
 
 type TemporaryTextStatus = "streaming" | "updatingContext" | null;
+type ChapterLoadStatus = "idle" | "loading" | "failed";
 type BackgroundGenerationTask = StoryGenerationTask;
 type GenerationIntent =
   | Readonly<{ type: "create" }>
@@ -133,6 +141,7 @@ const generationCompletedMessage = "生成已完成";
 const generationRefreshFailureMessage = "生成已完成，但刷新故事线失败，请重试";
 const backgroundStatusFailureMessage = "后台生成状态暂时不可用，稍后自动重试";
 const restoreFailureMessage = "恢复故事线失败，请稍后重试";
+const chapterLoadFailureMessage = "加载章节失败，请稍后重试";
 const settingListFailureMessage = "加载设定列表失败，请稍后重试";
 const settingDetailFailureMessage = "加载设定失败，请稍后重试";
 const settingCompletionFailureMessage = "补全设定失败，请稍后重试";
@@ -160,7 +169,10 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   const contentScrollRef = useRef<HTMLElement | null>(null);
   const isMountedRef = useRef(false);
   const previousReaderPageIndexRef = useRef<number | null>(null);
+  const readerPageIndexRef = useRef<number | null>(null);
   const restoreRequestIdRef = useRef(0);
+  const chapterRequestIdRef = useRef(0);
+  const chapterPrefetchRequestIdRef = useRef(0);
 
   const [status, setStatus] = useState<StorylinePageStatus>("loading");
   const [storyline, setStoryline] = useState<StorylineSnapshot | null>(null);
@@ -199,6 +211,14 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   const [readerPageIndex, setReaderPageIndex] = useState<number | null>(null);
   const [readerViewport, setReaderViewport] =
     useState<StorylineReaderViewportState | null>(null);
+  const [chapterLoadStatus, setChapterLoadStatus] =
+    useState<ChapterLoadStatus>("idle");
+  const [chapterLoadErrorMessage, setChapterLoadErrorMessage] = useState(
+    chapterLoadFailureMessage,
+  );
+  const [chapterReturnPageIndex, setChapterReturnPageIndex] = useState<
+    number | null
+  >(null);
   const [fieldErrors, setFieldErrors] = useState<StorylineFieldErrors>({});
   const [restoreErrorTitle, setRestoreErrorTitle] = useState("故事线恢复失败");
   const [restoreErrorMessage, setRestoreErrorMessage] = useState(
@@ -206,7 +226,9 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   );
   const [generationStatusMessage, setGenerationStatusMessage] = useState("");
   const [newStoryView, setNewStoryView] = useState<NewStoryView>(() =>
-    mode === "new" ? parseNewStoryViewFromCurrentLocation() : { type: "manual" },
+    mode === "new"
+      ? parseNewStoryViewFromCurrentLocation()
+      : { type: "manual" },
   );
   const [storySettingListStatus, setStorySettingListStatus] =
     useState<StorySettingListStatus>("loading");
@@ -238,7 +260,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     status === "saving";
   const temporaryTextStatus = getTemporaryTextStatus(status);
   const latestGeneratedSegmentId =
-    storyline === null ? null : getLatestGeneratedSegmentId(storyline.segments);
+    storyline?.latestGeneration?.segmentId ?? null;
   const availableActions: readonly StoryActionKind[] =
     latestGeneratedSegmentId === null
       ? ["append", "dialogue"]
@@ -246,6 +268,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   const isActionFabVisible =
     storyline !== null &&
     activeDrawerMode === null &&
+    chapterLoadStatus === "idle" &&
     (isGenerating || readerViewport?.isViewingLatestPage === true);
   const contentBottomPaddingClassName =
     storyline === null
@@ -267,6 +290,8 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     isStoryReaderVisible &&
     readerViewport !== null &&
     readerViewport.pageCount > 0;
+  const loadedChapterPageKey =
+    storyline?.chapters.map((chapter) => chapter.pageNumber).join(",") ?? "";
 
   const clearBackgroundPoll = useCallback((): void => {
     if (backgroundPollTimerRef.current === null) {
@@ -299,9 +324,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     }
 
     setStorySettings(result.settings);
-    setStorySettingListStatus(
-      result.settings.length === 0 ? "empty" : "ready",
-    );
+    setStorySettingListStatus(result.settings.length === 0 ? "empty" : "ready");
   }, [navigate]);
 
   const loadStorySetting = useCallback(
@@ -332,9 +355,43 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     [navigate],
   );
 
+  const applyLoadedStorylineWindow = useCallback(
+    (
+      incomingStoryline: StorylineSnapshot,
+      preferredPage: number | "latest",
+    ): void => {
+      const pageNumber =
+        preferredPage === "latest"
+          ? incomingStoryline.anchorPage
+          : clampReaderPage(preferredPage, incomingStoryline.chapterCount);
+      const pageIndex = pageNumber - 1;
+
+      readerPageIndexRef.current = pageIndex;
+      setReaderPageIndex(pageIndex);
+      setReaderViewport(
+        buildReaderViewport(pageIndex, incomingStoryline.chapterCount),
+      );
+      setStoryline((currentStoryline) =>
+        mergeStorylineWindow(currentStoryline, incomingStoryline, pageNumber),
+      );
+      setChapterLoadStatus("idle");
+      setChapterLoadErrorMessage(chapterLoadFailureMessage);
+      setChapterReturnPageIndex(null);
+      replaceStorylinePageInUrl(pageNumber, incomingStoryline.chapterCount);
+    },
+    [],
+  );
+
   const restoreStorylineSnapshot = useCallback(
     async (targetStorylineId: StorylineId): Promise<boolean> => {
-      const result = await getStoryline(targetStorylineId);
+      const currentPage =
+        readerPageIndexRef.current === null
+          ? "latest"
+          : readerPageIndexRef.current + 1;
+      const result = await getStoryline(
+        targetStorylineId,
+        buildStorylineWindowQuery(currentPage),
+      );
       if (!isMountedRef.current) {
         return false;
       }
@@ -357,10 +414,10 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
         return false;
       }
 
-      setStoryline(result.storyline);
+      applyLoadedStorylineWindow(result.storyline, currentPage);
       return true;
     },
-    [navigate],
+    [applyLoadedStorylineWindow, navigate],
   );
 
   const handleBackgroundTask = useCallback(
@@ -474,9 +531,15 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     settingCompletionHandleRef.current?.close();
     settingCompletionHandleRef.current = null;
     previousReaderPageIndexRef.current = null;
+    readerPageIndexRef.current = null;
+    chapterRequestIdRef.current += 1;
+    chapterPrefetchRequestIdRef.current += 1;
     setBackgroundTask(null);
     setReaderPageIndex(null);
     setReaderViewport(null);
+    setChapterLoadStatus("idle");
+    setChapterLoadErrorMessage(chapterLoadFailureMessage);
+    setChapterReturnPageIndex(null);
     setStatus("loading");
     setTemporaryAppendText("");
     setTemporaryDialogueText("");
@@ -520,10 +583,12 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
       return;
     }
 
+    const requestedPage = readStorylinePageFromCurrentLocation();
+    const windowQuery = buildStorylineWindowQuery(requestedPage);
     const result =
       mode === "detail" && storylineId !== undefined
-        ? await getStoryline(storylineId)
-        : await getRecentStoryline();
+        ? await getStoryline(storylineId, windowQuery)
+        : await getRecentStoryline(windowQuery);
     if (!isMountedRef.current || restoreRequestIdRef.current !== requestId) {
       return;
     }
@@ -548,7 +613,6 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
       return;
     }
 
-    setStoryline(result.storyline);
     setInitialStoryText("");
     setAppendInstruction("");
     setSubmittedCreateDraft(null);
@@ -557,10 +621,12 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     setRewriteTargetSegmentId(null);
     setComposerMode("append");
     if (result.storyline === null) {
+      setStoryline(null);
       setStatus("empty");
       return;
     }
 
+    applyLoadedStorylineWindow(result.storyline, requestedPage);
     const statusResult = await getStoryGenerationStatus(result.storyline.id);
     if (!isMountedRef.current || restoreRequestIdRef.current !== requestId) {
       return;
@@ -586,7 +652,14 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     }
 
     await handleBackgroundTask(statusResult.task, result.storyline.id);
-  }, [clearBackgroundPoll, handleBackgroundTask, mode, navigate, storylineId]);
+  }, [
+    applyLoadedStorylineWindow,
+    clearBackgroundPoll,
+    handleBackgroundTask,
+    mode,
+    navigate,
+    storylineId,
+  ]);
 
   useEffect(() => {
     if (mode === "detail" && storylineId !== undefined) {
@@ -617,6 +690,122 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     clearBackgroundPoll,
     pollBackgroundTask,
     storyline?.id,
+  ]);
+
+  useEffect(() => {
+    if (storyline === null || readerPageIndex === null) {
+      return;
+    }
+
+    const pageCount =
+      storyline.chapterCount +
+      (activeGenerationIntent?.type === "append" ? 1 : 0);
+    replaceStorylinePageInUrl(
+      clampReaderPage(readerPageIndex + 1, pageCount),
+      pageCount,
+    );
+  }, [activeGenerationIntent?.type, readerPageIndex, storyline]);
+
+  useEffect(() => {
+    if (
+      storyline === null ||
+      readerPageIndex === null ||
+      chapterLoadStatus !== "idle" ||
+      (activeGenerationIntent?.type === "append" &&
+        readerPageIndex === storyline.chapterCount)
+    ) {
+      return undefined;
+    }
+
+    const currentPageNumber = readerPageIndex + 1;
+    const missingPages = getMissingChapterPages(storyline, currentPageNumber);
+    const firstMissingPage = missingPages[0];
+    if (firstMissingPage === undefined) {
+      return undefined;
+    }
+
+    let lastMissingPage = firstMissingPage;
+    for (const pageNumber of missingPages.slice(1)) {
+      if (
+        pageNumber !== lastMissingPage + 1 ||
+        pageNumber - firstMissingPage > STORYLINE_CHAPTER_CACHE_RADIUS
+      ) {
+        break;
+      }
+      lastMissingPage = pageNumber;
+    }
+
+    const requestId = chapterPrefetchRequestIdRef.current + 1;
+    chapterPrefetchRequestIdRef.current = requestId;
+    void getStoryline(storyline.id, {
+      anchorPage: firstMissingPage,
+      before: 0,
+      after: lastMissingPage - firstMissingPage,
+    }).then((result) => {
+      if (
+        !isMountedRef.current ||
+        chapterPrefetchRequestIdRef.current !== requestId
+      ) {
+        return;
+      }
+
+      if (result.status === "authRequired") {
+        void navigate("/login", { replace: true });
+        return;
+      }
+
+      if (result.status === "notFound") {
+        setStoryline(null);
+        setRestoreErrorTitle(notFoundFailureTitle);
+        setRestoreErrorMessage(result.message);
+        setStatus("restoreFailed");
+        return;
+      }
+
+      if (result.status === "failed") {
+        return;
+      }
+
+      const latestPageIndex = readerPageIndexRef.current;
+      if (latestPageIndex === null) {
+        return;
+      }
+
+      const latestPageNumber = clampReaderPage(
+        latestPageIndex + 1,
+        result.storyline.chapterCount,
+      );
+      setStoryline((currentStoryline) =>
+        mergeStorylineWindow(
+          currentStoryline,
+          result.storyline,
+          latestPageNumber,
+        ),
+      );
+      if (latestPageNumber - 1 !== latestPageIndex) {
+        readerPageIndexRef.current = latestPageNumber - 1;
+        setReaderPageIndex(latestPageNumber - 1);
+      }
+      setReaderViewport(
+        buildReaderViewport(
+          latestPageNumber - 1,
+          result.storyline.chapterCount,
+        ),
+      );
+      replaceStorylinePageInUrl(
+        latestPageNumber,
+        result.storyline.chapterCount,
+      );
+    });
+
+    return undefined;
+  }, [
+    activeGenerationIntent?.type,
+    chapterLoadStatus,
+    loadedChapterPageKey,
+    navigate,
+    readerPageIndex,
+    storyline,
   ]);
 
   useEffect(() => {
@@ -715,6 +904,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     (state: StorylineReaderViewportState): void => {
       const previousPageIndex = previousReaderPageIndexRef.current;
       previousReaderPageIndexRef.current = state.currentPageIndex;
+      readerPageIndexRef.current = state.currentPageIndex;
       setReaderPageIndex(state.currentPageIndex);
       setReaderViewport(state);
 
@@ -731,8 +921,52 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     [],
   );
 
+  async function loadReaderChapter(
+    targetPageIndex: number,
+    returnPageIndex: number | null,
+  ): Promise<void> {
+    if (storyline === null) {
+      return;
+    }
+
+    const requestId = chapterRequestIdRef.current + 1;
+    chapterRequestIdRef.current = requestId;
+    setChapterLoadStatus("loading");
+    setChapterLoadErrorMessage(chapterLoadFailureMessage);
+    setChapterReturnPageIndex(returnPageIndex);
+
+    const result = await getStoryline(
+      storyline.id,
+      buildStorylineWindowQuery(targetPageIndex + 1),
+    );
+    if (!isMountedRef.current || chapterRequestIdRef.current !== requestId) {
+      return;
+    }
+
+    if (result.status === "authRequired") {
+      void navigate("/login", { replace: true });
+      return;
+    }
+
+    if (result.status === "notFound") {
+      setStoryline(null);
+      setRestoreErrorTitle(notFoundFailureTitle);
+      setRestoreErrorMessage(result.message);
+      setStatus("restoreFailed");
+      return;
+    }
+
+    if (result.status === "failed") {
+      setChapterLoadErrorMessage(result.message);
+      setChapterLoadStatus("failed");
+      return;
+    }
+
+    applyLoadedStorylineWindow(result.storyline, targetPageIndex + 1);
+  }
+
   function handleReaderPageChange(nextPageIndex: number): void {
-    if (readerViewport === null) {
+    if (readerViewport === null || chapterLoadStatus === "loading") {
       return;
     }
 
@@ -744,7 +978,67 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
       return;
     }
 
+    const returnPageIndex = readerViewport.currentPageIndex;
+    const pageNumber = safePageIndex + 1;
+    readerPageIndexRef.current = safePageIndex;
     setReaderPageIndex(safePageIndex);
+    setReaderViewport(
+      buildReaderViewport(safePageIndex, readerViewport.pageCount),
+    );
+    setChapterLoadStatus("idle");
+    setChapterReturnPageIndex(returnPageIndex);
+    replaceStorylinePageInUrl(pageNumber, readerViewport.pageCount);
+    contentScrollRef.current?.scrollTo({ behavior: "auto", top: 0 });
+
+    if (storyline === null) {
+      return;
+    }
+
+    if (
+      pageNumber === storyline.chapterCount + 1 &&
+      activeGenerationIntent?.type === "append"
+    ) {
+      return;
+    }
+
+    setStoryline((currentStoryline) =>
+      currentStoryline === null
+        ? null
+        : trimStorylineWindow(currentStoryline, pageNumber),
+    );
+    if (findStorylineChapter(storyline, pageNumber) === undefined) {
+      void loadReaderChapter(safePageIndex, returnPageIndex);
+    }
+  }
+
+  function handleRetryChapterLoad(): void {
+    const currentPageIndex = readerPageIndexRef.current;
+    if (currentPageIndex === null) {
+      return;
+    }
+
+    void loadReaderChapter(currentPageIndex, chapterReturnPageIndex);
+  }
+
+  function handleReturnFromChapterError(): void {
+    if (storyline === null || chapterReturnPageIndex === null) {
+      return;
+    }
+
+    const pageNumber = chapterReturnPageIndex + 1;
+    readerPageIndexRef.current = chapterReturnPageIndex;
+    setReaderPageIndex(chapterReturnPageIndex);
+    setReaderViewport(
+      buildReaderViewport(chapterReturnPageIndex, storyline.chapterCount),
+    );
+    setChapterLoadStatus("idle");
+    setChapterReturnPageIndex(null);
+    setStoryline((currentStoryline) =>
+      currentStoryline === null
+        ? null
+        : trimStorylineWindow(currentStoryline, pageNumber),
+    );
+    replaceStorylinePageInUrl(pageNumber, storyline.chapterCount);
   }
 
   function handleSelectStoryAction(action: StoryActionKind): void {
@@ -753,9 +1047,8 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     }
 
     if (action === "rewrite") {
-      const latestGeneratedSegmentId = getLatestGeneratedSegmentId(
-        storyline.segments,
-      );
+      const latestGeneratedSegmentId =
+        storyline.latestGeneration?.segmentId ?? null;
       if (latestGeneratedSegmentId === null) {
         return;
       }
@@ -1007,7 +1300,9 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     if (result.status === "failed") {
       setSettingCompletionText("");
       setSettingCompletionStatus("idle");
-      toast.error(result.message.length > 0 ? result.message : settingSaveFailureMessage);
+      toast.error(
+        result.message.length > 0 ? result.message : settingSaveFailureMessage,
+      );
       return;
     }
 
@@ -1094,6 +1389,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     resetStoryReasoning();
     if (storyline === null) {
       previousReaderPageIndexRef.current = null;
+      readerPageIndexRef.current = null;
       setReaderPageIndex(null);
       setReaderViewport(null);
     }
@@ -1112,147 +1408,162 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     setStatus("connecting");
     generationHandleRef.current?.close();
 
-    generationHandleRef.current = startStoryRealtimeGeneration(
-      input.payload,
-      {
-        onStarted() {
-          setStatus("streaming");
-        },
-        onReasoning(delta) {
-          if (!hasReceivedStoryReasoningRef.current) {
-            hasReceivedStoryReasoningRef.current = true;
-            setIsStoryReasoningExpanded(
-              !hasReceivedStoryContentRef.current,
-            );
-          }
-          storyReasoningTextRef.current += delta;
-          setStoryReasoningText(storyReasoningTextRef.current);
-        },
-        onChunk(delta) {
-          setStatus("streaming");
-          if (!hasReceivedStoryContentRef.current) {
-            hasReceivedStoryContentRef.current = true;
-            setIsStoryReasoningExpanded(false);
-          }
-          if (intent.type === "rewrite") {
-            setTemporaryRewrite((previousDraft) => ({
-              targetSegmentId: intent.segmentId,
-              text: `${previousDraft?.text ?? ""}${delta}`,
-            }));
-            return;
-          }
-
-          if (intent.type === "dialogue") {
-            setTemporaryDialogueText(
-              (previousText) => `${previousText}${delta}`,
-            );
-            return;
-          }
-
-          setTemporaryAppendText((previousText) => `${previousText}${delta}`);
-        },
-        onContextStarted() {
-          setStatus("updatingContext");
-        },
-        onContextFailed(message) {
-          toast.error(message);
-        },
-        onCompleted(event) {
-          generationHandleRef.current = null;
-          setStoryline(event.storyline);
-          setTemporaryAppendText("");
-          setTemporaryDialogueText("");
-          setTemporaryRewrite(null);
-          setActiveGenerationIntent(null);
-          setGenerationStatusMessage("");
-          setStatus("completed");
-
-          if (intent.type === "create" || intent.type === "createFromSetting") {
-            setStoryReasoningHandoff({
-              reasoningText: storyReasoningTextRef.current,
-              storylineId: event.storyline.id,
-            });
-            setInitialStoryText("");
-            setAppendInstruction("");
-            setSettingOpening("");
-            setNewStoryView({ type: "manual" });
-            setSubmittedCreateDraft(null);
-            void navigate(`/storylines/${event.storyline.id}`, {
-              replace: true,
-            });
-            return;
-          }
-
-          if (intent.type === "append") {
-            setAppendInstruction("");
-            return;
-          }
-
-          if (intent.type === "dialogue") {
-            setDialogueInput("");
-            return;
-          }
-
-          setRewriteInstruction("");
-          setRewriteTargetSegmentId(null);
-          setComposerMode("append");
-        },
-        onCancelled() {
-          generationHandleRef.current = null;
-          resetStoryReasoning();
-          if (intent.type === "rewrite") {
-            setTemporaryRewrite(null);
-          } else if (intent.type === "dialogue") {
-            setTemporaryDialogueText("");
-          } else {
-            setTemporaryAppendText("");
-          }
-          setActiveGenerationIntent(null);
-          if (intent.type === "create") {
-            setSubmittedCreateDraft(null);
-            setGenerationStatusMessage(generationCancelledMessage);
-          } else if (intent.type === "createFromSetting") {
-            setSubmittedCreateDraft(null);
-            toast(generationCancelledMessage);
-          } else {
-            toast(generationCancelledMessage);
-          }
-          setStatus("cancelled");
-        },
-        onError(error) {
-          generationHandleRef.current = null;
-          if (error.code !== "UNKNOWN") {
-            resetStoryReasoning();
-          }
-          if (intent.type === "rewrite") {
-            setTemporaryRewrite(null);
-          } else if (intent.type === "dialogue") {
-            setTemporaryDialogueText("");
-          } else {
-            setTemporaryAppendText("");
-          }
-          setActiveGenerationIntent(null);
-          const message = getGenerationErrorMessage(error);
-          if (intent.type === "create") {
-            setSubmittedCreateDraft(null);
-            setGenerationStatusMessage(message);
-          } else if (intent.type === "createFromSetting") {
-            setSubmittedCreateDraft(null);
-            toast.error(message);
-          } else {
-            toast.error(message);
-          }
-          setStatus("failed");
-        },
-        onAuthRequired() {
-          generationHandleRef.current = null;
-          resetStoryReasoning();
-          setSubmittedCreateDraft(null);
-          setActiveGenerationIntent(null);
-          void navigate("/login", { replace: true });
-        },
+    generationHandleRef.current = startStoryRealtimeGeneration(input.payload, {
+      onStarted() {
+        setStatus("streaming");
       },
-    );
+      onReasoning(delta) {
+        if (!hasReceivedStoryReasoningRef.current) {
+          hasReceivedStoryReasoningRef.current = true;
+          setIsStoryReasoningExpanded(!hasReceivedStoryContentRef.current);
+        }
+        storyReasoningTextRef.current += delta;
+        setStoryReasoningText(storyReasoningTextRef.current);
+      },
+      onChunk(delta) {
+        setStatus("streaming");
+        if (!hasReceivedStoryContentRef.current) {
+          hasReceivedStoryContentRef.current = true;
+          setIsStoryReasoningExpanded(false);
+        }
+        if (intent.type === "rewrite") {
+          setTemporaryRewrite((previousDraft) => ({
+            targetSegmentId: intent.segmentId,
+            text: `${previousDraft?.text ?? ""}${delta}`,
+          }));
+          return;
+        }
+
+        if (intent.type === "dialogue") {
+          setTemporaryDialogueText((previousText) => `${previousText}${delta}`);
+          return;
+        }
+
+        setTemporaryAppendText((previousText) => `${previousText}${delta}`);
+      },
+      onContextStarted() {
+        setStatus("updatingContext");
+      },
+      onContextFailed(message) {
+        toast.error(message);
+      },
+      onCompleted(event) {
+        generationHandleRef.current = null;
+        setTemporaryAppendText("");
+        setTemporaryDialogueText("");
+        setTemporaryRewrite(null);
+        setActiveGenerationIntent(null);
+        setGenerationStatusMessage("");
+        setStatus("completed");
+
+        if (intent.type === "create" || intent.type === "createFromSetting") {
+          setStoryline(event.storyline);
+          setStoryReasoningHandoff({
+            reasoningText: storyReasoningTextRef.current,
+            storylineId: event.storyline.id,
+          });
+          setInitialStoryText("");
+          setAppendInstruction("");
+          setSettingOpening("");
+          setNewStoryView({ type: "manual" });
+          setSubmittedCreateDraft(null);
+          void navigate(`/storylines/${event.storyline.id}`, {
+            replace: true,
+          });
+          return;
+        }
+
+        const currentPageNumber = clampReaderPage(
+          (readerPageIndexRef.current ?? event.storyline.anchorPage - 1) + 1,
+          event.storyline.chapterCount,
+        );
+        const currentPageIndex = currentPageNumber - 1;
+        readerPageIndexRef.current = currentPageIndex;
+        setReaderPageIndex(currentPageIndex);
+        setReaderViewport(
+          buildReaderViewport(currentPageIndex, event.storyline.chapterCount),
+        );
+        setStoryline((currentStoryline) =>
+          mergeStorylineWindow(
+            currentStoryline,
+            event.storyline,
+            currentPageNumber,
+          ),
+        );
+        replaceStorylinePageInUrl(
+          currentPageNumber,
+          event.storyline.chapterCount,
+        );
+
+        if (intent.type === "append") {
+          setAppendInstruction("");
+          return;
+        }
+
+        if (intent.type === "dialogue") {
+          setDialogueInput("");
+          return;
+        }
+
+        setRewriteInstruction("");
+        setRewriteTargetSegmentId(null);
+        setComposerMode("append");
+      },
+      onCancelled() {
+        generationHandleRef.current = null;
+        resetStoryReasoning();
+        if (intent.type === "rewrite") {
+          setTemporaryRewrite(null);
+        } else if (intent.type === "dialogue") {
+          setTemporaryDialogueText("");
+        } else {
+          setTemporaryAppendText("");
+        }
+        setActiveGenerationIntent(null);
+        if (intent.type === "create") {
+          setSubmittedCreateDraft(null);
+          setGenerationStatusMessage(generationCancelledMessage);
+        } else if (intent.type === "createFromSetting") {
+          setSubmittedCreateDraft(null);
+          toast(generationCancelledMessage);
+        } else {
+          toast(generationCancelledMessage);
+        }
+        setStatus("cancelled");
+      },
+      onError(error) {
+        generationHandleRef.current = null;
+        if (error.code !== "UNKNOWN") {
+          resetStoryReasoning();
+        }
+        if (intent.type === "rewrite") {
+          setTemporaryRewrite(null);
+        } else if (intent.type === "dialogue") {
+          setTemporaryDialogueText("");
+        } else {
+          setTemporaryAppendText("");
+        }
+        setActiveGenerationIntent(null);
+        const message = getGenerationErrorMessage(error);
+        if (intent.type === "create") {
+          setSubmittedCreateDraft(null);
+          setGenerationStatusMessage(message);
+        } else if (intent.type === "createFromSetting") {
+          setSubmittedCreateDraft(null);
+          toast.error(message);
+        } else {
+          toast.error(message);
+        }
+        setStatus("failed");
+      },
+      onAuthRequired() {
+        generationHandleRef.current = null;
+        resetStoryReasoning();
+        setSubmittedCreateDraft(null);
+        setActiveGenerationIntent(null);
+        void navigate("/login", { replace: true });
+      },
+    });
   }
 
   function resetStoryReasoning(): void {
@@ -1481,7 +1792,9 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
               : handleAppendInstructionChange
           }
           onSubmit={handleSubmit}
-          value={composerMode === "rewrite" ? rewriteInstruction : appendInstruction}
+          value={
+            composerMode === "rewrite" ? rewriteInstruction : appendInstruction
+          }
         />
       </>
     );
@@ -1489,6 +1802,14 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
 
   const latestGeneration = storyline?.latestGeneration ?? null;
   const contextDebugStorylineId = storyline?.id ?? null;
+  const currentReaderPageNumber =
+    readerPageIndex === null ? null : readerPageIndex + 1;
+  const isCurrentChapterAvailable =
+    storyline === null ||
+    currentReaderPageNumber === null ||
+    findStorylineChapter(storyline, currentReaderPageNumber) !== undefined ||
+    (activeGenerationIntent?.type === "append" &&
+      currentReaderPageNumber === storyline.chapterCount + 1);
 
   return (
     <main
@@ -1521,14 +1842,20 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
             <>
               <ReasoningPanel
                 isExpanded={isStoryReasoningExpanded}
-                isThinking={
-                  isGenerating && !hasReceivedStoryContentRef.current
-                }
+                isThinking={isGenerating && !hasReceivedStoryContentRef.current}
                 onExpandedChange={setIsStoryReasoningExpanded}
                 text={storyReasoningText}
               />
 
-              {storyline !== null ? (
+              {storyline !== null && chapterLoadStatus === "failed" ? (
+                <StoryChapterLoadError
+                  message={chapterLoadErrorMessage}
+                  onBack={handleReturnFromChapterError}
+                  onRetry={handleRetryChapterLoad}
+                />
+              ) : storyline !== null && !isCurrentChapterAvailable ? (
+                <StoryChapterLoading />
+              ) : storyline !== null ? (
                 <StorylineReader
                   onViewportChange={handleReaderViewportChange}
                   pageIndex={readerPageIndex}
@@ -1585,9 +1912,15 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
       {isPaginationBarVisible && readerViewport !== null ? (
         <StoryPaginationBar
           isNextDisabled={
+            chapterLoadStatus === "loading" ||
+            !isCurrentChapterAvailable ||
             readerViewport.currentPageIndex >= readerViewport.pageCount - 1
           }
-          isPreviousDisabled={readerViewport.currentPageIndex === 0}
+          isPreviousDisabled={
+            chapterLoadStatus === "loading" ||
+            !isCurrentChapterAvailable ||
+            readerViewport.currentPageIndex === 0
+          }
           label={readerViewport.pageLabel}
           onNext={() =>
             handleReaderPageChange(readerViewport.currentPageIndex + 1)
@@ -1776,16 +2109,77 @@ function buildSubmittedCreateStoryline(
   draft: SubmittedCreateDraft,
 ): StorylineSnapshot {
   return {
-    id: submittedCreateStorylineId,
-    latestGeneration: null,
-    segments: [
+    anchorPage: 1,
+    chapterCount: 1,
+    chapters: [
       {
-        id: submittedCreateInitialSegmentId,
-        text: draft.initialStoryText,
-        type: "initial",
+        pageNumber: 1,
+        segments: [
+          {
+            id: submittedCreateInitialSegmentId,
+            text: draft.initialStoryText,
+            type: "initial",
+          },
+        ],
       },
     ],
+    id: submittedCreateStorylineId,
+    latestGeneration: null,
     updatedAt: submittedCreateUpdatedAt,
+  };
+}
+
+function buildStorylineWindowQuery(
+  anchorPage: number | "latest",
+): StorylineWindowQuery {
+  return {
+    anchorPage,
+    before: STORYLINE_CHAPTER_CACHE_RADIUS,
+    after: STORYLINE_CHAPTER_CACHE_RADIUS,
+  };
+}
+
+function readStorylinePageFromCurrentLocation(): number | "latest" {
+  const value = new URLSearchParams(window.location.search).get("page");
+  if (value === null || value.length === 0) {
+    return "latest";
+  }
+
+  if (!/^-?\d+$/.test(value)) {
+    return "latest";
+  }
+
+  const pageNumber = Number(value);
+  return Number.isSafeInteger(pageNumber) ? pageNumber : "latest";
+}
+
+function replaceStorylinePageInUrl(
+  pageNumber: number,
+  chapterCount: number,
+): void {
+  const url = new URL(window.location.href);
+  if (pageNumber >= chapterCount) {
+    url.searchParams.delete("page");
+  } else {
+    url.searchParams.set("page", String(pageNumber));
+  }
+  window.history.replaceState(window.history.state, "", url);
+}
+
+function clampReaderPage(pageNumber: number, chapterCount: number): number {
+  return Math.min(Math.max(pageNumber, 1), chapterCount);
+}
+
+function buildReaderViewport(
+  pageIndex: number,
+  pageCount: number,
+): StorylineReaderViewportState {
+  const safePageIndex = Math.min(Math.max(pageIndex, 0), pageCount - 1);
+  return {
+    currentPageIndex: safePageIndex,
+    isViewingLatestPage: safePageIndex === pageCount - 1,
+    pageCount,
+    pageLabel: `第 ${safePageIndex + 1} / ${pageCount} 章`,
   };
 }
 
@@ -1988,7 +2382,7 @@ function StoryPaginationBar({
           onClick={onPrevious}
           type="button"
         >
-          上一页
+          上一章
         </button>
         <p className="m-0 truncate text-center text-xs font-semibold text-(--text)">
           {label}
@@ -1999,7 +2393,7 @@ function StoryPaginationBar({
           onClick={onNext}
           type="button"
         >
-          下一页
+          下一章
         </button>
       </div>
     </footer>
@@ -2058,6 +2452,51 @@ function StorylineLoading(): JSX.Element {
       role="status"
     >
       <p className="m-0 text-base text-[var(--text)]">正在恢复故事线...</p>
+    </section>
+  );
+}
+
+function StoryChapterLoading(): JSX.Element {
+  return (
+    <section
+      aria-label="正在加载章节"
+      className="flex min-h-64 animate-pulse flex-col gap-5"
+      role="status"
+    >
+      <div className="mx-auto h-3 w-24 rounded-full bg-(--border)" />
+      <div className="h-4 w-full rounded-full bg-(--border)" />
+      <div className="h-4 w-11/12 rounded-full bg-(--border)" />
+      <div className="h-4 w-4/5 rounded-full bg-(--border)" />
+      <div className="h-4 w-full rounded-full bg-(--border)" />
+      <p className="sr-only">正在加载章节...</p>
+    </section>
+  );
+}
+
+function StoryChapterLoadError({
+  message,
+  onBack,
+  onRetry,
+}: {
+  message: string;
+  onBack: () => void;
+  onRetry: () => void;
+}): JSX.Element {
+  const buttonClassName =
+    "min-h-10 rounded-full border border-(--border) bg-transparent px-4 py-2 text-sm font-bold text-(--text-h) transition-[border-color,transform] hover:-translate-y-px hover:border-(--accent-border)";
+
+  return (
+    <section className="rounded-3xl border border-(--border) bg-(--panel-bg) p-6 text-center shadow-(--shadow)">
+      <h2 className="m-0 text-lg font-bold text-(--text-h)">章节加载失败</h2>
+      <p className="mt-3 mb-5 text-sm text-(--text)">{message}</p>
+      <div className="flex justify-center gap-3">
+        <button className={buttonClassName} onClick={onBack} type="button">
+          返回原章节
+        </button>
+        <button className={buttonClassName} onClick={onRetry} type="button">
+          重试
+        </button>
+      </div>
     </section>
   );
 }

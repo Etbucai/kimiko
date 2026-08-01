@@ -189,7 +189,7 @@ describe("StorylineService", () => {
     ).resolves.toMatchObject({
       pendingRoundCount: 0,
     });
-    expect(afterNoOp.segments.at(-1)).toMatchObject({
+    expect(afterNoOp.chapters.at(-1)?.segments.at(-1)).toMatchObject({
       type: "generated",
       generationMode: "dialogue",
       text: "无事发生",
@@ -198,6 +198,102 @@ describe("StorylineService", () => {
     const list = await storylineService.listStorylines("1");
     expect(list.storylines[0]?.segmentCount).toBe(3);
     expect(list.storylines[0]?.chapterCount).toBe(2);
+  });
+
+  it("returns bounded chapter windows and keeps dialogue in its chapter", async () => {
+    const created = await storylineService.saveCreatedStorylineWithContext({
+      userId: "1",
+      initialStoryText: "第一章。",
+      instruction: "写第二章。",
+      generatedText: "第二章。",
+      model: "story-model",
+      elapsedMs: 10,
+      usage: {
+        inputTokens: 1,
+        outputTokens: 1,
+        totalTokens: 2,
+      },
+      contextPatch: createContextPatch({
+        characterName: "林夏",
+        factText: "故事开始。",
+      }),
+    });
+
+    for (let chapter = 3; chapter <= 9; chapter += 1) {
+      await storylineService.saveAppendedSegment({
+        userId: "1",
+        storylineId: created.id,
+        instruction: `写第 ${chapter} 章。`,
+        targetLength: 250,
+        generatedText: `第 ${chapter} 章。`,
+        model: "story-model",
+        elapsedMs: 10,
+        usage: {
+          inputTokens: 1,
+          outputTokens: 1,
+          totalTokens: 2,
+        },
+      });
+    }
+
+    const previousContext = await storylineService.getStoryContextForUser(
+      "1",
+      created.id,
+    );
+    if (previousContext === null) {
+      throw new Error("Expected context");
+    }
+    const completed =
+      await storylineService.saveDialogueSegmentWithoutContextUpdate({
+        userId: "1",
+        storylineId: created.id,
+        input: "补充互动。",
+        generatedText: "第九章的互动。",
+        model: "dialogue-model",
+        elapsedMs: 5,
+        usage: {
+          inputTokens: 1,
+          outputTokens: 1,
+          totalTokens: 2,
+        },
+        previousContext,
+      });
+
+    expect(completed.chapterCount).toBe(9);
+    expect(completed.anchorPage).toBe(9);
+    expect(completed.chapters.map((chapter) => chapter.pageNumber)).toEqual([
+      6, 7, 8, 9,
+    ]);
+    expect(completed.chapters.at(-1)?.segments).toHaveLength(2);
+
+    const middle = await storylineService.getStorylineSnapshotForUser(
+      "1",
+      created.id,
+      { anchorPage: 5, before: 3, after: 3 },
+    );
+    expect(middle?.chapters.map((chapter) => chapter.pageNumber)).toEqual([
+      2, 3, 4, 5, 6, 7, 8,
+    ]);
+
+    const afterEnd = await storylineService.getStorylineSnapshotForUser(
+      "1",
+      created.id,
+      { anchorPage: 999, before: 3, after: 3 },
+    );
+    expect(afterEnd?.anchorPage).toBe(9);
+    expect(afterEnd?.chapters.map((chapter) => chapter.pageNumber)).toEqual([
+      6, 7, 8, 9,
+    ]);
+
+    const beforeStart = await storylineService.getStorylineSnapshotForUser(
+      "1",
+      created.id,
+      { anchorPage: -10, before: 3, after: 3 },
+    );
+    expect(beforeStart?.anchorPage).toBe(1);
+    expect(beforeStart?.chapters.map((chapter) => chapter.pageNumber)).toEqual([
+      1, 2, 3, 4,
+    ]);
   });
 
   it("builds rewrite context from previous context and rewrites latest segment in place", async () => {
@@ -292,7 +388,9 @@ describe("StorylineService", () => {
     expect(rewritten.latestGeneration.segmentId).toBe(
       appended.latestGeneration.segmentId,
     );
-    expect(rewritten.segments.at(-1)?.text).toBe("林夏轻快地推开钟楼木门。");
+    expect(rewritten.chapters.at(-1)?.segments.at(-1)?.text).toBe(
+      "林夏轻快地推开钟楼木门。",
+    );
     const segments = await databaseService.db
       .select()
       .from(storylineSegments)

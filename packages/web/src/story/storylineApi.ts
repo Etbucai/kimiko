@@ -14,6 +14,7 @@ import {
   GetStorylineResponseSchema,
   GetRecentStorylineResponseSchema,
   ListStorylinesResponseSchema,
+  STORYLINE_CHAPTER_CACHE_RADIUS,
   StoryGenerationStatusResponseSchema,
   StoryContextExtractionTaskResponseSchema,
 } from "@kimiko/schema";
@@ -85,19 +86,36 @@ export type GetRecentStorylineResult =
   | Readonly<{ status: "authRequired" }>
   | Readonly<{ status: "failed"; message: string }>;
 
-export async function getRecentStoryline(): Promise<GetRecentStorylineResult> {
+export interface StorylineWindowQuery {
+  readonly anchorPage: number | "latest";
+  readonly before: number;
+  readonly after: number;
+}
+
+const defaultStorylineWindowQuery: StorylineWindowQuery = {
+  anchorPage: "latest",
+  before: STORYLINE_CHAPTER_CACHE_RADIUS,
+  after: STORYLINE_CHAPTER_CACHE_RADIUS,
+};
+
+export async function getRecentStoryline(
+  query: StorylineWindowQuery = defaultStorylineWindowQuery,
+): Promise<GetRecentStorylineResult> {
   const authSession = getStoredAuthSession();
   if (authSession === null) {
     return { status: "authRequired" };
   }
 
   try {
-    const response = await fetch(`${API_BASE_URL}/storylines/recent`, {
-      headers: {
-        Authorization: `Bearer ${authSession.session.accessToken}`,
+    const response = await fetch(
+      buildStorylineWindowUrl("/storylines/recent", query),
+      {
+        headers: {
+          Authorization: `Bearer ${authSession.session.accessToken}`,
+        },
+        method: "GET",
       },
-      method: "GET",
-    });
+    );
 
     if (response.status === 401) {
       clearAuthSession();
@@ -140,6 +158,7 @@ export type GetStorylineResult =
 
 export async function getStoryline(
   storylineId: StorylineId,
+  query: StorylineWindowQuery = defaultStorylineWindowQuery,
 ): Promise<GetStorylineResult> {
   const authSession = getStoredAuthSession();
   if (authSession === null) {
@@ -148,7 +167,10 @@ export async function getStoryline(
 
   try {
     const response = await fetch(
-      `${API_BASE_URL}/storylines/${encodeURIComponent(storylineId)}`,
+      buildStorylineWindowUrl(
+        `/storylines/${encodeURIComponent(storylineId)}`,
+        query,
+      ),
       {
         headers: {
           Authorization: `Bearer ${authSession.session.accessToken}`,
@@ -195,6 +217,18 @@ export async function getStoryline(
       message: defaultRestoreErrorMessage,
     };
   }
+}
+
+function buildStorylineWindowUrl(
+  path: string,
+  query: StorylineWindowQuery,
+): string {
+  const searchParams = new URLSearchParams({
+    anchorPage: String(query.anchorPage),
+    before: String(query.before),
+    after: String(query.after),
+  });
+  return `${API_BASE_URL}${path}?${searchParams.toString()}`;
 }
 
 export type GetStorylineContextResult =
