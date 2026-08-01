@@ -139,7 +139,6 @@ const settingCompletionFailureMessage = "补全设定失败，请稍后重试";
 const settingRevisionFailureMessage = "修改设定失败，请稍后重试";
 const settingSaveFailureMessage = "保存设定失败，请稍后重试";
 const notFoundFailureTitle = "故事线不可用";
-const bottomScrollThresholdPx = 140;
 const backgroundPollIntervalMs = 2000;
 const submittedCreateStorylineId = "local-create-preview";
 const submittedCreateInitialSegmentId = "local-create-preview-initial";
@@ -158,9 +157,10 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   const hasReceivedSettingReasoningRef = useRef(false);
   const backgroundPollTimerRef = useRef<number | null>(null);
   const backgroundPollFailureNotifiedRef = useRef<boolean>(false);
+  const contentScrollRef = useRef<HTMLElement | null>(null);
   const isMountedRef = useRef(false);
+  const previousReaderPageIndexRef = useRef<number | null>(null);
   const restoreRequestIdRef = useRef(0);
-  const shouldFollowScrollRef = useRef(true);
 
   const [status, setStatus] = useState<StorylinePageStatus>("loading");
   const [storyline, setStoryline] = useState<StorylineSnapshot | null>(null);
@@ -246,7 +246,10 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     storyline !== null &&
     activeDrawerMode === null &&
     (isGenerating || readerViewport?.isViewingLatestPage === true);
-  const mainBottomPaddingClassName = storyline === null ? "pb-12" : "pb-28";
+  const contentBottomPaddingClassName =
+    storyline === null
+      ? "pb-[calc(3rem+env(safe-area-inset-bottom))]"
+      : "pb-[calc(7rem+env(safe-area-inset-bottom))]";
   const submittedCreateStoryline = useMemo<StorylineSnapshot | null>(
     () =>
       submittedCreateDraft === null
@@ -648,21 +651,6 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     return () => window.clearTimeout(timeoutId);
   }, [loadStorySetting, mode, newStoryView]);
 
-  useEffect(() => {
-    if (storyline !== null || !shouldFollowScrollRef.current) {
-      return undefined;
-    }
-
-    const frameId = requestAnimationFrame(() => {
-      window.scrollTo({
-        top: document.documentElement.scrollHeight,
-        behavior: "smooth",
-      });
-    });
-
-    return () => cancelAnimationFrame(frameId);
-  }, [status, storyline, temporaryAppendText]);
-
   function handleInitialStoryTextChange(value: string): void {
     setInitialStoryText(value);
     setFieldErrors((previousFieldErrors) =>
@@ -712,7 +700,19 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
 
   const handleReaderViewportChange = useCallback(
     (state: StorylineReaderViewportState): void => {
+      const previousPageIndex = previousReaderPageIndexRef.current;
+      previousReaderPageIndexRef.current = state.currentPageIndex;
       setReaderViewport(state);
+
+      if (
+        previousPageIndex !== null &&
+        previousPageIndex !== state.currentPageIndex
+      ) {
+        contentScrollRef.current?.scrollTo({
+          behavior: "auto",
+          top: 0,
+        });
+      }
     },
     [],
   );
@@ -1063,7 +1063,6 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     const intent = input.intent;
     resetStoryReasoning();
     setSubmittedCreateDraft(input.submittedCreateDraft);
-    shouldFollowScrollRef.current = intent.type !== "rewrite" && isNearBottom();
     setActiveDrawerMode(null);
     setActiveGenerationIntent(intent);
     setFieldErrors({});
@@ -1082,8 +1081,6 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
       input.payload,
       {
         onStarted() {
-          shouldFollowScrollRef.current =
-            intent.type !== "rewrite" && isNearBottom();
           setStatus("streaming");
         },
         onReasoning(delta) {
@@ -1117,12 +1114,9 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
             return;
           }
 
-          shouldFollowScrollRef.current = isNearBottom();
           setTemporaryAppendText((previousText) => `${previousText}${delta}`);
         },
         onContextStarted() {
-          shouldFollowScrollRef.current =
-            intent.type !== "rewrite" && isNearBottom();
           setStatus("updatingContext");
         },
         onContextFailed(message) {
@@ -1130,8 +1124,6 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
         },
         onCompleted(event) {
           generationHandleRef.current = null;
-          shouldFollowScrollRef.current =
-            intent.type !== "rewrite" && isNearBottom();
           setStoryline(event.storyline);
           setTemporaryAppendText("");
           setTemporaryDialogueText("");
@@ -1466,86 +1458,91 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   return (
     <main
       aria-label="StoryAgent"
-      className={`min-h-svh px-4 pt-[calc(6rem+env(safe-area-inset-top))] ${mainBottomPaddingClassName} [background:radial-gradient(circle_at_top_left,var(--accent-bg),transparent_28rem),var(--bg)] md:px-6 md:pt-[calc(6.5rem+env(safe-area-inset-top))]`}
+      className="story-page-viewport flex flex-col overflow-hidden [background:radial-gradient(circle_at_top_left,var(--accent-bg),transparent_28rem),var(--bg)]"
     >
       <StoryPageHeader
         contextDebugStorylineId={contextDebugStorylineId}
         onBackToList={handleGoToStorylineList}
         onOpenContextDebug={handleOpenContextDebug}
       />
-      <section className="mx-auto flex w-full max-w-3xl flex-col gap-5">
-        {status === "loading" ? <StorylineLoading /> : null}
+      <section
+        className={`scrollbar-hidden min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pt-5 ${contentBottomPaddingClassName} md:px-6 md:pt-6`}
+        ref={contentScrollRef}
+      >
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-5">
+          {status === "loading" ? <StorylineLoading /> : null}
 
-        {status === "restoreFailed" ? (
-          <StorylineRestoreError
-            title={restoreErrorTitle}
-            message={restoreErrorMessage}
-            onRetry={() => {
-              void restoreStoryline();
-            }}
-          />
-        ) : null}
-
-        {status !== "loading" && status !== "restoreFailed" ? (
-          <>
-            <ReasoningPanel
-              isExpanded={isStoryReasoningExpanded}
-              isThinking={
-                isGenerating && !hasReceivedStoryContentRef.current
-              }
-              onExpandedChange={setIsStoryReasoningExpanded}
-              text={storyReasoningText}
+          {status === "restoreFailed" ? (
+            <StorylineRestoreError
+              title={restoreErrorTitle}
+              message={restoreErrorMessage}
+              onRetry={() => {
+                void restoreStoryline();
+              }}
             />
+          ) : null}
 
-            {storyline !== null ? (
-              <StorylineReader
-                onViewportChange={handleReaderViewportChange}
-                storyline={storyline}
-                temporaryAppendText={temporaryAppendText}
-                temporaryAppendVisible={
-                  activeGenerationIntent?.type === "append"
+          {status !== "loading" && status !== "restoreFailed" ? (
+            <>
+              <ReasoningPanel
+                isExpanded={isStoryReasoningExpanded}
+                isThinking={
+                  isGenerating && !hasReceivedStoryContentRef.current
                 }
-                temporaryDialogueText={temporaryDialogueText}
-                temporaryDialogueVisible={
-                  activeGenerationIntent?.type === "dialogue"
-                }
-                temporaryRewrite={temporaryRewrite}
-                temporaryTextStatus={temporaryTextStatus}
+                onExpandedChange={setIsStoryReasoningExpanded}
+                text={storyReasoningText}
               />
-            ) : submittedCreateDraft !== null &&
-              submittedCreateStoryline !== null ? (
-              <StorylineReader
-                initialInstruction={submittedCreateDraft.instruction}
-                onViewportChange={handleReaderViewportChange}
-                storyline={submittedCreateStoryline}
-                temporaryAppendText={temporaryAppendText}
-                temporaryAppendVisible={
-                  activeGenerationIntent?.type === "create" ||
-                  activeGenerationIntent?.type === "createFromSetting"
-                }
-                temporaryDialogueText=""
-                temporaryDialogueVisible={false}
-                temporaryRewrite={null}
-                temporaryTextStatus={temporaryTextStatus}
-              />
-            ) : mode === "new" && newStoryView.type !== "manual" ? (
-              renderNewStoryView()
-            ) : (
-              renderManualCreateView()
-            )}
 
-            {latestGeneration !== null ? (
-              <LatestGenerationMetadata metadata={latestGeneration} />
-            ) : null}
+              {storyline !== null ? (
+                <StorylineReader
+                  onViewportChange={handleReaderViewportChange}
+                  storyline={storyline}
+                  temporaryAppendText={temporaryAppendText}
+                  temporaryAppendVisible={
+                    activeGenerationIntent?.type === "append"
+                  }
+                  temporaryDialogueText={temporaryDialogueText}
+                  temporaryDialogueVisible={
+                    activeGenerationIntent?.type === "dialogue"
+                  }
+                  temporaryRewrite={temporaryRewrite}
+                  temporaryTextStatus={temporaryTextStatus}
+                />
+              ) : submittedCreateDraft !== null &&
+                submittedCreateStoryline !== null ? (
+                <StorylineReader
+                  initialInstruction={submittedCreateDraft.instruction}
+                  onViewportChange={handleReaderViewportChange}
+                  storyline={submittedCreateStoryline}
+                  temporaryAppendText={temporaryAppendText}
+                  temporaryAppendVisible={
+                    activeGenerationIntent?.type === "create" ||
+                    activeGenerationIntent?.type === "createFromSetting"
+                  }
+                  temporaryDialogueText=""
+                  temporaryDialogueVisible={false}
+                  temporaryRewrite={null}
+                  temporaryTextStatus={temporaryTextStatus}
+                />
+              ) : mode === "new" && newStoryView.type !== "manual" ? (
+                renderNewStoryView()
+              ) : (
+                renderManualCreateView()
+              )}
 
-            {generationStatusMessage.length > 0 ? (
-              <GenerationStatusMessage
-                isError={status === "failed"}
-                message={generationStatusMessage}
-              />
-            ) : null}
-          </>
-        ) : null}
+              {latestGeneration !== null ? (
+                <LatestGenerationMetadata metadata={latestGeneration} />
+              ) : null}
+
+              {generationStatusMessage.length > 0 ? (
+                <GenerationStatusMessage
+                  isError={status === "failed"}
+                  message={generationStatusMessage}
+                />
+              ) : null}
+            </>
+          ) : null}
+        </div>
       </section>
 
       {activeDrawerMode !== null ? (
@@ -1772,12 +1769,6 @@ function getCurrentStoryUserId(): string | null {
   return getStoredAuthSession()?.me.userId ?? null;
 }
 
-function isNearBottom(): boolean {
-  const scrollBottom =
-    document.documentElement.scrollHeight - window.scrollY - window.innerHeight;
-  return scrollBottom <= bottomScrollThresholdPx;
-}
-
 function getTemporaryTextStatus(
   status: StorylinePageStatus,
 ): TemporaryTextStatus {
@@ -1928,8 +1919,8 @@ function StoryPageHeader({
   onOpenContextDebug,
 }: StoryPageHeaderProps): JSX.Element {
   return (
-    <header className="fixed inset-x-0 top-0 z-10 border-b border-[var(--border)] bg-[var(--panel-bg)] px-4 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3 shadow-[0_10px_24px_rgba(0,0,0,0.08)] backdrop-blur md:px-6">
-      <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-3">
+    <header className="z-10 box-border h-[calc(4.5rem+env(safe-area-inset-top))] shrink-0 border-b border-[var(--border)] bg-[var(--panel-bg)] px-4 pt-[env(safe-area-inset-top)] shadow-[0_10px_24px_rgba(0,0,0,0.08)] backdrop-blur md:px-6">
+      <div className="mx-auto flex h-full w-full max-w-3xl items-center justify-between gap-3">
         <div className="min-w-0">
           <p className="m-0 text-xs font-semibold text-[var(--accent)]">
             StoryAgent

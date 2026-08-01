@@ -296,7 +296,7 @@ export function StorylineReader({
       </div>
       <div
         ref={scrollerRef}
-        className="flex snap-x snap-mandatory items-start gap-0 overflow-x-auto overflow-y-hidden overscroll-x-none"
+        className="scrollbar-hidden flex snap-x snap-mandatory items-start gap-0 overflow-x-auto overflow-y-hidden overscroll-x-none"
         onScroll={handleScroll}
         style={scrollerStyle}
       >
