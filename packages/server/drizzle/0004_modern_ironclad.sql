@@ -1,0 +1,1 @@
+ALTER TABLE `storyline` ADD `title` text;

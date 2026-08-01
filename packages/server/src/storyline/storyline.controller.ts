@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  Body,
   ConflictException,
   Controller,
   Get,
@@ -11,6 +12,7 @@ import {
 } from "@nestjs/common";
 import type {
   CancelStoryGenerationResponse,
+  CopyStorylineResponse,
   GetRecentStorylineResponse,
   GetStorylineContextResponse,
   GetStorylineResponse,
@@ -22,7 +24,12 @@ import { STORYLINE_CHAPTER_CACHE_RADIUS } from "@kimiko/schema";
 import type { AuthenticatedUser } from "../auth/auth.types";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
-import { StorylineBusyError, StorylineNotFoundError } from "./storyline.errors";
+import {
+  StorylineBusyError,
+  StorylineCopyChapterOutOfRangeError,
+  StorylineNotFoundError,
+} from "./storyline.errors";
+import { StorylineCopyService } from "./storyline-copy.service";
 import { STORY_CONTEXT_AUTO_TRIGGER_ROUND_COUNT } from "./storyline-context-extraction.types";
 import { StoryContextExtractionTaskService } from "./story-context-extraction-task.service";
 import { StoryGenerationTaskService } from "./story-generation-task.service";
@@ -35,6 +42,7 @@ import {
 export class StorylineController {
   constructor(
     private readonly storylineService: StorylineService,
+    private readonly storylineCopyService: StorylineCopyService,
     private readonly taskService: StoryGenerationTaskService,
     private readonly contextExtractionTaskService: StoryContextExtractionTaskService,
   ) {}
@@ -59,6 +67,24 @@ export class StorylineController {
       user.userId,
       parseStorylineWindowOptions({ anchorPage, before, after }),
     );
+  }
+
+  @Post(":storylineId/copies")
+  @UseGuards(JwtAuthGuard)
+  async copy(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("storylineId") storylineId: string,
+    @Body() body: unknown,
+  ): Promise<CopyStorylineResponse> {
+    try {
+      return await this.storylineCopyService.copyStoryline({
+        body,
+        sourceStorylineId: storylineId,
+        userId: user.userId,
+      });
+    } catch (error: unknown) {
+      throw mapStorylineHttpError(error);
+    }
   }
 
   @Get(":storylineId/generation/status")
@@ -238,6 +264,10 @@ function mapStorylineHttpError(error: unknown): Error {
 
   if (error instanceof StorylineNotFoundError) {
     return new NotFoundException("Storyline not found");
+  }
+
+  if (error instanceof StorylineCopyChapterOutOfRangeError) {
+    return new BadRequestException("Storyline copy chapter is out of range");
   }
 
   return error instanceof Error ? error : new Error(String(error));

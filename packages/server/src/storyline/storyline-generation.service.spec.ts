@@ -731,6 +731,7 @@ function createCompletedStoryline(input: {
         : [{ pageNumber: 3, segments: [latestSegment] }]),
     ],
     id: "10",
+    title: "测试故事",
     latestGeneration: {
       segmentId: "3",
       model: "model",

@@ -249,6 +249,10 @@ export const StorylineIdSchema = z.string().trim().min(1);
 
 export type StorylineId = z.infer<typeof StorylineIdSchema>;
 
+export const StorylineTitleSchema = z.string().trim().min(1).max(80);
+
+export type StorylineTitle = z.infer<typeof StorylineTitleSchema>;
+
 export const StorylineSegmentIdSchema = z.string().trim().min(1);
 
 export type StorylineSegmentId = z.infer<typeof StorylineSegmentIdSchema>;
@@ -431,6 +435,7 @@ export type StorylineChapter = z.infer<typeof StorylineChapterSchema>;
 export const StorylineSnapshotSchema = z
   .object({
     id: StorylineIdSchema,
+    title: StorylineTitleSchema,
     chapters: z
       .array(StorylineChapterSchema)
       .min(1)
@@ -455,7 +460,7 @@ export type CompletedStorylineSnapshot = z.infer<
 export const StorylineListItemSchema = z
   .object({
     id: StorylineIdSchema,
-    title: z.string().trim().min(1).max(80),
+    title: StorylineTitleSchema,
     preview: z.string().trim().min(1).max(240),
     updatedAt: z.string().datetime(),
     segmentCount: z.number().int().positive(),
@@ -482,6 +487,23 @@ export const GetStorylineResponseSchema = z
   .strict();
 
 export type GetStorylineResponse = z.infer<typeof GetStorylineResponseSchema>;
+
+export const CopyStorylineRequestSchema = z
+  .object({
+    title: StorylineTitleSchema,
+    throughChapter: z.number().int().positive(),
+  })
+  .strict();
+
+export type CopyStorylineRequest = z.infer<typeof CopyStorylineRequestSchema>;
+
+export const CopyStorylineResponseSchema = z
+  .object({
+    storyline: StorylineSnapshotSchema,
+  })
+  .strict();
+
+export type CopyStorylineResponse = z.infer<typeof CopyStorylineResponseSchema>;
 
 export const GetRecentStorylineResponseSchema = z
   .object({

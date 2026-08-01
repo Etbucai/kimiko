@@ -1,5 +1,6 @@
 import type {
   CancelStoryGenerationResponse,
+  CopyStorylineRequest,
   StoryGenerationStatusResponse,
   StoryContextSnapshot,
   StoryContextExtractionState,
@@ -10,6 +11,7 @@ import type {
 } from "@kimiko/schema";
 import {
   CancelStoryGenerationResponseSchema,
+  CopyStorylineResponseSchema,
   GetStorylineContextResponseSchema,
   GetStorylineResponseSchema,
   GetRecentStorylineResponseSchema,
@@ -28,6 +30,9 @@ const defaultContextErrorMessage = "获取故事上下文失败，请稍后重�
 const defaultContextExtractionErrorMessage = "上下文提取失败，请稍后重试";
 const defaultGenerationStatusErrorMessage = "获取后台生成状态失败，请稍后重试";
 const defaultGenerationCancelErrorMessage = "取消后台生成失败，请稍后重试";
+const defaultCopyErrorMessage = "复制故事失败，请稍后重试";
+const defaultCopyInvalidMessage = "复制参数无效，请检查标题和截止章节";
+const defaultCopyBusyMessage = "当前故事正在处理中，请稍后重试";
 
 export type ListStorylinesResult =
   | Readonly<{ status: "success"; storylines: readonly StorylineListItem[] }>
@@ -216,6 +221,69 @@ export async function getStoryline(
       status: "failed",
       message: defaultRestoreErrorMessage,
     };
+  }
+}
+
+export type CopyStorylineResult =
+  | Readonly<{ status: "success"; storyline: StorylineSnapshot }>
+  | Readonly<{ status: "authRequired" }>
+  | Readonly<{ status: "notFound"; message: string }>
+  | Readonly<{ status: "busy"; message: string }>
+  | Readonly<{ status: "invalid"; message: string }>
+  | Readonly<{ status: "failed"; message: string }>;
+
+export async function copyStoryline(
+  storylineId: StorylineId,
+  input: CopyStorylineRequest,
+): Promise<CopyStorylineResult> {
+  const authSession = getStoredAuthSession();
+  if (authSession === null) {
+    return { status: "authRequired" };
+  }
+
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/storylines/${encodeURIComponent(storylineId)}/copies`,
+      {
+        headers: {
+          Authorization: `Bearer ${authSession.session.accessToken}`,
+          "Content-Type": "application/json",
+        },
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    );
+
+    if (response.status === 401) {
+      clearAuthSession();
+      return { status: "authRequired" };
+    }
+
+    if (response.status === 404) {
+      return { status: "notFound", message: defaultNotFoundErrorMessage };
+    }
+
+    if (response.status === 409) {
+      return { status: "busy", message: defaultCopyBusyMessage };
+    }
+
+    if (response.status === 400) {
+      return { status: "invalid", message: defaultCopyInvalidMessage };
+    }
+
+    const responseBody = await readJsonResponse(response);
+    if (!response.ok) {
+      return { status: "failed", message: defaultCopyErrorMessage };
+    }
+
+    const result = CopyStorylineResponseSchema.safeParse(responseBody);
+    if (!result.success) {
+      return { status: "failed", message: defaultCopyErrorMessage };
+    }
+
+    return { status: "success", storyline: result.data.storyline };
+  } catch {
+    return { status: "failed", message: defaultCopyErrorMessage };
   }
 }
 

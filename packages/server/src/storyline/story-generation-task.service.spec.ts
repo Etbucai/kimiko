@@ -334,6 +334,7 @@ function createCompletedStoryline(
       },
     ],
     id: "10",
+    title: "测试故事",
     latestGeneration: {
       segmentId,
       model: "story-model",

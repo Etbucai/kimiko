@@ -23,6 +23,7 @@ import { getStoredAuthSession } from "../../auth/authApi";
 import { startStoryRealtimeGeneration } from "../../story/storyRealtimeApi";
 import {
   cancelStoryGeneration,
+  copyStoryline,
   getRecentStoryline,
   getStoryGenerationStatus,
   getStoryline,
@@ -44,6 +45,9 @@ import { StoryInitialInput } from "./StoryInitialInput";
 import { StoryActionDrawer } from "./StoryActionDrawer";
 import { StoryActionFab } from "./StoryActionFab";
 import type { StoryActionKind } from "./StoryActionFab";
+import { StoryPageHeader } from "./StoryPageHeader";
+import { StorylineCopyDialog } from "./StorylineCopyDialog";
+import type { StorylineCopyDialogSubmitValue } from "./StorylineCopyDialog";
 import {
   APPEND_TARGET_LENGTH_OPTIONS,
   readAppendTargetLengthPreference,
@@ -192,6 +196,9 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     useState<StorylineComposerMode>("append");
   const [activeDrawerMode, setActiveDrawerMode] =
     useState<StoryActionKind | null>(null);
+  const [isCopyDialogOpen, setIsCopyDialogOpen] = useState(false);
+  const [isCopySubmitting, setIsCopySubmitting] = useState(false);
+  const [copyError, setCopyError] = useState<string | undefined>();
   const [activeGenerationIntent, setActiveGenerationIntent] =
     useState<GenerationIntent | null>(null);
   const [backgroundTask, setBackgroundTask] =
@@ -268,6 +275,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   const isActionFabVisible =
     storyline !== null &&
     activeDrawerMode === null &&
+    !isCopyDialogOpen &&
     chapterLoadStatus === "idle" &&
     (isGenerating || readerViewport?.isViewingLatestPage === true);
   const contentBottomPaddingClassName =
@@ -545,6 +553,9 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     setTemporaryDialogueText("");
     setTemporaryRewrite(null);
     setActiveDrawerMode(null);
+    setIsCopyDialogOpen(false);
+    setIsCopySubmitting(false);
+    setCopyError(undefined);
     setActiveGenerationIntent(null);
     setSubmittedCreateDraft(null);
     setFieldErrors({});
@@ -1681,7 +1692,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
       )
     ) {
       const shouldLeave = window.confirm(
-        "当前输入尚未提交，离开会丢失。确定打开调试页面吗？",
+        "当前输入尚未提交，离开会丢失。确定打开上下文页面吗？",
       );
       if (!shouldLeave) {
         return;
@@ -1689,6 +1700,95 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     }
 
     void navigate(`/storylines/${encodeURIComponent(storyline.id)}/context`);
+  }
+
+  function handleOpenCopyDialog(): void {
+    if (storyline === null || isGenerating || chapterLoadStatus !== "idle") {
+      return;
+    }
+
+    if (
+      hasUnsavedDraft(
+        initialStoryText,
+        appendInstruction,
+        rewriteInstruction,
+        dialogueInput,
+      )
+    ) {
+      const shouldContinue = window.confirm(
+        "当前输入尚未提交，复制成功后会离开本故事并丢失。确定继续吗？",
+      );
+      if (!shouldContinue) {
+        return;
+      }
+    }
+
+    setCopyError(undefined);
+    setIsCopyDialogOpen(true);
+  }
+
+  function handleCloseCopyDialog(): void {
+    if (isCopySubmitting) {
+      return;
+    }
+
+    setIsCopyDialogOpen(false);
+    setCopyError(undefined);
+  }
+
+  async function handleCopyStoryline(
+    value: StorylineCopyDialogSubmitValue,
+  ): Promise<void> {
+    if (storyline === null || isCopySubmitting) {
+      return;
+    }
+
+    if (isGenerating) {
+      setCopyError("当前故事正在处理中，请稍后重试");
+      return;
+    }
+
+    const sourceStorylineId = storyline.id;
+    setIsCopySubmitting(true);
+    setCopyError(undefined);
+    const result = await copyStoryline(sourceStorylineId, value);
+    if (!isMountedRef.current) {
+      return;
+    }
+
+    if (result.status === "authRequired") {
+      setIsCopyDialogOpen(false);
+      setIsCopySubmitting(false);
+      void navigate("/login", { replace: true });
+      return;
+    }
+
+    if (result.status === "notFound") {
+      clearBackgroundPoll();
+      setIsCopyDialogOpen(false);
+      setIsCopySubmitting(false);
+      setStoryline(null);
+      setRestoreErrorTitle(notFoundFailureTitle);
+      setRestoreErrorMessage(result.message);
+      setStatus("restoreFailed");
+      return;
+    }
+
+    if (
+      result.status === "busy" ||
+      result.status === "invalid" ||
+      result.status === "failed"
+    ) {
+      setIsCopySubmitting(false);
+      setCopyError(result.message);
+      return;
+    }
+
+    setIsCopyDialogOpen(false);
+    setIsCopySubmitting(false);
+    setCopyError(undefined);
+    toast.success(`已复制前 ${value.throughChapter} 章`);
+    void navigate(`/storylines/${encodeURIComponent(result.storyline.id)}`);
   }
 
   function renderNewStoryView(): JSX.Element {
@@ -1801,9 +1901,15 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   }
 
   const latestGeneration = storyline?.latestGeneration ?? null;
-  const contextDebugStorylineId = storyline?.id ?? null;
   const currentReaderPageNumber =
     readerPageIndex === null ? null : readerPageIndex + 1;
+  const defaultCopyChapter =
+    storyline === null
+      ? 1
+      : Math.min(
+          currentReaderPageNumber ?? storyline.chapterCount,
+          storyline.chapterCount,
+        );
   const isCurrentChapterAvailable =
     storyline === null ||
     currentReaderPageNumber === null ||
@@ -1817,9 +1923,13 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
       className="story-page-viewport flex flex-col overflow-hidden [background:radial-gradient(circle_at_top_left,var(--accent-bg),transparent_28rem),var(--bg)]"
     >
       <StoryPageHeader
-        contextDebugStorylineId={contextDebugStorylineId}
+        isCopyDisabled={isGenerating || chapterLoadStatus !== "idle"}
+        key={storyline?.id ?? "story-workbench"}
         onBackToList={handleGoToStorylineList}
-        onOpenContextDebug={handleOpenContextDebug}
+        onCopyStoryline={handleOpenCopyDialog}
+        onOpenContext={handleOpenContextDebug}
+        showStoryActions={storyline !== null}
+        title={storyline?.title ?? "故事工作台"}
       />
       <section
         className={`scrollbar-hidden min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pt-5 ${contentBottomPaddingClassName} md:px-6 md:pt-6`}
@@ -1908,6 +2018,21 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
           ) : null}
         </div>
       </section>
+
+      {isCopyDialogOpen && storyline !== null ? (
+        <StorylineCopyDialog
+          chapterCount={storyline.chapterCount}
+          defaultThroughChapter={defaultCopyChapter}
+          error={copyError}
+          isSubmitting={isCopySubmitting}
+          onClose={handleCloseCopyDialog}
+          onInputChange={() => setCopyError(undefined)}
+          onSubmit={(value) => {
+            void handleCopyStoryline(value);
+          }}
+          sourceTitle={storyline.title}
+        />
+      ) : null}
 
       {isPaginationBarVisible && readerViewport !== null ? (
         <StoryPaginationBar
@@ -2124,9 +2249,22 @@ function buildSubmittedCreateStoryline(
       },
     ],
     id: submittedCreateStorylineId,
+    title: buildSubmittedCreateTitle(draft.initialStoryText),
     latestGeneration: null,
     updatedAt: submittedCreateUpdatedAt,
   };
+}
+
+function buildSubmittedCreateTitle(initialStoryText: string): string {
+  const firstLine =
+    initialStoryText
+      .split(/\r?\n/)
+      .map((line) => line.trim().replace(/\s+/g, " "))
+      .find((line) => line.length > 0) ?? "新故事";
+
+  return firstLine.length <= 80
+    ? firstLine
+    : `${firstLine.slice(0, 77).trimEnd()}...`;
 }
 
 function buildStorylineWindowQuery(
@@ -2397,51 +2535,6 @@ function StoryPaginationBar({
         </button>
       </div>
     </footer>
-  );
-}
-
-interface StoryPageHeaderProps {
-  contextDebugStorylineId: StorylineId | null;
-  onBackToList: () => void;
-  onOpenContextDebug: () => void;
-}
-
-function StoryPageHeader({
-  contextDebugStorylineId,
-  onBackToList,
-  onOpenContextDebug,
-}: StoryPageHeaderProps): JSX.Element {
-  return (
-    <header className="z-10 box-border h-[calc(4.5rem+env(safe-area-inset-top))] shrink-0 border-b border-[var(--border)] bg-[var(--panel-bg)] px-4 pt-[env(safe-area-inset-top)] shadow-[0_10px_24px_rgba(0,0,0,0.08)] backdrop-blur md:px-6">
-      <div className="mx-auto flex h-full w-full max-w-3xl items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="m-0 text-xs font-semibold text-[var(--accent)]">
-            StoryAgent
-          </p>
-          <h1 className="mt-0.5 mb-0 truncate text-lg font-bold text-[var(--text-h)] md:text-xl">
-            故事工作台
-          </h1>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {contextDebugStorylineId !== null ? (
-            <button
-              className="min-h-10 rounded-full border border-(--border) bg-transparent px-3 py-2 text-sm font-bold text-(--text-h) transition-[border-color,transform] duration-200 hover:-translate-y-px hover:border-(--accent-border)"
-              onClick={onOpenContextDebug}
-              type="button"
-            >
-              调试
-            </button>
-          ) : null}
-          <button
-            className="min-h-10 rounded-full border border-(--border) bg-transparent px-4 py-2 text-sm font-bold text-(--text-h) transition-[border-color,transform] duration-200 hover:-translate-y-px hover:border-(--accent-border)"
-            onClick={onBackToList}
-            type="button"
-          >
-            返回列表
-          </button>
-        </div>
-      </div>
-    </header>
   );
 }
 

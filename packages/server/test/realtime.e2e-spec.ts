@@ -12,6 +12,7 @@ import type {
 } from "@kimiko/schema";
 import {
   CancelStoryGenerationResponseSchema,
+  CopyStorylineResponseSchema,
   GetStorylineContextResponseSchema,
   GetRecentStorylineResponseSchema,
   GetStorylineResponseSchema,
@@ -335,6 +336,96 @@ describe("RealtimeGateway (e2e)", () => {
       .get(`/storylines/${secondStoryline.storyline.id}?before=4`)
       .set("Authorization", `Bearer ${accessToken}`)
       .expect(400);
+
+    socket.close();
+  });
+
+  it("copies a storyline prefix through the HTTP API", async () => {
+    app = await createApp(createStreamingProvider());
+    const accessToken = await registerAndLogin(app, "storyline_copy");
+    const socket = await connectWebSocket(
+      `${getRealtimeUrl(app)}?accessToken=${accessToken}`,
+    );
+    await waitOneTick();
+    const source = await createStorylineOverSocket(socket, {
+      requestId: "request-copy-source",
+      initialStoryText: "原故事第一章。",
+      instruction: "生成第二章。",
+    });
+
+    const copyResponse = await request(app.getHttpServer())
+      .post(`/storylines/${source.storyline.id}/copies`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({
+        title: "第一章分支",
+        throughChapter: 1,
+      })
+      .expect(201);
+    const copyResult = CopyStorylineResponseSchema.parse(
+      copyResponse.body as unknown,
+    );
+
+    expect(copyResult.storyline).toMatchObject({
+      title: "第一章分支",
+      chapterCount: 1,
+      anchorPage: 1,
+      latestGeneration: null,
+      chapters: [
+        {
+          pageNumber: 1,
+          segments: [
+            {
+              type: "initial",
+              text: "原故事第一章。",
+            },
+          ],
+        },
+      ],
+    });
+    expect(copyResult.storyline.id).not.toBe(source.storyline.id);
+
+    const listResponse = await request(app.getHttpServer())
+      .get("/storylines")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect(200);
+    const listResult = ListStorylinesResponseSchema.parse(
+      listResponse.body as unknown,
+    );
+    expect(listResult.storylines).toHaveLength(2);
+    expect(listResult.storylines[0]).toMatchObject({
+      id: copyResult.storyline.id,
+      title: "第一章分支",
+      chapterCount: 1,
+    });
+    expect(listResult.storylines[1]).toMatchObject({
+      id: source.storyline.id,
+      title: "原故事第一章。",
+      chapterCount: 2,
+    });
+
+    const sourceResponse = await request(app.getHttpServer())
+      .get(`/storylines/${source.storyline.id}`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect(200);
+    const sourceResult = GetStorylineResponseSchema.parse(
+      sourceResponse.body as unknown,
+    );
+    expect(sourceResult.storyline).toEqual(source.storyline);
+
+    await request(app.getHttpServer())
+      .post(`/storylines/${source.storyline.id}/copies`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({ title: "越界副本", throughChapter: 99 })
+      .expect(400);
+    await request(app.getHttpServer())
+      .post("/storylines/999999/copies")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({ title: "不存在", throughChapter: 1 })
+      .expect(404);
+    await request(app.getHttpServer())
+      .post(`/storylines/${source.storyline.id}/copies`)
+      .send({ title: "未登录", throughChapter: 1 })
+      .expect(401);
 
     socket.close();
   });

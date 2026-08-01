@@ -19,6 +19,20 @@ export class StorylineSaveFailedError extends Error {
   }
 }
 
+export class StorylineCopyChapterOutOfRangeError extends Error {
+  constructor(message = "Storyline copy chapter is out of range") {
+    super(message);
+    this.name = "StorylineCopyChapterOutOfRangeError";
+  }
+}
+
+export class StorylineCopyFailedError extends Error {
+  constructor(message = "Failed to copy storyline") {
+    super(message);
+    this.name = "StorylineCopyFailedError";
+  }
+}
+
 export class StorySegmentNotRewritableError extends Error {
   constructor(message = "Story segment is not rewritable") {
     super(message);

@@ -70,12 +70,12 @@ import type {
   StorylineRewriteContext,
   StorylineRecord,
 } from "./storyline.types";
+import { resolveStorylineTitle } from "./storyline-title";
 
 type StorylineSegmentRow = typeof storylineSegments.$inferSelect;
 type StorylineContextRow = typeof storylineContexts.$inferSelect;
 
 const storylineListLimit = 50;
-const storylineListTitleMaxLength = 80;
 const storylineListPreviewMaxLength = 240;
 const noOpDialogueText = "无事发生";
 
@@ -136,6 +136,7 @@ export class StorylineService {
 
         return mapListItemDto({
           id: storyline.id,
+          explicitTitle: storyline.title,
           updatedAt: storyline.updatedAt,
           initialText: initialSegment?.text ?? "",
           latestText: latestSegment?.text ?? "",
@@ -1243,7 +1244,7 @@ export class StorylineService {
     storylineId: number,
     options: StorylineWindowOptions,
   ): Promise<StorylineSnapshot | null> {
-    const [[storyline], [latestSegment]] = await Promise.all([
+    const [[storyline], [latestSegment], [initialSegment]] = await Promise.all([
       this.databaseService.db
         .select()
         .from(storylines)
@@ -1255,6 +1256,17 @@ export class StorylineService {
         .where(eq(storylineSegments.storylineId, storylineId))
         .orderBy(desc(storylineSegments.orderIndex))
         .limit(1),
+      this.databaseService.db
+        .select({ text: storylineSegments.text })
+        .from(storylineSegments)
+        .where(
+          and(
+            eq(storylineSegments.storylineId, storylineId),
+            eq(storylineSegments.type, "initial"),
+          ),
+        )
+        .orderBy(storylineSegments.orderIndex)
+        .limit(1),
     ]);
 
     if (storyline === undefined) {
@@ -1263,6 +1275,12 @@ export class StorylineService {
 
     if (latestSegment === undefined) {
       throw new InternalServerErrorException("Storyline has no segments");
+    }
+
+    if (initialSegment === undefined) {
+      throw new InternalServerErrorException(
+        "Storyline initial segment is missing",
+      );
     }
 
     const chapterCount = latestSegment.chapterIndex;
@@ -1292,6 +1310,10 @@ export class StorylineService {
 
     return {
       id: String(storyline.id),
+      title: resolveStorylineTitle({
+        explicitTitle: storyline.title,
+        initialText: initialSegment.text,
+      }),
       chapters: mapChapterDtos(segments),
       chapterCount,
       anchorPage,
@@ -1372,6 +1394,7 @@ function mapChapterDtos(
 function mapListItemDto(
   storyline: Readonly<{
     id: number;
+    explicitTitle: string | null;
     updatedAt: Date;
     initialText: string;
     latestText: string;
@@ -1408,10 +1431,10 @@ function mapListItemDto(
 
   return {
     id: String(storyline.id),
-    title: truncateSnippet(
-      getFirstNonEmptyLine(getStorylineTitleSourceText(storyline.initialText)),
-      storylineListTitleMaxLength,
-    ),
+    title: resolveStorylineTitle({
+      explicitTitle: storyline.explicitTitle,
+      initialText: storyline.initialText,
+    }),
     preview: truncateSnippet(
       normalizeSnippet(storyline.latestText),
       storylineListPreviewMaxLength,
@@ -1918,25 +1941,6 @@ function parseExternalId(value: string): number | null {
 
 function dateToIsoString(value: Date): string {
   return value.toISOString();
-}
-
-function getFirstNonEmptyLine(value: string): string {
-  const firstLine = value
-    .split(/\r?\n/)
-    .map(normalizeSnippet)
-    .find((line) => line.length > 0);
-
-  return firstLine ?? normalizeSnippet(value);
-}
-
-function getStorylineTitleSourceText(initialText: string): string {
-  const openingMarkerIndex = initialText.indexOf("【开场】");
-  if (openingMarkerIndex < 0) {
-    return initialText;
-  }
-
-  const openingText = initialText.slice(openingMarkerIndex + "【开场】".length);
-  return openingText.trim().length > 0 ? openingText : initialText;
 }
 
 function normalizeSnippet(value: string): string {
