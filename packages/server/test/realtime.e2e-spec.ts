@@ -67,7 +67,9 @@ describe("RealtimeGateway (e2e)", () => {
   });
 
   it("streams story events over websocket", async () => {
-    const llmProvider = createStreamingProvider();
+    const llmProvider = createStreamingProvider({
+      reasoningText: "先衔接雨后的场景。",
+    });
     app = await createApp(llmProvider);
     const runningApp = app;
     const accessToken = await registerAndLogin(app, "stream_story");
@@ -76,7 +78,7 @@ describe("RealtimeGateway (e2e)", () => {
     );
     await waitOneTick();
 
-    const eventsPromise = readEvents(socket, 4);
+    const eventsPromise = readEvents(socket, 5);
 
     socket.send(
       JSON.stringify({
@@ -92,10 +94,16 @@ describe("RealtimeGateway (e2e)", () => {
 
     const events = await eventsPromise;
 
-    expect(events.slice(0, 3)).toEqual([
+    expect(events.slice(0, 4)).toEqual([
       {
         type: "story.started",
         requestId: "request-1",
+      },
+      {
+        type: "story.reasoning",
+        requestId: "request-1",
+        sequence: 1,
+        delta: "先衔接雨后的场景。",
       },
       {
         type: "story.chunk",
@@ -110,7 +118,7 @@ describe("RealtimeGateway (e2e)", () => {
         delta: "走向钟楼。",
       },
     ]);
-    expect(events[3]).toMatchObject({
+    expect(events[4]).toMatchObject({
       type: "story.completed",
       requestId: "request-1",
       generatedSegmentId: expect.stringMatching(/^[1-9]\d*$/) as string,
@@ -771,11 +779,17 @@ function getCompletedEvent(
 }
 
 function createStreamingProvider(
-  options: Readonly<{ contextText?: string }> = {},
+  options: Readonly<{
+    contextText?: string;
+    reasoningText?: string;
+  }> = {},
 ): jest.Mocked<LlmProvider> {
   const llmProvider = createBaseProvider();
   llmProvider.streamText.mockImplementation(() =>
     createStream([
+      ...(options.reasoningText !== undefined
+        ? [{ type: "reasoning" as const, delta: options.reasoningText }]
+        : []),
       {
         type: "chunk",
         delta: "林夏",

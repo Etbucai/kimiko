@@ -188,7 +188,7 @@ export class StoryGenerationTaskService {
         }
 
         this.forwardStreamEvent(task, event);
-        if (event.type !== "chunk") {
+        if (event.type !== "chunk" && event.type !== "reasoning") {
           terminalEvent = event.type;
         }
 
@@ -228,6 +228,11 @@ export class StoryGenerationTaskService {
     task: StoryGenerationTaskRecord,
     event: StorylineStreamEvent,
   ): void {
+    if (event.type === "reasoning") {
+      task.observer?.sendReasoning(event);
+      return;
+    }
+
     if (event.type === "chunk") {
       task.observer?.sendChunk(event);
       return;

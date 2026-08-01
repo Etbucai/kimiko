@@ -18,6 +18,9 @@ export type StoryGenerationTaskStatus = StoryGenerationTask["status"];
 export interface StoryGenerationObserver {
   readonly requestId: string;
   sendStarted(): void;
+  sendReasoning(
+    event: Extract<StorylineStreamEvent, { type: "reasoning" }>,
+  ): void;
   sendChunk(event: Extract<StorylineStreamEvent, { type: "chunk" }>): void;
   sendContextStarted(): void;
   sendContextFailed(message: string): void;

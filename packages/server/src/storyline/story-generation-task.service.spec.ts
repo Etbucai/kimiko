@@ -40,6 +40,7 @@ describe("StoryGenerationTaskService", () => {
   it("starts a task, sends realtime events and stores completed terminal state", async () => {
     generationService.streamContinueStoryline.mockReturnValue(
       createStorylineStream([
+        { type: "reasoning", delta: "先衔接场景。", sequence: 1 },
         { type: "chunk", delta: "林夏", sequence: 1 },
         { type: "contextStarted" },
         { type: "contextFailed", message: "上下文提取失败" },
@@ -61,6 +62,11 @@ describe("StoryGenerationTaskService", () => {
 
     expect(result.status).toBe("started");
     expect(observer.sendStarted).toHaveBeenCalledTimes(1);
+    expect(observer.sendReasoning).toHaveBeenCalledWith({
+      type: "reasoning",
+      delta: "先衔接场景。",
+      sequence: 1,
+    });
     expect(observer.sendChunk).toHaveBeenCalledWith({
       type: "chunk",
       delta: "林夏",
@@ -260,6 +266,7 @@ function createObserver(
   return {
     requestId,
     sendStarted: jest.fn(),
+    sendReasoning: jest.fn(),
     sendChunk: jest.fn(),
     sendContextStarted: jest.fn(),
     sendContextFailed: jest.fn(),

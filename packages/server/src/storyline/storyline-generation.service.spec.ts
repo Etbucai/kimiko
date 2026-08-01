@@ -115,6 +115,11 @@ describe("StorylineGenerationService", () => {
     storyService.streamContinueStoryFromContext.mockReturnValue(
       createStoryStream([
         {
+          type: "reasoning",
+          delta: "先让角色进入钟楼。",
+          sequence: 1,
+        },
+        {
           type: "chunk",
           delta: "林夏",
           sequence: 1,
@@ -159,6 +164,11 @@ describe("StorylineGenerationService", () => {
     );
 
     expect(events).toEqual([
+      {
+        type: "reasoning",
+        delta: "先让角色进入钟楼。",
+        sequence: 1,
+      },
       {
         type: "chunk",
         delta: "林夏",

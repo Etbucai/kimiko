@@ -82,7 +82,9 @@ function StorylineDetailRoute(): JSX.Element {
     return <Navigate to="/storylines" replace />;
   }
 
-  return <StoryPage mode="detail" storylineId={storylineId} />;
+  return (
+    <StoryPage key={storylineId} mode="detail" storylineId={storylineId} />
+  );
 }
 
 function StorylineContextRoute(): JSX.Element {

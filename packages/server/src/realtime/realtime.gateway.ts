@@ -306,6 +306,14 @@ export class RealtimeGateway
           requestId,
         });
       },
+      sendReasoning: (event) => {
+        sendEvent(client, {
+          type: "story.reasoning",
+          requestId,
+          sequence: event.sequence,
+          delta: event.delta,
+        });
+      },
       sendChunk: (event) => {
         sendEvent(client, {
           type: "story.chunk",

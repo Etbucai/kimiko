@@ -80,6 +80,7 @@ export const STORY_CREATE_FROM_SETTING_SYSTEM_PROMPT = [
 ].join("\n");
 
 export type StoryStreamEvent =
+  | Readonly<{ type: "reasoning"; delta: string; sequence: number }>
   | Readonly<{ type: "chunk"; delta: string; sequence: number }>
   | Readonly<{
       type: "completed";
@@ -214,6 +215,7 @@ export class StoryService {
     const startedAt = Date.now();
     let continuedStory = "";
     let sequence = 0;
+    let reasoningSequence = 0;
 
     for await (const event of this.llmService.streamTextFromParsedRequest(
       llmRequest,
@@ -235,6 +237,12 @@ export class StoryService {
       }
 
       if (event.type === "reasoning") {
+        reasoningSequence += 1;
+        yield {
+          type: "reasoning",
+          delta: event.delta,
+          sequence: reasoningSequence,
+        };
         continue;
       }
 

@@ -131,6 +131,11 @@ export class StorylineGenerationService {
           return;
         }
 
+        if (event.type === "reasoning") {
+          yield event;
+          continue;
+        }
+
         if (event.type === "chunk") {
           chunkCount += 1;
           chunkChars += event.delta.length;
@@ -269,6 +274,11 @@ export class StorylineGenerationService {
       )) {
         if (options.signal.aborted) {
           return;
+        }
+
+        if (event.type === "reasoning") {
+          yield event;
+          continue;
         }
 
         if (event.type === "chunk") {
@@ -435,6 +445,11 @@ export class StorylineGenerationService {
       )) {
         if (options.signal.aborted) {
           return;
+        }
+
+        if (event.type === "reasoning") {
+          yield event;
+          continue;
         }
 
         if (event.type === "chunk") {
@@ -613,6 +628,11 @@ export class StorylineGenerationService {
           return;
         }
 
+        if (event.type === "reasoning") {
+          yield event;
+          continue;
+        }
+
         if (event.type === "chunk") {
           chunkCount += 1;
           chunkChars += event.delta.length;
@@ -776,6 +796,11 @@ export class StorylineGenerationService {
       )) {
         if (options.signal.aborted) {
           return;
+        }
+
+        if (event.type === "reasoning") {
+          yield event;
+          continue;
         }
 
         if (event.type === "chunk") {

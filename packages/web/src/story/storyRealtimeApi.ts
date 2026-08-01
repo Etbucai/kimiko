@@ -22,6 +22,7 @@ export interface StoryRealtimeGenerationError {
 
 export interface StoryRealtimeGenerationCallbacks {
   onStarted: () => void;
+  onReasoning: (delta: string, sequence: number) => void;
   onChunk: (delta: string, sequence: number) => void;
   onContextStarted: () => void;
   onContextFailed: (message: string) => void;
@@ -82,6 +83,9 @@ export function startStoryRealtimeGeneration(
     switch (serverEvent.type) {
       case "story.started":
         callbacks.onStarted();
+        return;
+      case "story.reasoning":
+        callbacks.onReasoning(serverEvent.delta, serverEvent.sequence);
         return;
       case "story.chunk":
         callbacks.onChunk(serverEvent.delta, serverEvent.sequence);

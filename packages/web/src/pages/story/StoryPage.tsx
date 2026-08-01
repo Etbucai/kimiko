@@ -28,6 +28,11 @@ import {
   getStoryline,
 } from "../../story/storylineApi";
 import {
+  clearStoryReasoningHandoff,
+  readStoryReasoningHandoff,
+  setStoryReasoningHandoff,
+} from "../../story/storyReasoningHandoff";
+import {
   createStorySetting,
   getStorySetting,
   listStorySettings,
@@ -51,6 +56,7 @@ import type {
   RewriteDraftState,
   StorylineReaderViewportState,
 } from "./StorylineReader";
+import { ReasoningPanel } from "./ReasoningPanel";
 import { StorylineRestoreError } from "./StorylineRestoreError";
 import { StoryCreateFromSettingView } from "./StoryCreateFromSettingView";
 import { StorySettingCreateView } from "./StorySettingCreateView";
@@ -144,6 +150,8 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   const generationHandleRef = useRef<StoryRealtimeGenerationHandle | null>(
     null,
   );
+  const hasReceivedStoryContentRef = useRef(false);
+  const hasReceivedStoryReasoningRef = useRef(false);
   const settingCompletionHandleRef =
     useRef<StorySettingCompletionHandle | null>(null);
   const hasReceivedSettingContentRef = useRef(false);
@@ -180,6 +188,14 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   const [temporaryDialogueText, setTemporaryDialogueText] = useState("");
   const [temporaryRewrite, setTemporaryRewrite] =
     useState<RewriteDraftState | null>(null);
+  const [storyReasoningText, setStoryReasoningText] = useState(() =>
+    mode === "detail" && storylineId !== undefined
+      ? readStoryReasoningHandoff(storylineId)
+      : "",
+  );
+  const storyReasoningTextRef = useRef(storyReasoningText);
+  const [isStoryReasoningExpanded, setIsStoryReasoningExpanded] =
+    useState(false);
   const [readerViewport, setReaderViewport] =
     useState<StorylineReaderViewportState | null>(null);
   const [fieldErrors, setFieldErrors] = useState<StorylineFieldErrors>({});
@@ -555,6 +571,12 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
 
     await handleBackgroundTask(statusResult.task, result.storyline.id);
   }, [clearBackgroundPoll, handleBackgroundTask, mode, navigate, storylineId]);
+
+  useEffect(() => {
+    if (mode === "detail" && storylineId !== undefined) {
+      clearStoryReasoningHandoff(storylineId);
+    }
+  }, [mode, storylineId]);
 
   useEffect(() => {
     const currentStorylineId = storyline?.id;
@@ -1039,6 +1061,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     readonly submittedCreateDraft: SubmittedCreateDraft | null;
   }): void {
     const intent = input.intent;
+    resetStoryReasoning();
     setSubmittedCreateDraft(input.submittedCreateDraft);
     shouldFollowScrollRef.current = intent.type !== "rewrite" && isNearBottom();
     setActiveDrawerMode(null);
@@ -1063,8 +1086,22 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
             intent.type !== "rewrite" && isNearBottom();
           setStatus("streaming");
         },
+        onReasoning(delta) {
+          if (!hasReceivedStoryReasoningRef.current) {
+            hasReceivedStoryReasoningRef.current = true;
+            setIsStoryReasoningExpanded(
+              !hasReceivedStoryContentRef.current,
+            );
+          }
+          storyReasoningTextRef.current += delta;
+          setStoryReasoningText(storyReasoningTextRef.current);
+        },
         onChunk(delta) {
           setStatus("streaming");
+          if (!hasReceivedStoryContentRef.current) {
+            hasReceivedStoryContentRef.current = true;
+            setIsStoryReasoningExpanded(false);
+          }
           if (intent.type === "rewrite") {
             setTemporaryRewrite((previousDraft) => ({
               targetSegmentId: intent.segmentId,
@@ -1104,6 +1141,10 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
           setStatus("completed");
 
           if (intent.type === "create" || intent.type === "createFromSetting") {
+            setStoryReasoningHandoff({
+              reasoningText: storyReasoningTextRef.current,
+              storylineId: event.storyline.id,
+            });
             setInitialStoryText("");
             setAppendInstruction("");
             setSettingOpening("");
@@ -1131,6 +1172,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
         },
         onCancelled() {
           generationHandleRef.current = null;
+          resetStoryReasoning();
           if (intent.type === "rewrite") {
             setTemporaryRewrite(null);
           } else if (intent.type === "dialogue") {
@@ -1152,6 +1194,9 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
         },
         onError(error) {
           generationHandleRef.current = null;
+          if (error.code !== "UNKNOWN") {
+            resetStoryReasoning();
+          }
           if (intent.type === "rewrite") {
             setTemporaryRewrite(null);
           } else if (intent.type === "dialogue") {
@@ -1174,12 +1219,21 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
         },
         onAuthRequired() {
           generationHandleRef.current = null;
+          resetStoryReasoning();
           setSubmittedCreateDraft(null);
           setActiveGenerationIntent(null);
           void navigate("/login", { replace: true });
         },
       },
     );
+  }
+
+  function resetStoryReasoning(): void {
+    storyReasoningTextRef.current = "";
+    hasReceivedStoryContentRef.current = false;
+    hasReceivedStoryReasoningRef.current = false;
+    setStoryReasoningText("");
+    setIsStoryReasoningExpanded(false);
   }
 
   function handleCancel(): void {
@@ -1434,6 +1488,15 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
 
         {status !== "loading" && status !== "restoreFailed" ? (
           <>
+            <ReasoningPanel
+              isExpanded={isStoryReasoningExpanded}
+              isThinking={
+                isGenerating && !hasReceivedStoryContentRef.current
+              }
+              onExpandedChange={setIsStoryReasoningExpanded}
+              text={storyReasoningText}
+            />
+
             {storyline !== null ? (
               <StorylineReader
                 onViewportChange={handleReaderViewportChange}

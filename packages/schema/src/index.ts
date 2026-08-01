@@ -805,6 +805,19 @@ export const StoryChunkServerEventSchema = z
 
 export type StoryChunkServerEvent = z.infer<typeof StoryChunkServerEventSchema>;
 
+export const StoryReasoningServerEventSchema = z
+  .object({
+    type: z.literal("story.reasoning"),
+    requestId: StoryRealtimeRequestIdSchema,
+    sequence: z.number().int().positive(),
+    delta: z.string().min(1),
+  })
+  .strict();
+
+export type StoryReasoningServerEvent = z.infer<
+  typeof StoryReasoningServerEventSchema
+>;
+
 export const StorySummaryStartedServerEventSchema = z
   .object({
     type: z.literal("story.summary.started"),
@@ -965,6 +978,7 @@ export type StoryErrorServerEvent = z.infer<typeof StoryErrorServerEventSchema>;
 
 export const StoryRealtimeServerEventSchema = z.discriminatedUnion("type", [
   StoryStartedServerEventSchema,
+  StoryReasoningServerEventSchema,
   StoryChunkServerEventSchema,
   StorySummaryStartedServerEventSchema,
   StoryContextStartedServerEventSchema,

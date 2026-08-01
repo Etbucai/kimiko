@@ -120,6 +120,7 @@ export interface StorylineDialogueContext {
 }
 
 export type StorylineStreamEvent =
+  | Readonly<{ type: "reasoning"; delta: string; sequence: number }>
   | Readonly<{ type: "chunk"; delta: string; sequence: number }>
   | Readonly<{ type: "contextStarted" }>
   | Readonly<{ type: "contextFailed"; message: string }>

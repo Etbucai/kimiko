@@ -148,6 +148,11 @@ describe("StoryService", () => {
 
     expect(events).toEqual([
       {
+        type: "reasoning",
+        delta: "先衔接雨停后的场景。",
+        sequence: 1,
+      },
+      {
         type: "chunk",
         delta: "林夏",
         sequence: 1,
