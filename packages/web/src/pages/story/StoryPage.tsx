@@ -213,7 +213,8 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     useState<StoryActionKind | null>(null);
   const [chatDraftsByChapter, setChatDraftsByChapter] =
     useState<StoryChatDraftsByChapter>({});
-  const [chatsByChapter, setChatsByChapter] = useState<StoryChatsByChapter>({});
+  const [chatsByChapter, setChatsByChapter] =
+    useState<StoryChatsByChapter>({});
   const [chatDrawerChapterNumber, setChatDrawerChapterNumber] = useState<
     number | null
   >(null);
@@ -1080,11 +1081,17 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
           }
 
           setChatsByChapter((previousChats) =>
-            updateStoryChat(previousChats, chapterNumber, chatId, (entry) => ({
-              ...entry,
-              reasoningText: `${entry.reasoningText}${delta}`,
-              status: entry.answerText.length > 0 ? "answering" : "thinking",
-            })),
+            updateStoryChat(
+              previousChats,
+              chapterNumber,
+              chatId,
+              (entry) => ({
+                ...entry,
+                reasoningText: `${entry.reasoningText}${delta}`,
+                status:
+                  entry.answerText.length > 0 ? "answering" : "thinking",
+              }),
+            ),
           );
         },
         onAnswerChunk(delta) {
@@ -1093,11 +1100,16 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
           }
 
           setChatsByChapter((previousChats) =>
-            updateStoryChat(previousChats, chapterNumber, chatId, (entry) => ({
-              ...entry,
-              answerText: `${entry.answerText}${delta}`,
-              status: "answering",
-            })),
+            updateStoryChat(
+              previousChats,
+              chapterNumber,
+              chatId,
+              (entry) => ({
+                ...entry,
+                answerText: `${entry.answerText}${delta}`,
+                status: "answering",
+              }),
+            ),
           );
         },
         onCompleted() {
@@ -1108,10 +1120,15 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
           }
 
           setChatsByChapter((previousChats) =>
-            updateStoryChat(previousChats, chapterNumber, chatId, (entry) => ({
-              ...entry,
-              status: "completed",
-            })),
+            updateStoryChat(
+              previousChats,
+              chapterNumber,
+              chatId,
+              (entry) => ({
+                ...entry,
+                status: "completed",
+              }),
+            ),
           );
           setActiveStoryChat((currentChat) =>
             currentChat?.chatId === chatId ? null : currentChat,
@@ -1157,11 +1174,16 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
           }
 
           setChatsByChapter((previousChats) =>
-            updateStoryChat(previousChats, chapterNumber, chatId, (entry) => ({
-              ...entry,
-              status: "failed",
-              errorMessage: error.message,
-            })),
+            updateStoryChat(
+              previousChats,
+              chapterNumber,
+              chatId,
+              (entry) => ({
+                ...entry,
+                status: "failed",
+                errorMessage: error.message,
+              }),
+            ),
           );
           setActiveStoryChat((currentChat) =>
             currentChat?.chatId === chatId ? null : currentChat,
@@ -2849,7 +2871,10 @@ function hasUnsavedDraft(
   );
 }
 
-function ignoreChatExpansionChange(_chatId: string, _expanded: boolean): void {
+function ignoreChatExpansionChange(
+  _chatId: string,
+  _expanded: boolean,
+): void {
   return undefined;
 }
 

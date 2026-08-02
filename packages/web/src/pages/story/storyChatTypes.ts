@@ -35,7 +35,10 @@ export function appendStoryChat(
 ): StoryChatsByChapter {
   return {
     ...state,
-    [entry.chapterNumber]: [...(state[entry.chapterNumber] ?? []), entry],
+    [entry.chapterNumber]: [
+      ...(state[entry.chapterNumber] ?? []),
+      entry,
+    ],
   };
 }
 
@@ -63,6 +66,8 @@ export function updateStoryChat(
   };
 }
 
-export function hasStoryChatDrafts(drafts: StoryChatDraftsByChapter): boolean {
+export function hasStoryChatDrafts(
+  drafts: StoryChatDraftsByChapter,
+): boolean {
   return Object.values(drafts).some((draft) => draft.trim().length > 0);
 }

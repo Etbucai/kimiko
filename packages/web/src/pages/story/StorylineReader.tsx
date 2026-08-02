@@ -75,7 +75,10 @@ interface StorylineReaderProps {
   chatEntries: readonly StoryChatEntry[];
   initialInstruction?: string | undefined;
   onChatExpandedChange: (chatId: string, expanded: boolean) => void;
-  onChatReasoningExpandedChange: (chatId: string, expanded: boolean) => void;
+  onChatReasoningExpandedChange: (
+    chatId: string,
+    expanded: boolean,
+  ) => void;
   onViewportChange: (state: StorylineReaderViewportState) => void;
   pageIndex: number | null;
   storyline: StorylineSnapshot;
@@ -237,7 +240,10 @@ interface StorylinePagePanelProps {
   chatEntries: readonly StoryChatEntry[];
   initialInstruction?: string | undefined;
   onChatExpandedChange: (chatId: string, expanded: boolean) => void;
-  onChatReasoningExpandedChange: (chatId: string, expanded: boolean) => void;
+  onChatReasoningExpandedChange: (
+    chatId: string,
+    expanded: boolean,
+  ) => void;
   page: StorylineReaderPage;
   pageIndex: number;
   pageTotal: number;
