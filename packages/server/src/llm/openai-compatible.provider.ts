@@ -1,6 +1,7 @@
 import {
   BadGatewayException,
   GatewayTimeoutException,
+  Logger,
   ServiceUnavailableException,
 } from "@nestjs/common";
 import OpenAI, {
@@ -58,6 +59,7 @@ export interface OpenAiClientLike {
 
 export class OpenAiCompatibleProvider implements LlmProvider {
   private readonly client: OpenAiClientLike;
+  private readonly logger = new Logger(OpenAiCompatibleProvider.name);
 
   constructor(
     private readonly config: OpenAiCompatibleProviderConfig,
@@ -165,6 +167,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
         ? await this.client.chat.completions.create(request)
         : await this.client.chat.completions.create(request, options);
     } catch (error: unknown) {
+      this.logProviderRequestFailed("text", error);
       throw mapOpenAiError(error);
     }
   }
@@ -188,8 +191,24 @@ export class OpenAiCompatibleProvider implements LlmProvider {
         },
       );
     } catch (error: unknown) {
+      this.logProviderRequestFailed("stream", error);
       throw mapOpenAiError(error);
     }
+  }
+
+  private logProviderRequestFailed(
+    callType: "stream" | "text",
+    error: unknown,
+  ): void {
+    this.logger.error(
+      JSON.stringify({
+        baseUrl: sanitizeBaseUrl(this.config.baseUrl),
+        callType,
+        error: toOpenAiErrorLog(error),
+        event: "llm_provider_request_failed",
+        model: this.config.model,
+      }),
+    );
   }
 }
 
@@ -343,6 +362,97 @@ function getReasoningTokens(
 ): number | undefined {
   const reasoningTokens = usage.completion_tokens_details?.reasoning_tokens;
   return typeof reasoningTokens === "number" ? reasoningTokens : undefined;
+}
+
+function toOpenAiErrorLog(error: unknown): Readonly<{
+  cause: Readonly<{
+    code: string | null;
+    message: string;
+    name: string;
+  }> | null;
+  code: string | null;
+  message: string;
+  name: string;
+  requestId: string | null;
+  status: number | null;
+  type: string | null;
+}> {
+  const cause = getErrorCause(error);
+
+  return {
+    cause:
+      cause === undefined
+        ? null
+        : {
+            code: getStringProperty(cause, "code"),
+            message: getErrorMessage(cause),
+            name: getErrorName(cause),
+          },
+    code: error instanceof APIError ? (error.code ?? null) : null,
+    message: getOpenAiErrorMessage(error),
+    name: getErrorName(error),
+    requestId: error instanceof APIError ? (error.requestID ?? null) : null,
+    status: error instanceof APIError ? (error.status ?? null) : null,
+    type: error instanceof APIError ? (error.type ?? null) : null,
+  };
+}
+
+function getOpenAiErrorMessage(error: unknown): string {
+  if (!(error instanceof APIError)) {
+    return getErrorMessage(error);
+  }
+
+  const upstreamMessage = getStringProperty(error.error, "message");
+  if (upstreamMessage !== null) {
+    return upstreamMessage;
+  }
+
+  return error.status === undefined
+    ? error.message
+    : `HTTP ${error.status} from LLM provider`;
+}
+
+function getErrorCause(error: unknown): unknown | undefined {
+  if (
+    typeof error !== "object" ||
+    error === null ||
+    !("cause" in error) ||
+    error.cause === undefined
+  ) {
+    return undefined;
+  }
+
+  return error.cause;
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function getErrorName(error: unknown): string {
+  if (error instanceof Error && error.constructor.name.length > 0) {
+    return error.constructor.name;
+  }
+
+  return "UnknownError";
+}
+
+function getStringProperty(value: unknown, key: string): string | null {
+  if (typeof value !== "object" || value === null || !(key in value)) {
+    return null;
+  }
+
+  const property = value[key as keyof typeof value];
+  return typeof property === "string" ? property : null;
+}
+
+function sanitizeBaseUrl(baseUrl: string): string {
+  const url = new URL(baseUrl);
+  url.username = "";
+  url.password = "";
+  url.search = "";
+  url.hash = "";
+  return url.toString().replace(/\/$/, "");
 }
 
 function mapOpenAiError(error: unknown): Error {

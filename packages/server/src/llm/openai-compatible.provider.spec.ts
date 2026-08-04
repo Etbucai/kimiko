@@ -1,6 +1,7 @@
 import {
   BadGatewayException,
   GatewayTimeoutException,
+  Logger,
   ServiceUnavailableException,
 } from "@nestjs/common";
 import {
@@ -41,9 +42,13 @@ interface MockOpenAiClient {
 
 describe("OpenAiCompatibleProvider", () => {
   let client: MockOpenAiClient;
+  let loggerErrorSpy: jest.SpyInstance;
   let provider: OpenAiCompatibleProvider;
 
   beforeEach(() => {
+    loggerErrorSpy = jest
+      .spyOn(Logger.prototype, "error")
+      .mockImplementation(() => undefined);
     const createMock: ChatCompletionCreateMock = jest.fn<
       Promise<ChatCompletion | AsyncIterable<ChatCompletionChunk>>,
       [
@@ -71,6 +76,10 @@ describe("OpenAiCompatibleProvider", () => {
       },
       client as unknown as OpenAiClientLike,
     );
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
 
   it("uses the configured model and maps the response payload", async () => {
@@ -267,8 +276,14 @@ describe("OpenAiCompatibleProvider", () => {
       }),
     ).rejects.toThrow(GatewayTimeoutException);
 
+    const connectionCause = Object.assign(new Error("socket hang up"), {
+      code: "ECONNRESET",
+    });
     client.chat.completions.create.mockRejectedValue(
-      new APIConnectionError({ message: "network down" }),
+      new APIConnectionError({
+        message: "network down",
+        cause: connectionCause,
+      }),
     );
 
     await expect(
@@ -276,6 +291,77 @@ describe("OpenAiCompatibleProvider", () => {
         userPrompt: "hello",
       }),
     ).rejects.toThrow(ServiceUnavailableException);
+
+    const connectionLog = JSON.parse(
+      String(
+        loggerErrorSpy.mock.calls[loggerErrorSpy.mock.calls.length - 1]?.[0],
+      ),
+    ) as unknown;
+    expect(connectionLog).toMatchObject({
+      callType: "text",
+      error: {
+        cause: {
+          code: "ECONNRESET",
+          message: "socket hang up",
+          name: "Error",
+        },
+        message: "network down",
+        name: "APIConnectionError",
+        status: null,
+      },
+      event: "llm_provider_request_failed",
+    });
+  });
+
+  it("logs structured upstream details without request content or credentials", async () => {
+    const headers = new Headers({
+      "x-request-id": "upstream-request-123",
+    });
+    client.chat.completions.create.mockRejectedValue(
+      new RateLimitError(
+        429,
+        {
+          code: "rate_limit",
+          internal: "response-body-details",
+          message: "Too many requests",
+          type: "rate_limit_error",
+        },
+        "rate limited",
+        headers,
+      ),
+    );
+
+    await expect(
+      collectAsyncIterable(
+        provider.streamText(
+          {
+            userPrompt: "sensitive prompt",
+          },
+          { signal: new AbortController().signal },
+        ),
+      ),
+    ).rejects.toThrow(ServiceUnavailableException);
+
+    expect(loggerErrorSpy).toHaveBeenCalledTimes(1);
+    const serializedLog = String(loggerErrorSpy.mock.calls[0]?.[0]);
+    expect(JSON.parse(serializedLog)).toEqual({
+      baseUrl: "https://example.com/v1",
+      callType: "stream",
+      error: {
+        cause: null,
+        code: "rate_limit",
+        message: "Too many requests",
+        name: "RateLimitError",
+        requestId: "upstream-request-123",
+        status: 429,
+        type: "rate_limit_error",
+      },
+      event: "llm_provider_request_failed",
+      model: "default-model",
+    });
+    expect(serializedLog).not.toContain("sensitive prompt");
+    expect(serializedLog).not.toContain("test-key");
+    expect(serializedLog).not.toContain("response-body-details");
   });
 
   it("maps provider-side request errors and empty responses", async () => {
