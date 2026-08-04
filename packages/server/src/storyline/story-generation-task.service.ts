@@ -11,14 +11,19 @@ import {
 import { StorylineGenerationService } from "./storyline-generation.service";
 import { StoryGenerationTaskRegistry } from "./story-generation-task.registry";
 import type {
+  AttachObserverInput,
+  AttachObserverResult,
   CancelByRequestInput,
   CancelByRequestResult,
   CancelByStorylineInput,
   DetachObserverInput,
+  GetStorylineTaskRecoveryInput,
+  GetStorylineTaskRecoveryResult,
   GetStorylineTaskStatusInput,
   GetStorylineTaskStatusResult,
   StartStoryGenerationTaskInput,
   StartStoryGenerationTaskResult,
+  StoryGenerationObserver,
   StoryGenerationTaskRecord,
 } from "./story-generation-task.types";
 import type { StorylineStreamEvent } from "./storyline.types";
@@ -56,7 +61,9 @@ export class StoryGenerationTaskService {
     this.logTaskEvent(task, {
       event: "story_generation_task_started",
     });
-    task.observer?.sendStarted();
+    this.notifyObservers(task, (observer) => {
+      observer.sendStarted();
+    });
     void this.runTask(task, input);
     return { status: "started", task };
   }
@@ -86,7 +93,10 @@ export class StoryGenerationTaskService {
     }
 
     task.abortController.abort();
-    task.observer?.sendCancelled();
+    this.notifyObservers(task, (observer) => {
+      observer.sendCancelled();
+    });
+    this.registry.clearObservers(task);
     this.logTaskEvent(task, {
       event: "story_generation_task_cancel_requested",
       reason: "user_cancelled",
@@ -122,7 +132,10 @@ export class StoryGenerationTaskService {
     }
 
     task.abortController.abort();
-    task.observer?.sendCancelled();
+    this.notifyObservers(task, (observer) => {
+      observer.sendCancelled();
+    });
+    this.registry.clearObservers(task);
     this.logTaskEvent(task, {
       event: "story_generation_task_cancel_requested",
       reason: "user_cancelled",
@@ -136,6 +149,7 @@ export class StoryGenerationTaskService {
 
   detachObserver(input: DetachObserverInput): void {
     const task = this.registry.detachObserver({
+      observerId: input.observerId,
       requestId: input.requestId,
       userId: input.userId,
     });
@@ -150,10 +164,30 @@ export class StoryGenerationTaskService {
     });
   }
 
+  attachObserver(input: AttachObserverInput): AttachObserverResult {
+    const result = this.registry.attachObserver(input);
+    if (result.status === "attached") {
+      this.logTaskEvent(result.task, {
+        event: "story_generation_task_observer_attached",
+      });
+    }
+    return result;
+  }
+
   getStorylineTaskStatus(
     input: GetStorylineTaskStatusInput,
   ): GetStorylineTaskStatusResult {
     return this.registry.getStorylineStatus({
+      now: Date.now(),
+      storylineId: input.storylineId,
+      userId: input.userId,
+    });
+  }
+
+  getStorylineTaskRecovery(
+    input: GetStorylineTaskRecoveryInput,
+  ): GetStorylineTaskRecoveryResult {
+    return this.registry.getStorylineRecovery({
       now: Date.now(),
       storylineId: input.storylineId,
       userId: input.userId,
@@ -187,16 +221,29 @@ export class StoryGenerationTaskService {
           return;
         }
 
-        this.forwardStreamEvent(task, event);
-        if (event.type !== "chunk" && event.type !== "reasoning") {
-          terminalEvent = event.type;
+        if (event.type === "chunk" || event.type === "reasoning") {
+          const wasBuffered = this.registry.appendStreamEvent(task, event);
+          if (!wasBuffered) {
+            task.abortController.abort();
+            this.failRunningTask(task, "GENERATION_BUFFER_LIMIT_EXCEEDED");
+            return;
+          }
         }
 
+        if (event.type === "persisted") {
+          this.registry.markPersisted(task, {
+            generatedSegmentId: event.generatedSegmentId,
+          });
+        }
+
+        this.forwardStreamEvent(task, event);
         if (event.type === "completed") {
+          terminalEvent = event.type;
           this.registry.completeTask(task, {
             generatedSegmentId: event.generatedSegmentId,
             now: Date.now(),
           });
+          this.registry.clearObservers(task);
           this.logTaskEvent(task, {
             event: "story_generation_task_terminal",
           });
@@ -229,26 +276,43 @@ export class StoryGenerationTaskService {
     event: StorylineStreamEvent,
   ): void {
     if (event.type === "reasoning") {
-      task.observer?.sendReasoning(event);
+      this.notifyObservers(task, (observer) => {
+        observer.sendReasoning(event);
+      });
       return;
     }
 
     if (event.type === "chunk") {
-      task.observer?.sendChunk(event);
+      this.notifyObservers(task, (observer) => {
+        observer.sendChunk(event);
+      });
+      return;
+    }
+
+    if (event.type === "persisted") {
+      this.notifyObservers(task, (observer) => {
+        observer.sendPersisted(event.generatedSegmentId);
+      });
       return;
     }
 
     if (event.type === "contextStarted") {
-      task.observer?.sendContextStarted();
+      this.notifyObservers(task, (observer) => {
+        observer.sendContextStarted();
+      });
       return;
     }
 
     if (event.type === "contextFailed") {
-      task.observer?.sendContextFailed(event.message);
+      this.notifyObservers(task, (observer) => {
+        observer.sendContextFailed(event.message);
+      });
       return;
     }
 
-    task.observer?.sendCompleted(event);
+    this.notifyObservers(task, (observer) => {
+      observer.sendCompleted(event);
+    });
   }
 
   private updatePhase(
@@ -280,11 +344,14 @@ export class StoryGenerationTaskService {
       return;
     }
 
-    task.observer?.sendError({
-      code,
-      message,
-      retryable: true,
+    this.notifyObservers(task, (observer) => {
+      observer.sendError({
+        code,
+        message,
+        retryable: true,
+      });
     });
+    this.registry.clearObservers(task);
     this.logTaskEvent(task, {
       error,
       event: "story_generation_task_terminal",
@@ -300,6 +367,7 @@ export class StoryGenerationTaskService {
       event:
         | "story_generation_task_started"
         | "story_generation_task_phase_changed"
+        | "story_generation_task_observer_attached"
         | "story_generation_task_observer_detached"
         | "story_generation_task_cancel_requested"
         | "story_generation_task_terminal";
@@ -315,7 +383,7 @@ export class StoryGenerationTaskService {
       errorCode: task.errorCode,
       event: input.event,
       generatedSegmentId: task.generatedSegmentId,
-      hadObserver: task.observer !== null,
+      observerCount: task.observers.size,
       mode: task.mode,
       phase: task.status === "running" ? task.phase : undefined,
       reason: input.reason,
@@ -334,6 +402,15 @@ export class StoryGenerationTaskService {
     }
 
     this.logger.log(JSON.stringify(payload));
+  }
+
+  private notifyObservers(
+    task: StoryGenerationTaskRecord,
+    notify: (observer: StoryGenerationObserver) => void,
+  ): void {
+    for (const observer of task.observers) {
+      notify(observer);
+    }
   }
 }
 

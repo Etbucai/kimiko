@@ -19,6 +19,7 @@ import {
   LoginUserResponseSchema,
   ListStorylinesResponseSchema,
   StoryContextExtractionTaskResponseSchema,
+  StoryGenerationRecoveryResponseSchema,
   StoryGenerationStatusResponseSchema,
   StoryRealtimeServerEventSchema,
 } from "@kimiko/schema";
@@ -474,7 +475,7 @@ describe("RealtimeGateway (e2e)", () => {
     let finalEvents: readonly StoryRealtimeServerEvent[] = [];
     for (let round = 2; round <= 10; round += 1) {
       const requestId = `request-${round}`;
-      const eventsPromise = readEvents(socket, round === 10 ? 6 : 4);
+      const eventsPromise = readEvents(socket, round === 10 ? 7 : 5);
       socket.send(
         JSON.stringify({
           type: "story.continue",
@@ -662,6 +663,139 @@ describe("RealtimeGateway (e2e)", () => {
       type: "generated",
       text: "林夏走向钟楼。",
     });
+  });
+
+  it("restores buffered content and continues streaming on a new websocket", async () => {
+    const controlledProvider = createControlledProvider();
+    app = await createApp(controlledProvider.provider);
+    const accessToken = await registerAndLogin(app, "resume_stream");
+    const firstSocket = await connectWebSocket(
+      `${getRealtimeUrl(app)}?accessToken=${accessToken}`,
+    );
+    await waitOneTick();
+
+    const createdStoryline = await createStorylineOverSocket(firstSocket, {
+      requestId: "request-create",
+      initialStoryText: "雨停以后。",
+      instruction: "继续调查。",
+    });
+    controlledProvider.resetForHangingStream({
+      contextText: createAppendContextPatchText(),
+      reasoningText: "先确认钟楼仍然可见。",
+    });
+
+    const initialEventsPromise = readEvents(firstSocket, 3);
+    firstSocket.send(
+      JSON.stringify({
+        type: "story.continue",
+        requestId: "request-append",
+        payload: {
+          mode: "append",
+          storylineId: createdStoryline.storyline.id,
+          instruction: "继续追踪。",
+          targetLength: 750,
+        },
+      }),
+    );
+    expect(await initialEventsPromise).toEqual([
+      {
+        type: "story.started",
+        requestId: "request-append",
+      },
+      {
+        type: "story.reasoning",
+        requestId: "request-append",
+        sequence: 1,
+        delta: "先确认钟楼仍然可见。",
+      },
+      {
+        type: "story.chunk",
+        requestId: "request-append",
+        sequence: 1,
+        delta: "林夏",
+      },
+    ]);
+    firstSocket.close();
+    await waitOneTick();
+
+    const recoveryResponse = await request(app.getHttpServer())
+      .get(`/storylines/${createdStoryline.storyline.id}/generation/recovery`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect("Cache-Control", "no-store")
+      .expect(200);
+    const recovery = StoryGenerationRecoveryResponseSchema.parse(
+      recoveryResponse.body as unknown,
+    );
+    expect(recovery).toEqual({
+      task: {
+        status: "running",
+        phase: "streaming",
+        mode: "append",
+        requestId: "request-append",
+        storylineId: createdStoryline.storyline.id,
+      },
+      snapshot: {
+        text: "林夏",
+        sequence: 1,
+        reasoningText: "先确认钟楼仍然可见。",
+        reasoningSequence: 1,
+      },
+      outputPersisted: false,
+    });
+
+    const secondSocket = await connectWebSocket(
+      `${getRealtimeUrl(app)}?accessToken=${accessToken}`,
+    );
+    const snapshotPromise = readEvent(secondSocket);
+    secondSocket.send(
+      JSON.stringify({
+        type: "story.resume",
+        requestId: "request-append",
+        storylineId: createdStoryline.storyline.id,
+      }),
+    );
+    expect(await snapshotPromise).toEqual({
+      type: "story.snapshot",
+      requestId: "request-append",
+      snapshot: recovery.snapshot,
+    });
+
+    const finalEventsPromise = readEvents(secondSocket, 3);
+    controlledProvider.completeHangingStream();
+    const finalEvents = await finalEventsPromise;
+    expect(finalEvents[0]).toEqual({
+      type: "story.chunk",
+      requestId: "request-append",
+      sequence: 2,
+      delta: "走向钟楼。",
+    });
+    expect(finalEvents[1]).toMatchObject({
+      type: "story.persisted",
+      requestId: "request-append",
+      generatedSegmentId: expect.stringMatching(/^[1-9]\d*$/) as string,
+    });
+    expect(finalEvents[2]).toMatchObject({
+      type: "story.completed",
+      requestId: "request-append",
+    });
+
+    const persistedRecoveryResponse = await request(app.getHttpServer())
+      .get(`/storylines/${createdStoryline.storyline.id}/generation/recovery`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .expect(200);
+    const persistedRecovery = StoryGenerationRecoveryResponseSchema.parse(
+      persistedRecoveryResponse.body as unknown,
+    );
+    expect(persistedRecovery).toMatchObject({
+      task: {
+        status: "completed",
+        generatedSegmentId: expect.stringMatching(/^[1-9]\d*$/) as string,
+      },
+      snapshot: null,
+      outputPersisted: true,
+    });
+
+    secondSocket.close();
   });
 
   it("cancels an existing storyline background generation through REST", async () => {
@@ -1060,7 +1194,9 @@ function createHangingProvider(): jest.Mocked<LlmProvider> {
 interface ControlledProvider {
   readonly provider: jest.Mocked<LlmProvider>;
   completeHangingStream: () => void;
-  resetForHangingStream: (options?: Readonly<{ contextText?: string }>) => void;
+  resetForHangingStream: (
+    options?: Readonly<{ contextText?: string; reasoningText?: string }>,
+  ) => void;
 }
 
 function createControlledProvider(): ControlledProvider {
@@ -1073,18 +1209,22 @@ function createControlledProvider(): ControlledProvider {
       completeStream?.();
       completeStream = null;
     },
-    resetForHangingStream(options = {}) {
+    resetForHangingStream(resetOptions = {}) {
       completeStream = null;
-      if (options.contextText !== undefined) {
+      if (resetOptions.contextText !== undefined) {
         llmProvider.generateText.mockResolvedValue({
-          text: options.contextText,
+          text: resetOptions.contextText,
           model: "context-model",
         });
       }
-      llmProvider.streamText.mockImplementation((_input, options) =>
-        createControlledStream(options.signal, (complete) => {
-          completeStream = complete;
-        }),
+      llmProvider.streamText.mockImplementation((_input, streamOptions) =>
+        createControlledStream(
+          streamOptions.signal,
+          (complete) => {
+            completeStream = complete;
+          },
+          resetOptions.reasoningText,
+        ),
       );
     },
   };
@@ -1132,7 +1272,14 @@ async function* createHangingStream(
 async function* createControlledStream(
   signal: AbortSignal,
   onReady: (complete: () => void) => void,
+  reasoningText?: string,
 ): AsyncIterable<LlmTextStreamEvent> {
+  if (reasoningText !== undefined) {
+    yield {
+      type: "reasoning",
+      delta: reasoningText,
+    };
+  }
   yield {
     type: "chunk",
     delta: "林夏",

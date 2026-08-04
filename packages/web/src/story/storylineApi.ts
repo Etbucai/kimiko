@@ -1,6 +1,7 @@
 import type {
   CancelStoryGenerationResponse,
   CopyStorylineRequest,
+  StoryGenerationRecoveryResponse,
   StoryGenerationStatusResponse,
   StoryContextSnapshot,
   StoryContextExtractionState,
@@ -17,6 +18,7 @@ import {
   GetRecentStorylineResponseSchema,
   ListStorylinesResponseSchema,
   STORYLINE_CHAPTER_CACHE_RADIUS,
+  StoryGenerationRecoveryResponseSchema,
   StoryGenerationStatusResponseSchema,
   StoryContextExtractionTaskResponseSchema,
 } from "@kimiko/schema";
@@ -29,6 +31,8 @@ const defaultNotFoundErrorMessage = "故事线不存在或已不可用";
 const defaultContextErrorMessage = "获取故事上下文失败，请稍后重试";
 const defaultContextExtractionErrorMessage = "上下文提取失败，请稍后重试";
 const defaultGenerationStatusErrorMessage = "获取后台生成状态失败，请稍后重试";
+const defaultGenerationRecoveryErrorMessage =
+  "恢复后台生成内容失败，请稍后重试";
 const defaultGenerationCancelErrorMessage = "取消后台生成失败，请稍后重试";
 const defaultCopyErrorMessage = "复制故事失败，请稍后重试";
 const defaultCopyInvalidMessage = "复制参数无效，请检查标题和截止章节";
@@ -115,6 +119,7 @@ export async function getRecentStoryline(
     const response = await fetch(
       buildStorylineWindowUrl("/storylines/recent", query),
       {
+        cache: "no-store",
         headers: {
           Authorization: `Bearer ${authSession.session.accessToken}`,
         },
@@ -177,6 +182,7 @@ export async function getStoryline(
         query,
       ),
       {
+        cache: "no-store",
         headers: {
           Authorization: `Bearer ${authSession.session.accessToken}`,
         },
@@ -513,6 +519,76 @@ export async function getStoryGenerationStatus(
     return {
       status: "failed",
       message: defaultGenerationStatusErrorMessage,
+    };
+  }
+}
+
+export type GetStoryGenerationRecoveryResult =
+  | Readonly<{
+      status: "success";
+      recovery: StoryGenerationRecoveryResponse;
+    }>
+  | Readonly<{ status: "authRequired" }>
+  | Readonly<{ status: "notFound"; message: string }>
+  | Readonly<{ status: "failed"; message: string }>;
+
+export async function getStoryGenerationRecovery(
+  storylineId: StorylineId,
+): Promise<GetStoryGenerationRecoveryResult> {
+  const authSession = getStoredAuthSession();
+  if (authSession === null) {
+    return { status: "authRequired" };
+  }
+
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/storylines/${encodeURIComponent(storylineId)}/generation/recovery`,
+      {
+        cache: "no-store",
+        headers: {
+          Authorization: `Bearer ${authSession.session.accessToken}`,
+        },
+        method: "GET",
+      },
+    );
+
+    if (response.status === 401) {
+      clearAuthSession();
+      return { status: "authRequired" };
+    }
+
+    if (response.status === 404) {
+      return {
+        status: "notFound",
+        message: defaultNotFoundErrorMessage,
+      };
+    }
+
+    const responseBody = await readJsonResponse(response);
+    if (!response.ok) {
+      return {
+        status: "failed",
+        message: defaultGenerationRecoveryErrorMessage,
+      };
+    }
+
+    const result =
+      StoryGenerationRecoveryResponseSchema.safeParse(responseBody);
+    if (!result.success) {
+      return {
+        status: "failed",
+        message: defaultGenerationRecoveryErrorMessage,
+      };
+    }
+
+    return {
+      status: "success",
+      recovery: result.data,
+    };
+  } catch {
+    return {
+      status: "failed",
+      message: defaultGenerationRecoveryErrorMessage,
     };
   }
 }

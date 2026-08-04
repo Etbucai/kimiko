@@ -4,7 +4,10 @@ import type {
   StoryGenerationPhase,
 } from "@kimiko/schema";
 import type { StorylineGenerationService } from "./storyline-generation.service";
-import { StoryGenerationTaskRegistry } from "./story-generation-task.registry";
+import {
+  storyGenerationBufferLimitBytes,
+  StoryGenerationTaskRegistry,
+} from "./story-generation-task.registry";
 import { StoryGenerationTaskService } from "./story-generation-task.service";
 import type { StoryGenerationObserver } from "./story-generation-task.types";
 import type {
@@ -42,6 +45,7 @@ describe("StoryGenerationTaskService", () => {
       createStorylineStream([
         { type: "reasoning", delta: "先衔接场景。", sequence: 1 },
         { type: "chunk", delta: "林夏", sequence: 1 },
+        { type: "persisted", generatedSegmentId: "3" },
         { type: "contextStarted" },
         { type: "contextFailed", message: "上下文提取失败" },
         {
@@ -72,6 +76,7 @@ describe("StoryGenerationTaskService", () => {
       delta: "林夏",
       sequence: 1,
     });
+    expect(observer.sendPersisted).toHaveBeenCalledWith("3");
     expect(observer.sendContextStarted).toHaveBeenCalledTimes(1);
     expect(observer.sendContextFailed).toHaveBeenCalledWith("上下文提取失败");
     expect(observer.sendCompleted).toHaveBeenCalledWith(
@@ -112,6 +117,50 @@ describe("StoryGenerationTaskService", () => {
     expect(secondResult).toEqual({
       status: "busy",
       code: "STORYLINE_BUSY",
+    });
+  });
+
+  it("aborts and clears a task that exceeds the stream buffer limit", async () => {
+    generationService.streamContinueStoryline.mockReturnValue(
+      createStorylineStream([
+        {
+          type: "chunk",
+          delta: "x".repeat(storyGenerationBufferLimitBytes + 1),
+          sequence: 1,
+        },
+      ]),
+    );
+
+    const result = taskService.start({
+      observer,
+      payload: createAppendPayload("10"),
+      requestId: "request-1",
+      userId: "user-1",
+    });
+    await flushPromises();
+
+    expect(result.status).toBe("started");
+    expect(
+      result.status === "started" && result.task.abortController.signal.aborted,
+    ).toBe(true);
+    expect(observer.sendChunk).not.toHaveBeenCalled();
+    expect(observer.sendError).toHaveBeenCalledWith({
+      code: "GENERATION_BUFFER_LIMIT_EXCEEDED",
+      message: "生成内容过长，请重新生成",
+      retryable: true,
+    });
+    expect(
+      taskService.getStorylineTaskRecovery({
+        storylineId: "10",
+        userId: "user-1",
+      }),
+    ).toMatchObject({
+      task: {
+        status: "failed",
+        errorCode: "GENERATION_BUFFER_LIMIT_EXCEEDED",
+      },
+      snapshot: null,
+      outputPersisted: false,
     });
   });
 
@@ -206,6 +255,7 @@ describe("StoryGenerationTaskService", () => {
       userId: "user-1",
     });
     taskService.detachObserver({
+      observerId: observer.observerId,
       requestId: "request-1",
       userId: "user-1",
     });
@@ -264,10 +314,13 @@ function createObserver(
   requestId: string,
 ): jest.Mocked<StoryGenerationObserver> {
   return {
+    observerId: `observer-${requestId}`,
     requestId,
     sendStarted: jest.fn(),
+    sendSnapshot: jest.fn(),
     sendReasoning: jest.fn(),
     sendChunk: jest.fn(),
+    sendPersisted: jest.fn(),
     sendContextStarted: jest.fn(),
     sendContextFailed: jest.fn(),
     sendCompleted: jest.fn(),
@@ -309,7 +362,7 @@ function createPhaseOnlyStream(
 }
 
 async function flushPromises(): Promise<void> {
-  for (let index = 0; index < 10; index += 1) {
+  for (let index = 0; index < 20; index += 1) {
     await Promise.resolve();
   }
 }

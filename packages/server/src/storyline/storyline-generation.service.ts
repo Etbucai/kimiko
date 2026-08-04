@@ -507,6 +507,10 @@ export class StorylineGenerationService {
           targetLength: appendTargetLength,
         });
 
+        yield {
+          type: "persisted",
+          generatedSegmentId: savedStoryline.latestGeneration.segmentId,
+        };
         yield* this.finishSavedGeneration({
           elapsedStartedAt: startedAt,
           mode: "append",
@@ -693,6 +697,10 @@ export class StorylineGenerationService {
           targetGenerationMode: context.targetGenerationMode,
         });
 
+        yield {
+          type: "persisted",
+          generatedSegmentId: savedStoryline.latestGeneration.segmentId,
+        };
         yield* this.finishSavedGeneration({
           elapsedStartedAt: startedAt,
           mode: "rewrite",
@@ -857,6 +865,10 @@ export class StorylineGenerationService {
           storylineId: storyline.externalId,
         });
 
+        yield {
+          type: "persisted",
+          generatedSegmentId: savedStoryline.latestGeneration.segmentId,
+        };
         yield* this.finishSavedGeneration({
           elapsedStartedAt: startedAt,
           mode: "dialogue",

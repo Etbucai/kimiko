@@ -889,6 +889,18 @@ export type StoryContinueClientMessage = z.infer<
   typeof StoryContinueClientMessageSchema
 >;
 
+export const StoryResumeClientMessageSchema = z
+  .object({
+    type: z.literal("story.resume"),
+    requestId: StoryRealtimeRequestIdSchema,
+    storylineId: StorylineIdSchema,
+  })
+  .strict();
+
+export type StoryResumeClientMessage = z.infer<
+  typeof StoryResumeClientMessageSchema
+>;
+
 export const StoryCancelClientMessageSchema = z
   .object({
     type: z.literal("story.cancel"),
@@ -902,6 +914,7 @@ export type StoryCancelClientMessage = z.infer<
 
 export const StoryRealtimeClientMessageSchema = z.discriminatedUnion("type", [
   StoryContinueClientMessageSchema,
+  StoryResumeClientMessageSchema,
   StoryCancelClientMessageSchema,
 ]);
 
@@ -942,6 +955,44 @@ export const StoryReasoningServerEventSchema = z
 
 export type StoryReasoningServerEvent = z.infer<
   typeof StoryReasoningServerEventSchema
+>;
+
+export const StoryGenerationStreamSnapshotSchema = z
+  .object({
+    text: z.string(),
+    sequence: z.number().int().nonnegative(),
+    reasoningText: z.string(),
+    reasoningSequence: z.number().int().nonnegative(),
+    rewriteTargetSegmentId: StorylineSegmentIdSchema.optional(),
+  })
+  .strict();
+
+export type StoryGenerationStreamSnapshot = z.infer<
+  typeof StoryGenerationStreamSnapshotSchema
+>;
+
+export const StorySnapshotServerEventSchema = z
+  .object({
+    type: z.literal("story.snapshot"),
+    requestId: StoryRealtimeRequestIdSchema,
+    snapshot: StoryGenerationStreamSnapshotSchema,
+  })
+  .strict();
+
+export type StorySnapshotServerEvent = z.infer<
+  typeof StorySnapshotServerEventSchema
+>;
+
+export const StoryPersistedServerEventSchema = z
+  .object({
+    type: z.literal("story.persisted"),
+    requestId: StoryRealtimeRequestIdSchema,
+    generatedSegmentId: StorylineSegmentIdSchema,
+  })
+  .strict();
+
+export type StoryPersistedServerEvent = z.infer<
+  typeof StoryPersistedServerEventSchema
 >;
 
 export const StorySummaryStartedServerEventSchema = z
@@ -1008,6 +1059,7 @@ export const StoryRealtimeErrorCodeSchema = z.enum([
   "BUSY",
   "NO_ACTIVE_TASK",
   "GENERATION_FAILED",
+  "GENERATION_BUFFER_LIMIT_EXCEEDED",
   "LLM_EMPTY_RESPONSE",
   "LLM_USAGE_MISSING",
   "STORYLINE_NOT_FOUND",
@@ -1079,6 +1131,18 @@ export type StoryGenerationStatusResponse = z.infer<
   typeof StoryGenerationStatusResponseSchema
 >;
 
+export const StoryGenerationRecoveryResponseSchema = z
+  .object({
+    task: StoryGenerationTaskSchema.nullable(),
+    snapshot: StoryGenerationStreamSnapshotSchema.nullable(),
+    outputPersisted: z.boolean(),
+  })
+  .strict();
+
+export type StoryGenerationRecoveryResponse = z.infer<
+  typeof StoryGenerationRecoveryResponseSchema
+>;
+
 export const CancelStoryGenerationResponseSchema = z
   .object({
     cancelled: z.boolean(),
@@ -1106,6 +1170,8 @@ export const StoryRealtimeServerEventSchema = z.discriminatedUnion("type", [
   StoryStartedServerEventSchema,
   StoryReasoningServerEventSchema,
   StoryChunkServerEventSchema,
+  StorySnapshotServerEventSchema,
+  StoryPersistedServerEventSchema,
   StorySummaryStartedServerEventSchema,
   StoryContextStartedServerEventSchema,
   StoryContextFailedServerEventSchema,

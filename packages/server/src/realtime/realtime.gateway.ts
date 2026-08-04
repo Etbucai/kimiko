@@ -4,6 +4,7 @@ import type { OnGatewayDisconnect, OnGatewayInit } from "@nestjs/websockets";
 import type {
   StoryCancelClientMessage,
   StoryContinueClientMessage,
+  StoryResumeClientMessage,
   StoryTargetLength,
   StoryRealtimeClientMessage,
   StoryRealtimeServerEvent,
@@ -19,6 +20,7 @@ import { getRealtimeErrorMessage } from "./realtime-error.utils";
 
 const unauthorizedCloseCode = 1008;
 const unauthorizedCloseReason = "Unauthorized";
+let observerSequence = 0;
 
 @Injectable()
 @WebSocketGateway({ path: "/realtime" })
@@ -129,7 +131,9 @@ export class RealtimeGateway
         storylineId:
           parsedMessage.message.type === "story.continue"
             ? getStorylineIdFromPayload(parsedMessage.message.payload)
-            : undefined,
+            : parsedMessage.message.type === "story.resume"
+              ? parsedMessage.message.storylineId
+              : undefined,
         settingId:
           parsedMessage.message.type === "story.continue"
             ? getSettingIdFromPayload(parsedMessage.message.payload)
@@ -143,6 +147,11 @@ export class RealtimeGateway
 
     if (parsedMessage.message.type === "story.cancel") {
       this.cancelStory(client, parsedMessage.message);
+      return;
+    }
+
+    if (parsedMessage.message.type === "story.resume") {
+      this.resumeStory(client, parsedMessage.message);
       return;
     }
 
@@ -219,6 +228,7 @@ export class RealtimeGateway
     }
 
     clientState.activeTask = {
+      observerId: observer.observerId,
       requestId: message.requestId,
     };
     this.logger.log(
@@ -232,6 +242,71 @@ export class RealtimeGateway
         userId: clientState.user.sub,
       }),
     );
+  }
+
+  private resumeStory(
+    client: WebSocket,
+    message: StoryResumeClientMessage,
+  ): void {
+    const clientState = this.clientStates.get(client);
+    if (clientState?.user === null || clientState?.user === undefined) {
+      sendError(client, message.requestId, "GENERATION_FAILED", true);
+      return;
+    }
+
+    if (clientState.activeTask !== null) {
+      sendError(client, message.requestId, "BUSY", true);
+      return;
+    }
+
+    const observer = this.createObserver(client, message.requestId);
+    const result = this.taskService.attachObserver({
+      observer,
+      requestId: message.requestId,
+      storylineId: message.storylineId,
+      userId: clientState.user.sub,
+    });
+
+    if (result.status === "notFound") {
+      sendError(client, message.requestId, "NO_ACTIVE_TASK", true);
+      return;
+    }
+
+    if (result.status === "persisted") {
+      if (result.task.status === "running") {
+        clientState.activeTask = {
+          observerId: observer.observerId,
+          requestId: message.requestId,
+        };
+      }
+      observer.sendPersisted(result.generatedSegmentId);
+      return;
+    }
+
+    if (result.status === "cancelled") {
+      observer.sendCancelled();
+      return;
+    }
+
+    if (result.status === "failed") {
+      observer.sendError({
+        code: result.task?.errorCode ?? "GENERATION_FAILED",
+        message:
+          result.task?.message ?? getRealtimeErrorMessage("GENERATION_FAILED"),
+        retryable: true,
+      });
+      return;
+    }
+
+    if (result.status !== "attached") {
+      return;
+    }
+
+    clientState.activeTask = {
+      observerId: observer.observerId,
+      requestId: message.requestId,
+    };
+    observer.sendSnapshot(result.snapshot);
   }
 
   private cancelStory(
@@ -298,12 +373,21 @@ export class RealtimeGateway
     client: WebSocket,
     requestId: string,
   ): StoryGenerationObserver {
+    const observerId = createObserverId();
     return {
+      observerId,
       requestId,
       sendStarted: () => {
         sendEvent(client, {
           type: "story.started",
           requestId,
+        });
+      },
+      sendSnapshot: (snapshot) => {
+        sendEvent(client, {
+          type: "story.snapshot",
+          requestId,
+          snapshot,
         });
       },
       sendReasoning: (event) => {
@@ -312,6 +396,13 @@ export class RealtimeGateway
           requestId,
           sequence: event.sequence,
           delta: event.delta,
+        });
+      },
+      sendPersisted: (generatedSegmentId) => {
+        sendEvent(client, {
+          type: "story.persisted",
+          requestId,
+          generatedSegmentId,
         });
       },
       sendChunk: (event) => {
@@ -391,6 +482,7 @@ export class RealtimeGateway
     const activeRequestId = clientState.activeTask?.requestId;
     if (activeRequestId !== undefined && clientState.user !== null) {
       this.taskService.detachObserver({
+        observerId: clientState.activeTask?.observerId ?? "",
         requestId: activeRequestId,
         userId: clientState.user.sub,
         ...(input.closeCode !== undefined
@@ -433,6 +525,12 @@ function getTargetLengthFromPayload(
   payload: StoryContinueClientMessage["payload"],
 ): StoryTargetLength | undefined {
   return payload.mode === "append" ? payload.targetLength : undefined;
+}
+
+function createObserverId(): string {
+  observerSequence =
+    observerSequence >= Number.MAX_SAFE_INTEGER ? 1 : observerSequence + 1;
+  return `observer-${observerSequence.toString(36)}`;
 }
 
 function parseClientMessage(rawMessage: unknown):

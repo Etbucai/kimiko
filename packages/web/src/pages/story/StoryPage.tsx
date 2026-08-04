@@ -5,7 +5,9 @@ import { toast } from "sonner";
 import type {
   CompleteStorySettingRequest,
   StoryContinuePayload,
+  StoryGenerationRecoveryResponse,
   StoryGenerationPhase,
+  StoryGenerationStreamSnapshot,
   StoryGenerationTask,
   StorySetting,
   StorySettingId,
@@ -16,6 +18,7 @@ import type {
   StorylineSnapshot,
 } from "@kimiko/schema";
 import type {
+  StoryRealtimeGenerationCallbacks,
   StoryRealtimeGenerationError,
   StoryRealtimeGenerationHandle,
 } from "../../story/storyRealtimeApi";
@@ -24,11 +27,15 @@ import {
   type StoryChapterChatHandle,
 } from "../../story/storyChatApi";
 import { getStoredAuthSession } from "../../auth/authApi";
-import { startStoryRealtimeGeneration } from "../../story/storyRealtimeApi";
+import {
+  resumeStoryRealtimeGeneration,
+  startStoryRealtimeGeneration,
+} from "../../story/storyRealtimeApi";
 import {
   cancelStoryGeneration,
   copyStoryline,
   getRecentStoryline,
+  getStoryGenerationRecovery,
   getStoryGenerationStatus,
   getStoryline,
   type StorylineWindowQuery,
@@ -158,6 +165,8 @@ const generationCancelledMessage = "已取消生成";
 const generationCompletedMessage = "生成已完成";
 const generationRefreshFailureMessage = "生成已完成，但刷新故事线失败，请重试";
 const backgroundStatusFailureMessage = "后台生成状态暂时不可用，稍后自动重试";
+const generationReconnectingMessage = "连接中断，正在恢复生成...";
+const generationPersistedRefreshMessage = "生成结果已保存，正在刷新正文...";
 const restoreFailureMessage = "恢复故事线失败，请稍后重试";
 const chapterLoadFailureMessage = "加载章节失败，请稍后重试";
 const settingListFailureMessage = "加载设定列表失败，请稍后重试";
@@ -192,6 +201,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   const restoreRequestIdRef = useRef(0);
   const chapterRequestIdRef = useRef(0);
   const chapterPrefetchRequestIdRef = useRef(0);
+  const persistedRefreshRequestIdRef = useRef(0);
 
   const [status, setStatus] = useState<StorylinePageStatus>("loading");
   const [storyline, setStoryline] = useState<StorylineSnapshot | null>(null);
@@ -420,7 +430,10 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
   );
 
   const restoreStorylineSnapshot = useCallback(
-    async (targetStorylineId: StorylineId): Promise<boolean> => {
+    async (
+      targetStorylineId: StorylineId,
+      options: Readonly<{ notifyFailure?: boolean }> = {},
+    ): Promise<boolean> => {
       const currentPage =
         readerPageIndexRef.current === null
           ? "latest"
@@ -434,11 +447,13 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
       }
 
       if (result.status === "authRequired") {
+        persistedRefreshRequestIdRef.current += 1;
         void navigate("/login", { replace: true });
         return false;
       }
 
       if (result.status === "notFound") {
+        persistedRefreshRequestIdRef.current += 1;
         setStoryline(null);
         setRestoreErrorTitle(notFoundFailureTitle);
         setRestoreErrorMessage(result.message);
@@ -447,7 +462,9 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
       }
 
       if (result.status === "failed") {
-        toast.error(result.message);
+        if (options.notifyFailure !== false) {
+          toast.error(result.message);
+        }
         return false;
       }
 
@@ -455,6 +472,267 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
       return true;
     },
     [applyLoadedStorylineWindow, navigate],
+  );
+
+  const applyGenerationSnapshot = useCallback(
+    (
+      intent: Exclude<
+        GenerationIntent,
+        { type: "create" | "createFromSetting" }
+      >,
+      snapshot: StoryGenerationStreamSnapshot,
+    ): void => {
+      storyReasoningTextRef.current = snapshot.reasoningText;
+      hasReceivedStoryReasoningRef.current = snapshot.reasoningText.length > 0;
+      hasReceivedStoryContentRef.current = snapshot.text.length > 0;
+      setStoryReasoningText(snapshot.reasoningText);
+      setIsStoryReasoningExpanded(
+        snapshot.reasoningText.length > 0 && snapshot.text.length === 0,
+      );
+      setActiveGenerationIntent(intent);
+      setTemporaryAppendText(intent.type === "append" ? snapshot.text : "");
+      setTemporaryDialogueText(intent.type === "dialogue" ? snapshot.text : "");
+      setTemporaryRewrite(
+        intent.type === "rewrite"
+          ? { targetSegmentId: intent.segmentId, text: snapshot.text }
+          : null,
+      );
+    },
+    [],
+  );
+
+  const appendStoryReasoning = useCallback((delta: string): void => {
+    if (!hasReceivedStoryReasoningRef.current) {
+      hasReceivedStoryReasoningRef.current = true;
+      setIsStoryReasoningExpanded(!hasReceivedStoryContentRef.current);
+    }
+    storyReasoningTextRef.current += delta;
+    setStoryReasoningText(storyReasoningTextRef.current);
+  }, []);
+
+  const appendStoryContent = useCallback(
+    (
+      intent: Exclude<
+        GenerationIntent,
+        { type: "create" | "createFromSetting" }
+      >,
+      delta: string,
+    ): void => {
+      setStatus("streaming");
+      if (!hasReceivedStoryContentRef.current) {
+        hasReceivedStoryContentRef.current = true;
+        setIsStoryReasoningExpanded(false);
+      }
+      if (intent.type === "rewrite") {
+        setTemporaryRewrite((previousDraft) => ({
+          targetSegmentId: intent.segmentId,
+          text: `${previousDraft?.text ?? ""}${delta}`,
+        }));
+        return;
+      }
+
+      if (intent.type === "dialogue") {
+        setTemporaryDialogueText((previousText) => `${previousText}${delta}`);
+        return;
+      }
+
+      setTemporaryAppendText((previousText) => `${previousText}${delta}`);
+    },
+    [],
+  );
+
+  const clearStoryReasoningState = useCallback((): void => {
+    storyReasoningTextRef.current = "";
+    hasReceivedStoryContentRef.current = false;
+    hasReceivedStoryReasoningRef.current = false;
+    setStoryReasoningText("");
+    setIsStoryReasoningExpanded(false);
+  }, []);
+
+  const applyCompletedExistingStoryline = useCallback(
+    (completedStoryline: StorylineSnapshot): void => {
+      const currentPageNumber = clampReaderPage(
+        (readerPageIndexRef.current ?? completedStoryline.anchorPage - 1) + 1,
+        completedStoryline.chapterCount,
+      );
+      const currentPageIndex = currentPageNumber - 1;
+      readerPageIndexRef.current = currentPageIndex;
+      setReaderPageIndex(currentPageIndex);
+      setReaderViewport(
+        buildReaderViewport(currentPageIndex, completedStoryline.chapterCount),
+      );
+      setStoryline((currentStoryline) =>
+        mergeStorylineWindow(
+          currentStoryline,
+          completedStoryline,
+          currentPageNumber,
+        ),
+      );
+      replaceStorylinePageInUrl(
+        currentPageNumber,
+        completedStoryline.chapterCount,
+      );
+    },
+    [],
+  );
+
+  const refreshPersistedStoryline = useCallback(
+    async (
+      targetStorylineId: StorylineId,
+      generatedSegmentId: StorylineSegmentId,
+    ): Promise<void> => {
+      const refreshRequestId = persistedRefreshRequestIdRef.current + 1;
+      persistedRefreshRequestIdRef.current = refreshRequestId;
+      let retryDelayMs = 500;
+      setGenerationStatusMessage(generationPersistedRefreshMessage);
+
+      while (
+        isMountedRef.current &&
+        persistedRefreshRequestIdRef.current === refreshRequestId
+      ) {
+        const wasRestored = await restoreStorylineSnapshot(targetStorylineId, {
+          notifyFailure: false,
+        });
+        if (
+          !isMountedRef.current ||
+          persistedRefreshRequestIdRef.current !== refreshRequestId
+        ) {
+          return;
+        }
+
+        if (wasRestored) {
+          setTemporaryAppendText("");
+          setTemporaryDialogueText("");
+          setTemporaryRewrite(null);
+          setActiveGenerationIntent(null);
+          setGenerationStatusMessage(
+            `生成结果已保存，正在完成后台处理（段落 ${generatedSegmentId}）...`,
+          );
+          return;
+        }
+
+        await waitForRetry(retryDelayMs);
+        retryDelayMs = Math.min(retryDelayMs * 2, 5_000);
+      }
+    },
+    [restoreStorylineSnapshot],
+  );
+
+  const resumeRecoveredGeneration = useCallback(
+    (
+      recovery: StoryGenerationRecoveryResponse,
+      targetStorylineId: StorylineId,
+      intent: Exclude<
+        GenerationIntent,
+        { type: "create" | "createFromSetting" }
+      > | null,
+    ): void => {
+      const task = recovery.task;
+      if (task?.status !== "running") {
+        return;
+      }
+
+      const callbacks: StoryRealtimeGenerationCallbacks = {
+        onStarted() {
+          setStatus("streaming");
+        },
+        onSnapshot(snapshot) {
+          if (intent !== null) {
+            applyGenerationSnapshot(intent, snapshot);
+          }
+        },
+        onReasoning(delta) {
+          appendStoryReasoning(delta);
+        },
+        onChunk(delta) {
+          if (intent !== null) {
+            appendStoryContent(intent, delta);
+          }
+        },
+        onPersisted(event) {
+          void refreshPersistedStoryline(
+            targetStorylineId,
+            event.generatedSegmentId,
+          );
+        },
+        onContextStarted() {
+          setStatus("updatingContext");
+          setGenerationStatusMessage(
+            getBackgroundPhaseMessage("updatingContext"),
+          );
+        },
+        onContextFailed(message) {
+          toast.error(message);
+        },
+        onCompleted(event) {
+          generationHandleRef.current = null;
+          persistedRefreshRequestIdRef.current += 1;
+          setTemporaryAppendText("");
+          setTemporaryDialogueText("");
+          setTemporaryRewrite(null);
+          setActiveGenerationIntent(null);
+          setBackgroundTask(null);
+          setGenerationStatusMessage("");
+          setStatus("completed");
+          applyCompletedExistingStoryline(event.storyline);
+          toast(generationCompletedMessage);
+        },
+        onCancelled() {
+          generationHandleRef.current = null;
+          persistedRefreshRequestIdRef.current += 1;
+          clearStoryReasoningState();
+          setTemporaryAppendText("");
+          setTemporaryDialogueText("");
+          setTemporaryRewrite(null);
+          setActiveGenerationIntent(null);
+          setBackgroundTask(null);
+          setGenerationStatusMessage("");
+          setStatus("cancelled");
+          toast(generationCancelledMessage);
+        },
+        onReconnecting() {
+          setGenerationStatusMessage(generationReconnectingMessage);
+        },
+        onError(error) {
+          generationHandleRef.current = null;
+          persistedRefreshRequestIdRef.current += 1;
+          clearStoryReasoningState();
+          setTemporaryAppendText("");
+          setTemporaryDialogueText("");
+          setTemporaryRewrite(null);
+          setActiveGenerationIntent(null);
+          setBackgroundTask(null);
+          setGenerationStatusMessage("");
+          setStatus("failed");
+          toast.error(getGenerationErrorMessage(error));
+        },
+        onAuthRequired() {
+          generationHandleRef.current = null;
+          persistedRefreshRequestIdRef.current += 1;
+          clearStoryReasoningState();
+          setActiveGenerationIntent(null);
+          void navigate("/login", { replace: true });
+        },
+      };
+
+      generationHandleRef.current?.close();
+      generationHandleRef.current = resumeStoryRealtimeGeneration(
+        {
+          requestId: task.requestId,
+          storylineId: targetStorylineId,
+        },
+        callbacks,
+      );
+    },
+    [
+      appendStoryContent,
+      appendStoryReasoning,
+      applyCompletedExistingStoryline,
+      applyGenerationSnapshot,
+      clearStoryReasoningState,
+      navigate,
+      refreshPersistedStoryline,
+    ],
   );
 
   const handleBackgroundTask = useCallback(
@@ -476,16 +754,15 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
 
       if (task.status === "running") {
         setBackgroundTask(task);
-        setTemporaryAppendText("");
-        setTemporaryDialogueText("");
-        setTemporaryRewrite(null);
-        setActiveGenerationIntent(null);
         setGenerationStatusMessage(getBackgroundPhaseMessage(task.phase));
         setStatus(getStatusFromGenerationPhase(task.phase));
         return;
       }
 
       clearBackgroundPoll();
+      persistedRefreshRequestIdRef.current += 1;
+      generationHandleRef.current?.close();
+      generationHandleRef.current = null;
 
       if (task.status === "completed") {
         const wasRestored = await restoreStorylineSnapshot(targetStorylineId);
@@ -563,6 +840,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
 
     clearBackgroundPoll();
     backgroundPollFailureNotifiedRef.current = false;
+    persistedRefreshRequestIdRef.current += 1;
     generationHandleRef.current?.close();
     generationHandleRef.current = null;
     chatHandleRef.current?.close();
@@ -675,37 +953,98 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     }
 
     applyLoadedStorylineWindow(result.storyline, requestedPage);
-    const statusResult = await getStoryGenerationStatus(result.storyline.id);
+    let recoveryResult = await getStoryGenerationRecovery(
+      result.storyline.id,
+    );
+    let recoveryRetryDelayMs = 500;
+    while (
+      recoveryResult.status === "failed" &&
+      isMountedRef.current &&
+      restoreRequestIdRef.current === requestId
+    ) {
+      setStatus("preparing");
+      setGenerationStatusMessage(generationReconnectingMessage);
+      await waitForRetry(recoveryRetryDelayMs);
+      if (!isMountedRef.current || restoreRequestIdRef.current !== requestId) {
+        return;
+      }
+      recoveryResult = await getStoryGenerationRecovery(result.storyline.id);
+      recoveryRetryDelayMs = Math.min(recoveryRetryDelayMs * 2, 5_000);
+    }
     if (!isMountedRef.current || restoreRequestIdRef.current !== requestId) {
       return;
     }
 
-    if (statusResult.status === "authRequired") {
+    if (recoveryResult.status === "authRequired") {
       void navigate("/login", { replace: true });
       return;
     }
 
-    if (statusResult.status === "notFound") {
+    if (recoveryResult.status === "notFound") {
       setStoryline(null);
       setRestoreErrorTitle(notFoundFailureTitle);
-      setRestoreErrorMessage(statusResult.message);
+      setRestoreErrorMessage(recoveryResult.message);
       setStatus("restoreFailed");
       return;
     }
 
-    if (statusResult.status === "failed") {
-      setStatus("ready");
-      toast.error(statusResult.message);
+    if (recoveryResult.status === "failed") {
       return;
     }
 
-    await handleBackgroundTask(statusResult.task, result.storyline.id);
+    const recovery = recoveryResult.recovery;
+    const recoveryTask = recovery.task;
+    if (recoveryTask?.status === "running") {
+      setBackgroundTask(recoveryTask);
+      setGenerationStatusMessage(getBackgroundPhaseMessage(recoveryTask.phase));
+      setStatus(getStatusFromGenerationPhase(recoveryTask.phase));
+
+      if (
+        recovery.outputPersisted &&
+        recoveryTask.generatedSegmentId !== undefined
+      ) {
+        void refreshPersistedStoryline(
+          result.storyline.id,
+          recoveryTask.generatedSegmentId,
+        );
+        resumeRecoveredGeneration(recovery, result.storyline.id, null);
+        return;
+      }
+
+      const recoveryIntent = getRecoveryIntent(recovery);
+      if (recovery.snapshot === null || recoveryIntent === null) {
+        setBackgroundTask(null);
+        setStatus("failed");
+        toast.error(generationFailureMessage);
+        return;
+      }
+
+      applyGenerationSnapshot(recoveryIntent, recovery.snapshot);
+      if (recoveryIntent.type === "append") {
+        const temporaryPageIndex = result.storyline.chapterCount;
+        readerPageIndexRef.current = temporaryPageIndex;
+        setReaderPageIndex(temporaryPageIndex);
+        setReaderViewport(
+          buildReaderViewport(
+            temporaryPageIndex,
+            result.storyline.chapterCount + 1,
+          ),
+        );
+      }
+      resumeRecoveredGeneration(recovery, result.storyline.id, recoveryIntent);
+      return;
+    }
+
+    await handleBackgroundTask(recoveryTask, result.storyline.id);
   }, [
+    applyGenerationSnapshot,
     applyLoadedStorylineWindow,
     clearBackgroundPoll,
     handleBackgroundTask,
     mode,
     navigate,
+    refreshPersistedStoryline,
+    resumeRecoveredGeneration,
     storylineId,
   ]);
 
@@ -865,6 +1204,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
     return () => {
       window.clearTimeout(timeoutId);
       isMountedRef.current = false;
+      persistedRefreshRequestIdRef.current += 1;
       clearBackgroundPoll();
       generationHandleRef.current?.close();
       generationHandleRef.current = null;
@@ -1769,6 +2109,12 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
       onStarted() {
         setStatus("streaming");
       },
+      onSnapshot(snapshot) {
+        if (intent.type !== "create" && intent.type !== "createFromSetting") {
+          applyGenerationSnapshot(intent, snapshot);
+          setGenerationStatusMessage("");
+        }
+      },
       onReasoning(delta) {
         if (!hasReceivedStoryReasoningRef.current) {
           hasReceivedStoryReasoningRef.current = true;
@@ -1798,6 +2144,17 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
 
         setTemporaryAppendText((previousText) => `${previousText}${delta}`);
       },
+      onPersisted(event) {
+        if (
+          input.payload.mode !== "create" &&
+          input.payload.mode !== "createFromSetting"
+        ) {
+          void refreshPersistedStoryline(
+            input.payload.storylineId,
+            event.generatedSegmentId,
+          );
+        }
+      },
       onContextStarted() {
         setStatus("updatingContext");
       },
@@ -1806,6 +2163,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
       },
       onCompleted(event) {
         generationHandleRef.current = null;
+        persistedRefreshRequestIdRef.current += 1;
         setTemporaryAppendText("");
         setTemporaryDialogueText("");
         setTemporaryRewrite(null);
@@ -1868,6 +2226,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
       },
       onCancelled() {
         generationHandleRef.current = null;
+        persistedRefreshRequestIdRef.current += 1;
         resetStoryReasoning();
         if (intent.type === "rewrite") {
           setTemporaryRewrite(null);
@@ -1890,6 +2249,7 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
       },
       onError(error) {
         generationHandleRef.current = null;
+        persistedRefreshRequestIdRef.current += 1;
         if (error.code !== "UNKNOWN") {
           resetStoryReasoning();
         }
@@ -1913,8 +2273,12 @@ export function StoryPage({ mode, storylineId }: StoryPageProps): JSX.Element {
         }
         setStatus("failed");
       },
+      onReconnecting() {
+        setGenerationStatusMessage(generationReconnectingMessage);
+      },
       onAuthRequired() {
         generationHandleRef.current = null;
+        persistedRefreshRequestIdRef.current += 1;
         resetStoryReasoning();
         setSubmittedCreateDraft(null);
         setActiveGenerationIntent(null);
@@ -2840,6 +3204,38 @@ function getBackgroundPhaseMessage(
     default:
       return "后台生成进行中...";
   }
+}
+
+function getRecoveryIntent(
+  recovery: StoryGenerationRecoveryResponse,
+): Exclude<GenerationIntent, { type: "create" | "createFromSetting" }> | null {
+  const task = recovery.task;
+  if (task === null || recovery.snapshot === null) {
+    return null;
+  }
+
+  switch (task.mode) {
+    case "append":
+      return { type: "append" };
+    case "dialogue":
+      return { type: "dialogue" };
+    case "rewrite":
+      return recovery.snapshot.rewriteTargetSegmentId === undefined
+        ? null
+        : {
+            type: "rewrite",
+            segmentId: recovery.snapshot.rewriteTargetSegmentId,
+          };
+    case "create":
+    case "createFromSetting":
+      return null;
+  }
+}
+
+function waitForRetry(delayMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, delayMs);
+  });
 }
 
 function removeFieldError(

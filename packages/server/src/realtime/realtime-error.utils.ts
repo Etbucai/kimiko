@@ -15,6 +15,7 @@ export const realtimeErrorMessages: Record<StoryRealtimeErrorCode, string> = {
   BUSY: "当前连接已有生成任务",
   NO_ACTIVE_TASK: "当前没有可取消的生成任务",
   GENERATION_FAILED: "生成失败，请稍后重试",
+  GENERATION_BUFFER_LIMIT_EXCEEDED: "生成内容过长，请重新生成",
   LLM_EMPTY_RESPONSE: "生成结果为空，请稍后重试",
   LLM_USAGE_MISSING: "生成元数据缺失，请稍后重试",
   STORYLINE_NOT_FOUND: "故事线不存在",

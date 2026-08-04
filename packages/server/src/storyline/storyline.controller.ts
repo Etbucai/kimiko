@@ -4,6 +4,7 @@ import {
   ConflictException,
   Controller,
   Get,
+  Header,
   NotFoundException,
   Post,
   Query,
@@ -17,6 +18,7 @@ import type {
   GetStorylineContextResponse,
   GetStorylineResponse,
   ListStorylinesResponse,
+  StoryGenerationRecoveryResponse,
   StoryGenerationStatusResponse,
   StoryContextExtractionTaskResponse,
 } from "@kimiko/schema";
@@ -57,6 +59,7 @@ export class StorylineController {
 
   @Get("recent")
   @UseGuards(JwtAuthGuard)
+  @Header("Cache-Control", "no-store")
   getRecent(
     @CurrentUser() user: AuthenticatedUser,
     @Query("anchorPage") anchorPage: string | undefined,
@@ -96,6 +99,22 @@ export class StorylineController {
     await this.assertStorylineExists(user.userId, storylineId);
 
     return this.taskService.getStorylineTaskStatus({
+      userId: user.userId,
+      storylineId,
+    });
+  }
+
+  @Get(":storylineId/generation/recovery")
+  @UseGuards(JwtAuthGuard)
+  @Header("Cache-Control", "no-store")
+  @Header("Pragma", "no-cache")
+  async getGenerationRecovery(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("storylineId") storylineId: string,
+  ): Promise<StoryGenerationRecoveryResponse> {
+    await this.assertStorylineExists(user.userId, storylineId);
+
+    return this.taskService.getStorylineTaskRecovery({
       userId: user.userId,
       storylineId,
     });
@@ -173,6 +192,7 @@ export class StorylineController {
 
   @Get(":storylineId")
   @UseGuards(JwtAuthGuard)
+  @Header("Cache-Control", "no-store")
   async getById(
     @CurrentUser() user: AuthenticatedUser,
     @Param("storylineId") storylineId: string,

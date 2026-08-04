@@ -74,6 +74,130 @@ describe("StoryGenerationTaskRegistry", () => {
     ).toBe(true);
   });
 
+  it("buffers stream content and attaches multiple observers from a snapshot", () => {
+    const task = registry.createTask({
+      abortController: new AbortController(),
+      observer,
+      payload: {
+        mode: "rewrite",
+        storylineId: "10",
+        segmentId: "3",
+        instruction: "重写。",
+      },
+      requestId: "request-1",
+      startedAt: 1000,
+      userId: "user-1",
+    });
+    registry.updatePhase(task, "streaming");
+    expect(
+      registry.appendStreamEvent(task, {
+        type: "reasoning",
+        delta: "先调整节奏。",
+        sequence: 1,
+      }),
+    ).toBe(true);
+    expect(
+      registry.appendStreamEvent(task, {
+        type: "chunk",
+        delta: "林夏推门。",
+        sequence: 1,
+      }),
+    ).toBe(true);
+
+    expect(
+      registry.getStorylineRecovery({
+        now: 1000,
+        storylineId: "10",
+        userId: "user-1",
+      }),
+    ).toEqual({
+      task: {
+        status: "running",
+        phase: "streaming",
+        mode: "rewrite",
+        requestId: "request-1",
+        storylineId: "10",
+      },
+      snapshot: {
+        text: "林夏推门。",
+        sequence: 1,
+        reasoningText: "先调整节奏。",
+        reasoningSequence: 1,
+        rewriteTargetSegmentId: "3",
+      },
+      outputPersisted: false,
+    });
+
+    const secondObserver = createObserver("request-1", "observer-second");
+    const attachResult = registry.attachObserver({
+      observer: secondObserver,
+      requestId: "request-1",
+      storylineId: "10",
+      userId: "user-1",
+    });
+    expect(attachResult).toMatchObject({
+      status: "attached",
+      snapshot: {
+        text: "林夏推门。",
+        reasoningText: "先调整节奏。",
+      },
+    });
+    expect(task.observers.size).toBe(2);
+
+    registry.detachObserver({
+      observerId: observer.observerId,
+      requestId: "request-1",
+      userId: "user-1",
+    });
+    expect(task.observers).toEqual(new Set([secondObserver]));
+  });
+
+  it("clears sensitive stream content as soon as output is persisted", () => {
+    const task = registry.createTask({
+      abortController: new AbortController(),
+      observer,
+      payload: createAppendPayload("10"),
+      requestId: "request-1",
+      startedAt: 1000,
+      userId: "user-1",
+    });
+    registry.appendStreamEvent(task, {
+      type: "reasoning",
+      delta: "思考内容",
+      sequence: 1,
+    });
+    registry.appendStreamEvent(task, {
+      type: "chunk",
+      delta: "正文内容",
+      sequence: 1,
+    });
+
+    expect(registry.markPersisted(task, { generatedSegmentId: "3" })).toBe(
+      true,
+    );
+    expect(
+      registry.getStorylineRecovery({
+        now: 2000,
+        storylineId: "10",
+        userId: "user-1",
+      }),
+    ).toEqual({
+      task: {
+        status: "running",
+        phase: "preparing",
+        mode: "append",
+        requestId: "request-1",
+        storylineId: "10",
+        generatedSegmentId: "3",
+      },
+      snapshot: null,
+      outputPersisted: true,
+    });
+    expect(task.streamText).toBe("");
+    expect(task.reasoningText).toBe("");
+    expect(task.bufferedBytes).toBe(0);
+  });
+
   it("cancels active tasks before saving", () => {
     const task = registry.createTask({
       abortController: new AbortController(),
@@ -266,12 +390,18 @@ function createAppendPayload(storylineId: string): StoryContinuePayload {
   };
 }
 
-function createObserver(requestId: string): StoryGenerationObserver {
+function createObserver(
+  requestId: string,
+  observerId = `observer-${requestId}`,
+): StoryGenerationObserver {
   return {
+    observerId,
     requestId,
     sendStarted: jest.fn(),
+    sendSnapshot: jest.fn(),
     sendReasoning: jest.fn(),
     sendChunk: jest.fn(),
+    sendPersisted: jest.fn(),
     sendContextStarted: jest.fn(),
     sendContextFailed: jest.fn(),
     sendCompleted: jest.fn(),

@@ -174,6 +174,10 @@ describe("StorylineGenerationService", () => {
         delta: "林夏",
         sequence: 1,
       },
+      {
+        type: "persisted",
+        generatedSegmentId: "3",
+      },
       { type: "contextStarted" },
       {
         type: "completed",
@@ -270,6 +274,10 @@ describe("StorylineGenerationService", () => {
     );
 
     expect(events).toEqual([
+      {
+        type: "persisted",
+        generatedSegmentId: "3",
+      },
       { type: "contextStarted" },
       {
         type: "contextFailed",
@@ -458,6 +466,10 @@ describe("StorylineGenerationService", () => {
         sequence: 1,
       },
       {
+        type: "persisted",
+        generatedSegmentId: "3",
+      },
+      {
         type: "completed",
         storyline: completedStoryline,
         generatedSegmentId: "3",
@@ -554,6 +566,10 @@ describe("StorylineGenerationService", () => {
         sequence: 1,
       },
       {
+        type: "persisted",
+        generatedSegmentId: "3",
+      },
+      {
         type: "completed",
         storyline: completedStoryline,
         generatedSegmentId: "3",
@@ -648,6 +664,10 @@ describe("StorylineGenerationService", () => {
         type: "chunk",
         delta: "无事发生",
         sequence: 1,
+      },
+      {
+        type: "persisted",
+        generatedSegmentId: "3",
       },
       {
         type: "completed",

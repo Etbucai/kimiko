@@ -6,6 +6,7 @@ export type RealtimeErrorCode =
   | "BUSY"
   | "NO_ACTIVE_TASK"
   | "GENERATION_FAILED"
+  | "GENERATION_BUFFER_LIMIT_EXCEEDED"
   | "LLM_EMPTY_RESPONSE"
   | "LLM_USAGE_MISSING"
   | "STORYLINE_NOT_FOUND"
@@ -18,6 +19,7 @@ export type RealtimeErrorCode =
   | "STORY_SETTING_ACCESS_DENIED";
 
 export interface ActiveRealtimeTask {
+  observerId: string;
   requestId: string;
 }
 

@@ -2,19 +2,25 @@ import { Injectable } from "@nestjs/common";
 import type {
   StoryContinuePayload,
   StoryGenerationPhase,
+  StoryGenerationRecoveryResponse,
   StoryGenerationStatusResponse,
+  StoryGenerationStreamSnapshot,
   StoryGenerationTask,
 } from "@kimiko/schema";
 import type {
+  AttachObserverResult,
   CancelTaskStateResult,
   CompleteTaskInput,
   FailTaskInput,
+  PersistTaskInput,
   StoryGenerationObserver,
   StoryGenerationTaskKey,
   StoryGenerationTaskRecord,
 } from "./story-generation-task.types";
+import type { StorylineStreamEvent } from "./storyline.types";
 
 const terminalTaskTtlMs = 10 * 60 * 1000;
+export const storyGenerationBufferLimitBytes = 1024 * 1024;
 
 @Injectable()
 export class StoryGenerationTaskRegistry {
@@ -44,6 +50,7 @@ export class StoryGenerationTaskRegistry {
 
     const task: StoryGenerationTaskRecord = {
       abortController: input.abortController,
+      bufferedBytes: 0,
       cleanupTimer: null,
       errorCode: null,
       expiresAt: null,
@@ -51,12 +58,19 @@ export class StoryGenerationTaskRegistry {
       key,
       message: null,
       mode: input.payload.mode,
-      observer: input.observer,
+      observers: new Set([input.observer]),
+      outputPersisted: false,
       phase: "preparing",
+      reasoningSequence: 0,
+      reasoningText: "",
       requestId: input.requestId,
+      rewriteTargetSegmentId:
+        input.payload.mode === "rewrite" ? input.payload.segmentId : null,
       startedAt: input.startedAt,
       status: "running",
       storylineId: getStorylineIdFromPayload(input.payload),
+      streamSequence: 0,
+      streamText: "",
       terminalAt: null,
       userId: input.userId,
     };
@@ -107,6 +121,30 @@ export class StoryGenerationTaskRegistry {
     return { task: toStoryGenerationTask(task) };
   }
 
+  getStorylineRecovery(input: {
+    readonly storylineId: string;
+    readonly now: number;
+    readonly userId: string;
+  }): StoryGenerationRecoveryResponse {
+    const task = this.getVisibleStorylineTask(input);
+    if (task === null) {
+      return {
+        task: null,
+        snapshot: null,
+        outputPersisted: false,
+      };
+    }
+
+    return {
+      task: toStoryGenerationTask(task),
+      snapshot:
+        task.status === "running" && !task.outputPersisted
+          ? toStreamSnapshot(task)
+          : null,
+      outputPersisted: task.outputPersisted,
+    };
+  }
+
   getVisibleStorylineTask(input: {
     readonly storylineId: string;
     readonly now: number;
@@ -135,6 +173,74 @@ export class StoryGenerationTaskRegistry {
 
     task.phase = phase;
     return true;
+  }
+
+  appendStreamEvent(
+    task: StoryGenerationTaskRecord,
+    event: Extract<StorylineStreamEvent, { type: "chunk" | "reasoning" }>,
+  ): boolean {
+    if (task.storylineId === null || task.outputPersisted) {
+      return true;
+    }
+
+    const nextBufferedBytes =
+      task.bufferedBytes + Buffer.byteLength(event.delta, "utf8");
+    if (nextBufferedBytes > storyGenerationBufferLimitBytes) {
+      return false;
+    }
+
+    task.bufferedBytes = nextBufferedBytes;
+    if (event.type === "chunk") {
+      task.streamText += event.delta;
+      task.streamSequence = event.sequence;
+      return true;
+    }
+
+    task.reasoningText += event.delta;
+    task.reasoningSequence = event.sequence;
+    return true;
+  }
+
+  attachObserver(input: {
+    readonly observer: StoryGenerationObserver;
+    readonly requestId: string;
+    readonly storylineId: string;
+    readonly userId: string;
+  }): AttachObserverResult {
+    const task = this.getVisibleStorylineTask({
+      now: Date.now(),
+      storylineId: input.storylineId,
+      userId: input.userId,
+    });
+    if (task?.requestId !== input.requestId) {
+      return { status: "notFound", task };
+    }
+
+    if (task.outputPersisted && task.generatedSegmentId !== null) {
+      if (task.status === "running") {
+        task.observers.add(input.observer);
+      }
+      return {
+        status: "persisted",
+        task,
+        generatedSegmentId: task.generatedSegmentId,
+      };
+    }
+
+    if (task.status === "cancelled") {
+      return { status: "cancelled", task };
+    }
+
+    if (task.status === "failed" || task.status === "completed") {
+      return { status: "failed", task };
+    }
+
+    task.observers.add(input.observer);
+    return {
+      status: "attached",
+      task,
+      snapshot: toStreamSnapshot(task),
+    };
   }
 
   cancelTask(input: {
@@ -186,6 +292,7 @@ export class StoryGenerationTaskRegistry {
     }
 
     task.generatedSegmentId = input.generatedSegmentId;
+    this.clearStreamCache(task);
     task.status = "completed";
     this.markTerminal(task, input.now);
     return true;
@@ -201,12 +308,28 @@ export class StoryGenerationTaskRegistry {
 
     task.errorCode = input.code;
     task.message = input.message;
+    this.clearStreamCache(task);
     task.status = "failed";
     this.markTerminal(task, input.now);
     return true;
   }
 
+  markPersisted(
+    task: StoryGenerationTaskRecord,
+    input: PersistTaskInput,
+  ): boolean {
+    if (task.status !== "running" || task.outputPersisted) {
+      return false;
+    }
+
+    task.generatedSegmentId = input.generatedSegmentId;
+    task.outputPersisted = true;
+    this.clearStreamCache(task);
+    return true;
+  }
+
   detachObserver(input: {
+    readonly observerId: string;
     readonly requestId: string;
     readonly userId: string;
   }): StoryGenerationTaskRecord | null {
@@ -215,8 +338,17 @@ export class StoryGenerationTaskRegistry {
       return null;
     }
 
-    task.observer = null;
+    for (const observer of task.observers) {
+      if (observer.observerId === input.observerId) {
+        task.observers.delete(observer);
+        break;
+      }
+    }
     return task;
+  }
+
+  clearObservers(task: StoryGenerationTaskRecord): void {
+    task.observers.clear();
   }
 
   deleteTask(task: StoryGenerationTaskRecord): void {
@@ -229,8 +361,17 @@ export class StoryGenerationTaskRegistry {
   }
 
   private markCancelled(task: StoryGenerationTaskRecord, now: number): void {
+    this.clearStreamCache(task);
     task.status = "cancelled";
     this.markTerminal(task, now);
+  }
+
+  private clearStreamCache(task: StoryGenerationTaskRecord): void {
+    task.bufferedBytes = 0;
+    task.reasoningSequence = 0;
+    task.reasoningText = "";
+    task.streamSequence = 0;
+    task.streamText = "";
   }
 
   private markTerminal(task: StoryGenerationTaskRecord, now: number): void {
@@ -296,6 +437,20 @@ function toStoryGenerationTask(
       : {}),
     ...(task.errorCode !== null ? { errorCode: task.errorCode } : {}),
     ...(task.message !== null ? { message: task.message } : {}),
+  };
+}
+
+function toStreamSnapshot(
+  task: StoryGenerationTaskRecord,
+): StoryGenerationStreamSnapshot {
+  return {
+    text: task.streamText,
+    sequence: task.streamSequence,
+    reasoningText: task.reasoningText,
+    reasoningSequence: task.reasoningSequence,
+    ...(task.rewriteTargetSegmentId === null
+      ? {}
+      : { rewriteTargetSegmentId: task.rewriteTargetSegmentId }),
   };
 }
 

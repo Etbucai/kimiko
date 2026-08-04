@@ -1,8 +1,10 @@
 import type {
   CancelStoryGenerationResponse,
   StoryContinuePayload,
+  StoryGenerationRecoveryResponse,
   StoryGenerationMode,
   StoryGenerationPhase,
+  StoryGenerationStreamSnapshot,
   StoryGenerationStatusResponse,
   StoryGenerationTask,
   StoryRealtimeErrorCode,
@@ -16,12 +18,15 @@ export type StoryGenerationTaskKey =
 export type StoryGenerationTaskStatus = StoryGenerationTask["status"];
 
 export interface StoryGenerationObserver {
+  readonly observerId: string;
   readonly requestId: string;
   sendStarted(): void;
+  sendSnapshot(snapshot: StoryGenerationStreamSnapshot): void;
   sendReasoning(
     event: Extract<StorylineStreamEvent, { type: "reasoning" }>,
   ): void;
   sendChunk(event: Extract<StorylineStreamEvent, { type: "chunk" }>): void;
+  sendPersisted(generatedSegmentId: string): void;
   sendContextStarted(): void;
   sendContextFailed(message: string): void;
   sendCompleted(
@@ -43,14 +48,21 @@ export interface StoryGenerationTaskRecord {
   readonly startedAt: number;
   readonly storylineId: string | null;
   readonly userId: string;
+  readonly rewriteTargetSegmentId: string | null;
+  readonly observers: Set<StoryGenerationObserver>;
+  bufferedBytes: number;
   cleanupTimer: NodeJS.Timeout | null;
   errorCode: StoryRealtimeErrorCode | null;
   expiresAt: number | null;
   generatedSegmentId: string | null;
   message: string | null;
-  observer: StoryGenerationObserver | null;
+  outputPersisted: boolean;
   phase: StoryGenerationPhase;
+  reasoningSequence: number;
+  reasoningText: string;
   status: StoryGenerationTaskStatus;
+  streamSequence: number;
+  streamText: string;
   terminalAt: number | null;
 }
 
@@ -99,9 +111,33 @@ export type CancelTaskStateResult =
 export interface DetachObserverInput {
   readonly closeCode?: number;
   readonly closeReason?: string;
+  readonly observerId: string;
   readonly requestId: string;
   readonly userId: string;
 }
+
+export interface AttachObserverInput {
+  readonly observer: StoryGenerationObserver;
+  readonly requestId: string;
+  readonly storylineId: string;
+  readonly userId: string;
+}
+
+export type AttachObserverResult =
+  | Readonly<{
+      status: "attached";
+      task: StoryGenerationTaskRecord;
+      snapshot: StoryGenerationStreamSnapshot;
+    }>
+  | Readonly<{
+      status: "persisted";
+      task: StoryGenerationTaskRecord;
+      generatedSegmentId: string;
+    }>
+  | Readonly<{
+      status: "cancelled" | "failed" | "notFound";
+      task: StoryGenerationTaskRecord | null;
+    }>;
 
 export interface GetStorylineTaskStatusInput {
   readonly storylineId: string;
@@ -110,7 +146,18 @@ export interface GetStorylineTaskStatusInput {
 
 export type GetStorylineTaskStatusResult = StoryGenerationStatusResponse;
 
+export interface GetStorylineTaskRecoveryInput {
+  readonly storylineId: string;
+  readonly userId: string;
+}
+
+export type GetStorylineTaskRecoveryResult = StoryGenerationRecoveryResponse;
+
 export interface CompleteTaskInput {
+  readonly generatedSegmentId: string;
+}
+
+export interface PersistTaskInput {
   readonly generatedSegmentId: string;
 }
 
